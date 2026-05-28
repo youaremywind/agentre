@@ -16,21 +16,29 @@ func TestPiAgentCapabilities(t *testing.T) {
 	Convey("Given pi-agent runtime", t, func() {
 		caps := New().Capabilities()
 
-		Convey("When checking supported controls Then it mirrors Pi RPC mode", func() {
+		Convey("When checking supported controls Then it mirrors implemented Pi RPC controls", func() {
 			So(caps.Has(capability.CapSteer), ShouldBeTrue)
 			So(caps.Has(capability.CapAbort), ShouldBeTrue)
-			So(caps.Has(capability.CapSetPermission), ShouldBeTrue)
-			So(caps.Has(capability.CapCompact), ShouldBeTrue)
+			So(caps.Has(capability.CapSetPermission), ShouldBeFalse)
+			So(caps.Has(capability.CapCompact), ShouldBeFalse)
 			So(caps.Has(capability.CapCancelSteer), ShouldBeFalse)
 			So(caps.Has(capability.CapDrainSteer), ShouldBeFalse)
 			So(caps.Has(capability.CapToolPermission), ShouldBeFalse)
 		})
 
-		Convey("When checking mode metadata Then default and plan are available per turn", func() {
-			So(caps.PermissionModeMeta.AllowedModes, ShouldResemble, []string{"default", "plan"})
-			So(caps.PermissionModeMeta.DefaultMode, ShouldEqual, "default")
-			So(caps.PermissionModeMeta.SwitchableDuringTurn, ShouldBeFalse)
-			So(caps.PermissionModeMeta.LaunchDefaultMode, ShouldEqual, "default")
+		Convey("When comparing optional interfaces Then advertised controls match implementations", func() {
+			r := any(New())
+			_, steerer := r.(agentruntime.Steerer)
+			_, aborter := r.(agentruntime.Aborter)
+			_, setter := r.(agentruntime.PermissionModeSetter)
+			_, canceler := r.(agentruntime.SteerCanceler)
+			_, drainer := r.(agentruntime.SteerDrainer)
+
+			So(steerer, ShouldEqual, caps.Has(capability.CapSteer))
+			So(aborter, ShouldEqual, caps.Has(capability.CapAbort))
+			So(setter, ShouldEqual, caps.Has(capability.CapSetPermission))
+			So(canceler, ShouldEqual, caps.Has(capability.CapCancelSteer))
+			So(drainer, ShouldEqual, caps.Has(capability.CapDrainSteer))
 		})
 	})
 }

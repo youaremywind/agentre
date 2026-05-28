@@ -1847,8 +1847,6 @@ func (s *chatSvc) runTurn(
 		req.PermissionMode = normalizeStoredPermissionMode(agent_backend_entity.TypeClaudeCode, sess.PermissionMode)
 	case agent_backend_entity.TypeCodex:
 		req.CollaborationMode = normalizeStoredPermissionMode(agent_backend_entity.TypeCodex, sess.PermissionMode)
-	case agent_backend_entity.TypePiAgent:
-		req.CollaborationMode = normalizeStoredPermissionMode(agent_backend_entity.TypePiAgent, sess.PermissionMode)
 	}
 
 	events, result, err := runner.Run(ctx, req)

@@ -90,14 +90,28 @@ func buildRPCArgs(c *Client) []string {
 	if strings.TrimSpace(c.cwd) != "" {
 		args = append(args, "--session-dir", strings.TrimSpace(c.cwd))
 	}
+	if strings.TrimSpace(c.systemPrompt) != "" {
+		args = append(args, "--append-system-prompt", strings.TrimSpace(c.systemPrompt))
+	}
 	if strings.TrimSpace(c.model) != "" {
 		args = append(args, "--model", strings.TrimSpace(c.model))
 	}
-	if strings.TrimSpace(c.thinking) != "" {
-		args = append(args, "--thinking", strings.TrimSpace(c.thinking))
+	if thinking := normalizeThinkingLevel(c.thinking); thinking != "" {
+		args = append(args, "--thinking", thinking)
 	}
 	args = append(args, "--no-context-files")
 	return args
+}
+
+func normalizeThinkingLevel(level string) string {
+	switch strings.TrimSpace(level) {
+	case "low", "medium", "high", "xhigh":
+		return strings.TrimSpace(level)
+	case "max":
+		return "xhigh"
+	default:
+		return ""
+	}
 }
 
 func cloneMap(in map[string]string) map[string]string {

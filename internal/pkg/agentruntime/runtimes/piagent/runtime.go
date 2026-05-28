@@ -38,17 +38,8 @@ func New() *Runtime { return &Runtime{active: map[int64]*activeSession{}} }
 func (r *Runtime) Capabilities() capability.Capabilities {
 	return capability.Capabilities{
 		Set: map[capability.Capability]bool{
-			capability.CapSteer:         true,
-			capability.CapAbort:         true,
-			capability.CapSetPermission: true,
-			capability.CapCompact:       true,
-		},
-		PermissionModeMeta: capability.PermissionModeMeta{
-			AllowedModes:         []string{"default", "plan"},
-			DefaultMode:          "default",
-			SwitchableDuringTurn: false,
-			Order:                []string{"default", "plan"},
-			LaunchDefaultMode:    "default",
+			capability.CapSteer: true,
+			capability.CapAbort: true,
 		},
 	}
 }
@@ -193,7 +184,13 @@ func drainStream(s stream, out chan<- agentruntime.Event, result *agentruntime.R
 	var usage *provider.Usage
 	var stopErr error
 	for s.Next() {
-		events, u, err := translate(s.Event(), active)
+		raw := s.Event()
+		events, u, err := translate(raw)
+		if active != nil && raw.Text != "" {
+			if steers := active.consumePending(raw.Text); len(steers) > 0 {
+				events = append([]agentruntime.Event{agentruntime.SteerConsumed{Steers: steers}}, events...)
+			}
+		}
 		for _, ev := range events {
 			out <- ev
 		}

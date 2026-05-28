@@ -1,7 +1,6 @@
 package agentruntime
 
 import (
-	"fmt"
 	"strings"
 
 	"agentre/internal/model/entity/agent_backend_entity"
@@ -20,7 +19,7 @@ func buildPiAgentShellCommand(spec LaunchCommandSpec, cwd string) (string, error
 	if model := piAgentModel(spec.Backend, spec.ProviderSessionID); model != "" {
 		argv = append(argv, "--model", model)
 	}
-	if eff := strings.TrimSpace(spec.Backend.ReasoningEffort); eff != "" {
+	if eff := piAgentThinking(spec.Backend); eff != "" {
 		argv = append(argv, "--thinking", eff)
 	}
 	return assembleShellLine(cwd, env, argv), nil
@@ -30,8 +29,19 @@ func piAgentModel(b *agent_backend_entity.AgentBackend, _ string) string {
 	if b == nil {
 		return ""
 	}
-	if eff := strings.TrimSpace(b.ReasoningEffort); eff != "" {
-		return fmt.Sprintf("gpt-5.5:%s", eff)
-	}
 	return "gpt-5.5"
+}
+
+func piAgentThinking(b *agent_backend_entity.AgentBackend) string {
+	if b == nil {
+		return ""
+	}
+	switch strings.TrimSpace(b.ReasoningEffort) {
+	case "low", "medium", "high", "xhigh":
+		return strings.TrimSpace(b.ReasoningEffort)
+	case "max":
+		return "xhigh"
+	default:
+		return ""
+	}
 }

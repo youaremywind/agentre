@@ -7,7 +7,7 @@ import (
 	pkgpi "agentre/pkg/piagent"
 )
 
-func translate(ev pkgpi.Event, active *activeSession) (events []agentruntime.Event, usage *provider.Usage, stopErr error) {
+func translate(ev pkgpi.Event) (events []agentruntime.Event, usage *provider.Usage, stopErr error) {
 	switch ev.Kind {
 	case pkgpi.EventTextDelta:
 		if ev.Text != "" {
@@ -33,11 +33,6 @@ func translate(ev pkgpi.Event, active *activeSession) (events []agentruntime.Eve
 		stopErr = ev.Err
 	case pkgpi.EventDone:
 		events = append(events, agentruntime.Done{})
-	}
-	if active != nil && ev.Text != "" {
-		if steers := active.consumePending(ev.Text); len(steers) > 0 {
-			events = append([]agentruntime.Event{agentruntime.SteerConsumed{Steers: steers}}, events...)
-		}
 	}
 	return events, usage, stopErr
 }
