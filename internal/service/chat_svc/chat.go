@@ -39,6 +39,7 @@ import (
 	_ "agentre/internal/pkg/agentruntime/runtimes/builtin"
 	claudecodert "agentre/internal/pkg/agentruntime/runtimes/claudecode"
 	_ "agentre/internal/pkg/agentruntime/runtimes/codex"
+	_ "agentre/internal/pkg/agentruntime/runtimes/piagent"
 	"agentre/internal/pkg/agentruntime/runtimes/remote"
 	"agentre/internal/pkg/code"
 	"agentre/internal/pkg/httpgateway"
@@ -235,7 +236,7 @@ func (s *chatSvc) ListAgents(ctx context.Context, _ *ListAgentsRequest) (*ListAg
 				} else {
 					item.ChattableHint = "请先在设置 → LLM 供应商激活该 Agent 后端关联的供应商"
 				}
-			case agent_backend_entity.TypeClaudeCode, agent_backend_entity.TypeCodex:
+			case agent_backend_entity.TypeClaudeCode, agent_backend_entity.TypeCodex, agent_backend_entity.TypePiAgent:
 				if be.LLMProviderKey == "" {
 					// 走 CLI 自身 login；这里不做可达性探测，启动失败由 chat turn 兜底报错。
 					item.Chattable = true
@@ -881,7 +882,7 @@ func (s *chatSvc) resolveAgentBackend(ctx context.Context, agentID int64) (
 		if prov == nil || !prov.IsActive() {
 			return nil, nil, nil, i18n.NewError(ctx, code.ChatAgentNotChattable)
 		}
-	case agent_backend_entity.TypeClaudeCode, agent_backend_entity.TypeCodex:
+	case agent_backend_entity.TypeClaudeCode, agent_backend_entity.TypeCodex, agent_backend_entity.TypePiAgent:
 		if be.LLMProviderKey != "" {
 			prov, err = llm_provider_repo.LLMProvider().FindByKey(ctx, be.LLMProviderKey)
 			if err != nil {
@@ -1514,6 +1515,8 @@ func (s *chatSvc) backendForkAnchor(
 		return anchor, nil
 	case agent_backend_entity.TypeCodex:
 		return s.codexRollbackAnchor(ctx, sess, userMsg)
+	case agent_backend_entity.TypePiAgent:
+		return "", i18n.NewError(ctx, code.ChatRegenerateUnsupported)
 	default:
 		runner := agentruntime.RuntimeFor(agent_backend_entity.BackendType(be.Type))
 		if _, ok := runner.(agentruntime.Rewinder); !ok {
@@ -1844,6 +1847,8 @@ func (s *chatSvc) runTurn(
 		req.PermissionMode = normalizeStoredPermissionMode(agent_backend_entity.TypeClaudeCode, sess.PermissionMode)
 	case agent_backend_entity.TypeCodex:
 		req.CollaborationMode = normalizeStoredPermissionMode(agent_backend_entity.TypeCodex, sess.PermissionMode)
+	case agent_backend_entity.TypePiAgent:
+		req.CollaborationMode = normalizeStoredPermissionMode(agent_backend_entity.TypePiAgent, sess.PermissionMode)
 	}
 
 	events, result, err := runner.Run(ctx, req)
@@ -2041,7 +2046,7 @@ func (s *chatSvc) runTurn(
 		nextUser, nextAssistant, payload, perr := s.persistAutoContinueTurn(finalCtx, sess, be, assistantMsg, assistantMsg.Model, pending)
 		if perr == nil {
 			s.emitter.Emit(finalCtx, stream, *payload)
-			if be.IsClaudeCode() || be.IsCodex() {
+			if be.IsClaudeCode() || be.IsCodex() || be.IsPiAgent() {
 				s.refreshPermissionModeForAutoContinue(finalCtx, sess)
 			}
 			// 同 goroutine + 同锁 + 同 stream 名递归跑下一轮：runTurn 内部

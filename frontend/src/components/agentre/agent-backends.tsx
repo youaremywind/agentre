@@ -1,6 +1,7 @@
 import * as React from "react";
 import {
   AlertCircle,
+  Bot,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -63,7 +64,7 @@ import { AgentreDialog } from "./app-dialog";
 
 type Backend = agent_backend_svc.BackendItem;
 type Provider = llm_provider_svc.ProviderItem;
-type BackendType = "builtin" | "claudecode" | "codex";
+type BackendType = "builtin" | "claudecode" | "codex" | "piagent";
 
 // DeviceView — local shim matching remote_device_svc.DeviceView.
 // wailsjs/go/models is generated at build time and not present in this worktree.
@@ -97,6 +98,12 @@ const backendTypeMeta: Record<
     description:
       "包装本地 codex CLI；通过 OpenAI Responses API 匹配 openai-response 类型供应商",
     icon: Wand2,
+    disabled: false,
+  },
+  piagent: {
+    label: "Pi Agent CLI",
+    description: "包装本地 pi CLI；读取 ~/.pi/agent 配置并通过 RPC mode 执行任务",
+    icon: Bot,
     disabled: false,
   },
 };
@@ -198,6 +205,9 @@ const RESERVED_ENV_KEYS = new Set([
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "OPENAI_API_BASE",
+  "PI_OFFLINE",
+  "PI_CODING_AGENT_DIR",
+  "PI_CODING_AGENT_SESSION_DIR",
 ]);
 
 const LOCAL_DEVICE_SELECT_VALUE = "__local_device__";
@@ -215,6 +225,7 @@ function matchingProviders(t: BackendType, providers: Provider[]) {
     return providers.filter((p) => p.type === "anthropic");
   if (t === "codex")
     return providers.filter((p) => p.type === "openai-response");
+  if (t === "piagent") return [];
   return providers;
 }
 
@@ -227,7 +238,18 @@ function strictMatchLabel(
     if (providerType === "openai-response") return "openai-response";
     return "openai-response";
   }
+  if (t === "piagent") return null;
   return null;
+}
+
+function isCliBackend(t: BackendType): boolean {
+  return t === "claudecode" || t === "codex" || t === "piagent";
+}
+
+function cliBinaryName(t: BackendType): string {
+  if (t === "claudecode") return "claude";
+  if (t === "piagent") return "pi";
+  return "codex";
 }
 
 function safeParseRoutes(s: string): Record<string, string> {
@@ -562,7 +584,7 @@ function BackendRow({
   const typ = (backend.type as BackendType) ?? "builtin";
   const meta = backendTypeMeta[typ] ?? backendTypeMeta.builtin;
   const Icon = meta.icon;
-  const cliBased = typ === "claudecode" || typ === "codex";
+  const cliBased = isCliBackend(typ);
   // 未关联 provider 的 CLI 后端 = 走 CLI 自身 login，不算需处理。
   const unlinkedCli =
     cliBased &&
@@ -781,7 +803,7 @@ function BackendEditor({
     t: BackendType,
     dev: string = "",
   ): Promise<string | null> {
-    if (t !== "claudecode" && t !== "codex") return null;
+    if (!isCliBackend(t)) return null;
     const r = await ResolveAgentBackendCLIPath({
       type: t,
       deviceId: dev,
@@ -810,8 +832,7 @@ function BackendEditor({
     // create 模式下，切到 CLI 类型自动尝试探测一次，命中就填进去；用户随时可手改/清空。
     // edit 模式 type 是 disabled 的，所以这里不会跑；编辑场景只靠 Input 旁的「自动识别」按钮。
     if (
-      state.kind === "create" &&
-      (nextType === "claudecode" || nextType === "codex")
+      state.kind === "create" && isCliBackend(nextType)
     ) {
       void (async () => {
         // 新建流程的隐式自动填：静默吞错，远端不可达就当没识别到。
@@ -832,7 +853,7 @@ function BackendEditor({
         setCliPath(path);
       } else {
         setCliProbeMiss(
-          `$PATH 中未找到 ${type === "claudecode" ? "claude" : "codex"}，请手动填写`,
+          `$PATH 中未找到 ${cliBinaryName(type)}，请手动填写`,
         );
       }
     } catch (e) {
@@ -843,7 +864,7 @@ function BackendEditor({
     }
   }
 
-  const cliBased = type === "claudecode" || type === "codex";
+  const cliBased = isCliBackend(type);
   React.useEffect(() => {
     if (!cliBased) return;
     let mounted = true;
@@ -1079,7 +1100,7 @@ function BackendEditor({
   );
   const strictLabel = strictMatchLabel(type, selectedProvider?.type);
   // builtin 必须有 provider；claudecode / codex 允许未关联（CLI 自身登录）。
-  const providerOptional = type === "claudecode" || type === "codex";
+  const providerOptional = isCliBackend(type);
   const submitDisabled =
     submitting ||
     (!providerOptional &&
@@ -1096,7 +1117,7 @@ function BackendEditor({
         open={open}
         onOpenChange={(o) => (!o ? onClose() : undefined)}
         title={state.kind === "edit" ? "编辑 Agent 后端" : "新增 Agent 后端"}
-        description="选择执行引擎并关联 LLM 供应商；CLI 后端通过本地 HTTP 代理转发请求，无需 claude/codex login。"
+        description="选择执行引擎并关联 LLM 供应商；CLI 后端可直接使用各自登录态或本地配置。"
         contentClassName="max-w-xl"
         bodyClassName="flex flex-col gap-4"
         onSubmit={handleSubmit}
@@ -1404,7 +1425,7 @@ function BackendTypeSegmented({
 }) {
   const items = Object.keys(backendTypeMeta) as BackendType[];
   return (
-    <div className="grid grid-cols-3 gap-0 rounded-md border border-border bg-secondary p-0.5">
+    <div className="grid grid-cols-4 gap-0 rounded-md border border-border bg-secondary p-0.5">
       {items.map((t) => {
         const m = backendTypeMeta[t];
         const Icon = m.icon;
@@ -1451,7 +1472,7 @@ function LlmProviderField({
   editing: boolean;
 }) {
   // claudecode / codex 允许「不关联」走 CLI 自身登录；builtin 必填。
-  const optional = type === "claudecode" || type === "codex";
+  const optional = isCliBackend(type);
   // Match by providerKey (preferred) or fall back to string id for legacy data.
   const matchesProvider = (p: Provider) =>
     (p.providerKey && p.providerKey === value) || String(p.id) === value;
@@ -1460,6 +1481,29 @@ function LlmProviderField({
   const selected = providers.some(matchesProvider);
   // Resolve which key to use for a provider: prefer providerKey, fall back to id.
   const providerSelectValue = (p: Provider) => p.providerKey || String(p.id);
+
+  if (type === "piagent") {
+    return (
+      <div className="flex flex-col gap-1.5 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="font-medium">LLM 供应商</span>
+          <Badge
+            variant="secondary"
+            className="rounded-sm bg-secondary px-1.5 py-0 font-mono text-2xs text-muted-foreground"
+          >
+            使用 ~/.pi/agent
+          </Badge>
+        </div>
+        <Alert className="border-border bg-secondary text-xs">
+          <AlertCircle className="size-4" aria-hidden="true" />
+          <AlertTitle className="text-xs">Pi Agent 独立配置</AlertTitle>
+          <AlertDescription className="text-2xs">
+            Pi Agent 会读取本机 Pi 配置与认证，不关联 Agentre LLM Provider。
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   if (empty && !optional) {
     return (
@@ -1517,7 +1561,9 @@ function LlmProviderField({
           <AlertDescription className="text-2xs">
             {type === "claudecode"
               ? "未关联将走 claude CLI 自身登录态；如需通过本机代理转发请先新增 anthropic 类型供应商。"
-              : "未关联将走 codex CLI 自身登录态；如需通过本机代理转发请先新增 openai-response 类型供应商。"}
+              : type === "codex"
+                ? "未关联将走 codex CLI 自身登录态；如需通过本机代理转发请先新增 openai-response 类型供应商。"
+                : "Pi Agent 使用 ~/.pi/agent 配置，不需要关联 Agentre LLM 供应商。"}
           </AlertDescription>
         </Alert>
       ) : (
@@ -1580,7 +1626,7 @@ function CliPathField({
   detecting: boolean;
   missMessage: string | null;
 }) {
-  const bin = type === "claudecode" ? "claude" : "codex";
+  const bin = cliBinaryName(type);
   return (
     <div className="flex flex-col gap-1.5 text-xs">
       <div className="flex items-center justify-between">

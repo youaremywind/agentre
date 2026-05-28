@@ -62,6 +62,7 @@ const backendHints: Record<string, string> = {
   claudecode: "通过 Claude Code CLI 执行任务，工具调用经 CLI 中转。",
   "claude-code": "通过 Claude Code CLI 执行任务，工具调用经 CLI 中转。",
   codex: "通过 Codex CLI 执行任务，工具调用经 CLI 中转。",
+  piagent: "通过 Pi Agent CLI 执行任务，读取 ~/.pi/agent 配置。",
   builtin: "走内置 SDK 调用 LLM 供应商，工具内嵌执行。",
 };
 

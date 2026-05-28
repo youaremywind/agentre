@@ -371,6 +371,7 @@ describe("AgentBackendsPanel", () => {
   it.each([
     ["claudecode", "无 provider 的 claude", "Anthropic", "anthropic"],
     ["codex", "无 provider 的 codex", "OpenAI", "openai-response"],
+    ["piagent", "Pi Agent", "", ""],
   ])(
     "编辑 %s 且未关联供应商时不显示原供应商停用提示",
     async (type, name, providerName, providerType) => {
@@ -430,11 +431,54 @@ describe("AgentBackendsPanel", () => {
       expect(
         within(dialog).queryByText(/原 LLM 供应商已停用/),
       ).not.toBeInTheDocument();
-      expect(
-        within(dialog).getByText(/不关联（走 CLI 自身登录）/),
-      ).toBeInTheDocument();
+      if (type === "piagent") {
+        expect(within(dialog).getByText(/Pi Agent 独立配置/)).toBeInTheDocument();
+      } else {
+        expect(
+          within(dialog).getByText(/不关联（走 CLI 自身登录）/),
+        ).toBeInTheDocument();
+      }
     },
   );
+
+  it("新建 pi-agent 时不需要 provider，保存时提交 type=piagent 和 cliPath", async () => {
+    const user = userEvent.setup();
+    const mocks = installAppMock({
+      ResolveAgentBackendCLIPath: vi.fn(() =>
+        Promise.resolve({ path: "/opt/homebrew/bin/pi", found: true }),
+      ),
+    });
+    render(<AgentBackendsPanel />);
+
+    await screen.findByRole("table", { name: "Agent 后端列表" });
+    await user.click(screen.getByRole("button", { name: /新增后端/ }));
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(
+      within(dialog).getByPlaceholderText("例如：本机 · Claude Code"),
+      { target: { value: "本机 Pi" } },
+    );
+    await user.click(within(dialog).getByRole("button", { name: /Pi Agent CLI/ }));
+
+    const input = within(dialog).getByPlaceholderText(
+      "/usr/local/bin/pi",
+    ) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("/opt/homebrew/bin/pi"));
+    expect(within(dialog).getByText(/Pi Agent 独立配置/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(mocks.CreateAgentBackend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "piagent",
+          name: "本机 Pi",
+          llmProviderKey: "",
+          cliPath: "/opt/homebrew/bin/pi",
+        }),
+      );
+    });
+  });
 
   it("新建 claudecode 时允许不选 provider 提交 llmProviderKey 空串", async () => {
     const user = userEvent.setup();
