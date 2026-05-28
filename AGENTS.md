@@ -34,6 +34,7 @@ Guidance for Codex when working in this repository.
 - [docs/development.md](docs/development.md) — Red→Green→Refactor、SOLID、Fix Discipline、测试栈（`testutils.Database(t)` + sqlmock + mockgen + goconvey）、commit 风格、日志规范、`.golangci.yml` 例外。
 - [docs/frontend.md](docs/frontend.md) — shadcn `@/components/ui/*` 强制约定、pnpm、`make lint` / `gofmt` / `goimports`。
 - [docs/debugging.md](docs/debugging.md) — sqlite3 / jq / 日志过滤命令、table-to-feature 映射、常见踩坑（macOS `Application Support` 路径要引号）。
+- [docs/agent-backend.md](docs/agent-backend.md) — 接入新 AI Agent backend 的完整路径（entity / migration / runtime / translator / capability / daemon import / 前端 gating），含 TDD 测试清单与常见反模式。
 
 ## 关键约束（必记）
 
