@@ -121,12 +121,16 @@ func (cliProber) Run(ctx context.Context, b *agent_backend_entity.AgentBackend, 
 	if err != nil {
 		return "", err
 	}
+	model := deps.Model
+	if b.IsPiAgent() {
+		model = buildPiAgentProbeModel(b)
+	}
 	resp, err := cliprober.Probe(ctx, cliprober.ProbeRequest{
 		Type:         b.Type,
 		CLIPath:      b.CLIPath,
 		Sandbox:      b.Sandbox,
 		Approval:     b.Approval,
-		Model:        deps.Model,
+		Model:        model,
 		Env:          env,
 		CodexConfigs: configs,
 	})
@@ -134,6 +138,10 @@ func (cliProber) Run(ctx context.Context, b *agent_backend_entity.AgentBackend, 
 		return "", err
 	}
 	return resp.Text, nil
+}
+
+func buildPiAgentProbeModel(*agent_backend_entity.AgentBackend) string {
+	return ""
 }
 
 func buildCLIProbeEnv(b *agent_backend_entity.AgentBackend, deps ProbeDeps) (map[string]string, []string, error) {

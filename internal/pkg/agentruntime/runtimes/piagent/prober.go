@@ -8,12 +8,9 @@ import (
 // DefaultBinary returns the executable name used when cli_path is empty.
 func DefaultBinary() string { return "pi" }
 
-const fallbackModelID = "gpt-5.5"
+const fallbackModelID = ""
 
-func defaultModelForBackend(b *agent_backend_entity.AgentBackend) string {
-	if b != nil && b.ReasoningEffort != "" {
-		return fallbackModelID + ":" + b.ReasoningEffort
-	}
+func defaultModelForBackend(*agent_backend_entity.AgentBackend) string {
 	return fallbackModelID
 }
 

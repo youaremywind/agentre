@@ -43,6 +43,20 @@ func TestPiAgentCapabilities(t *testing.T) {
 	})
 }
 
+func TestDefaultModelForBackend(t *testing.T) {
+	Convey("Given a pi-agent backend using ~/.pi/agent config", t, func() {
+		Convey("When reasoning_effort is set, then Agentre leaves model empty so pi uses user defaultProvider/defaultModel and thinking stays separate", func() {
+			model := defaultModelForBackend(&agent_backend_entity.AgentBackend{
+				Type:            string(agent_backend_entity.TypePiAgent),
+				ReasoningEffort: "high",
+			})
+
+			So(model, ShouldEqual, fallbackModelID)
+			So(model, ShouldEqual, "")
+		})
+	})
+}
+
 func TestRun_DefaultModelWhenProviderMissing(t *testing.T) {
 	Convey("Given pi-agent CLI login runtime", t, func() {
 		restore := SetSessionFactoryForTest(func(_ agentruntime.RunRequest, _ map[string]string, _ string) (sessionHandle, error) {

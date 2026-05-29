@@ -154,7 +154,7 @@ func (p *rpcProcess) terminate(ctx context.Context, grace time.Duration) error {
 	defer timer.Stop()
 	select {
 	case err := <-p.done:
-		return wrapExitError(err, p.stderr.String())
+		return wrapTerminateExitError(err, p.stderr.String())
 	case <-timer.C:
 		_ = p.handle.Kill()
 		return wrapExitError(<-p.done, p.stderr.String())
@@ -169,6 +169,20 @@ func wrapExitError(err error, stderr string) error {
 		return nil
 	}
 	return &ExitError{Err: err, Stderr: stderr}
+}
+
+func wrapTerminateExitError(err error, stderr string) error {
+	if err == nil || isInterruptExit(err) {
+		return nil
+	}
+	return wrapExitError(err, stderr)
+}
+
+func isInterruptExit(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.TrimSpace(err.Error()) == "signal: interrupt"
 }
 
 func failureResponseError(r rpcResponse) error {

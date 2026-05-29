@@ -26,10 +26,7 @@ func buildPiAgentShellCommand(spec LaunchCommandSpec, cwd string) (string, error
 }
 
 func piAgentModel(b *agent_backend_entity.AgentBackend, _ string) string {
-	if b == nil {
-		return ""
-	}
-	return "gpt-5.5"
+	return ""
 }
 
 func piAgentThinking(b *agent_backend_entity.AgentBackend) string {
