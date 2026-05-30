@@ -21,8 +21,14 @@ type Client struct {
 	model        string
 	thinking     string
 	systemPrompt string
-	killGrace    time.Duration
-	runner       processRunner
+	// sessionDir 是 Pi session JSONL 的存储目录（--session-dir）。和 cwd（工具
+	// 工作目录）分开，避免把 session 文件写进用户项目里。
+	sessionDir string
+	// session 非空时透传 --session <path>：Pi 会在该路径不存在时新建、存在时
+	// resume，从而跨 turn 复用同一会话历史。
+	session   string
+	killGrace time.Duration
+	runner    processRunner
 }
 
 func New(opts ...Option) *Client {
@@ -42,15 +48,18 @@ func (c *Client) Stream(ctx context.Context, prompt string, opts ...RunOption) (
 	for _, o := range opts {
 		o(&spec)
 	}
-	// This wrapper currently implements single-prompt turns; Pi RPC session
-	// switching/resume can be added later without changing the Agentre runtime API.
-	_ = spec
+	// Session resume is wired at the Client level (WithSession → --session); the
+	// per-turn spec carries multimodal images透传到 prompt 帧。
 	proc, err := c.startRPC(ctx)
 	if err != nil {
 		return nil, err
 	}
 	stream := newStream(proc, c.killGrace)
-	if err := stream.send(ctx, map[string]any{"type": "prompt", "message": prompt}); err != nil {
+	frame := map[string]any{"type": "prompt", "message": prompt}
+	if imgs := imagesToWire(spec.images); len(imgs) > 0 {
+		frame["images"] = imgs
+	}
+	if err := stream.send(ctx, frame); err != nil {
 		_ = stream.Close(context.Background())
 		return nil, err
 	}
@@ -257,6 +266,26 @@ func lastAssistantFromAgentEnd(raw json.RawMessage) *assistantMessage {
 		}
 	}
 	return nil
+}
+
+// userEchoText 从 message_start/message_end 的 message 里取出 user 角色的文本。
+// 非 user 角色返回 ok=false。content 可能是字符串或 content block 数组，统一交给
+// contentText 抽取。
+func userEchoText(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var m struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return "", false
+	}
+	if m.Role != "user" {
+		return "", false
+	}
+	return contentText(m.Content), true
 }
 
 func contentText(raw json.RawMessage) string {

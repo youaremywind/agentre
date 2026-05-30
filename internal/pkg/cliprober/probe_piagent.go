@@ -22,6 +22,8 @@ func probePiAgent(ctx context.Context, req ProbeRequest) (*ProbeResponse, error)
 	opts := []piagent.Option{
 		piagent.WithBinary(binary),
 		piagent.WithCwd(cwd),
+		// 探测会话隔离在临时目录里（defer RemoveAll 清掉），不落进 ~/.pi。
+		piagent.WithSessionDir(cwd),
 		piagent.WithEnv(req.Env),
 	}
 	if model := strings.TrimSpace(req.Model); model != "" {

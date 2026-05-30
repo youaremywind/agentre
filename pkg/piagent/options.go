@@ -9,13 +9,18 @@ const (
 	PermissionPlan    PermissionMode = "plan"
 )
 
-const defaultModelID = "gpt-5.5"
-
 type Option func(*Client)
 
 func WithBinary(path string) Option { return func(c *Client) { c.binary = path } }
 
 func WithCwd(path string) Option { return func(c *Client) { c.cwd = path } }
+
+// WithSessionDir 设置 Pi session JSONL 的存储目录（--session-dir），独立于 cwd。
+func WithSessionDir(path string) Option { return func(c *Client) { c.sessionDir = path } }
+
+// WithSession 设置要新建/resume 的 Pi session 文件路径（--session）。同一会话跨
+// turn 传入相同路径即可复用上下文。
+func WithSession(path string) Option { return func(c *Client) { c.session = path } }
 
 func WithEnv(env map[string]string) Option {
 	return func(c *Client) { c.env = cloneMap(env) }

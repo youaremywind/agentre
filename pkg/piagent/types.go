@@ -87,8 +87,11 @@ func buildEnv(env map[string]string) []string {
 
 func buildRPCArgs(c *Client) []string {
 	args := []string{"--mode", "rpc"}
-	if strings.TrimSpace(c.cwd) != "" {
-		args = append(args, "--session-dir", strings.TrimSpace(c.cwd))
+	if strings.TrimSpace(c.sessionDir) != "" {
+		args = append(args, "--session-dir", strings.TrimSpace(c.sessionDir))
+	}
+	if strings.TrimSpace(c.session) != "" {
+		args = append(args, "--session", strings.TrimSpace(c.session))
 	}
 	if strings.TrimSpace(c.systemPrompt) != "" {
 		args = append(args, "--append-system-prompt", strings.TrimSpace(c.systemPrompt))

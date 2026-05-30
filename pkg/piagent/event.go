@@ -12,8 +12,12 @@ const (
 	EventUsage           EventKind = "usage"
 	EventCompactBoundary EventKind = "compact_boundary"
 	EventRuntimeStatus   EventKind = "runtime_status"
-	EventError           EventKind = "error"
-	EventDone            EventKind = "done"
+	// EventUserMessage Pi 把用户消息（首条 prompt 或 mid-turn steer 注入）回显
+	// 成一条 user message。Text 是该消息文本，runtime 用它对照 pending steer
+	// FIFO 配对，命中即 emit SteerConsumed（与 codex EventUserMessage 同构）。
+	EventUserMessage EventKind = "user_message"
+	EventError       EventKind = "error"
+	EventDone        EventKind = "done"
 )
 
 type Event struct {

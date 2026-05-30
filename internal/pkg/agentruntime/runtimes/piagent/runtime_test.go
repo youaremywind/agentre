@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	cagoblocks "github.com/cago-frame/agents/agent/blocks"
 	. "github.com/smartystreets/goconvey/convey"
 
 	"agentre/internal/model/entity/agent_backend_entity"
@@ -19,8 +20,9 @@ func TestPiAgentCapabilities(t *testing.T) {
 		Convey("When checking supported controls Then it mirrors implemented Pi RPC controls", func() {
 			So(caps.Has(capability.CapSteer), ShouldBeTrue)
 			So(caps.Has(capability.CapAbort), ShouldBeTrue)
+			So(caps.Has(capability.CapImageInput), ShouldBeTrue)
+			So(caps.Has(capability.CapCompact), ShouldBeTrue)
 			So(caps.Has(capability.CapSetPermission), ShouldBeFalse)
-			So(caps.Has(capability.CapCompact), ShouldBeFalse)
 			So(caps.Has(capability.CapCancelSteer), ShouldBeFalse)
 			So(caps.Has(capability.CapDrainSteer), ShouldBeFalse)
 			So(caps.Has(capability.CapToolPermission), ShouldBeFalse)
@@ -80,14 +82,49 @@ func TestRun_DefaultModelWhenProviderMissing(t *testing.T) {
 	})
 }
 
+func TestRun_ForwardsUserBlockImagesToStream(t *testing.T) {
+	Convey("Given a pi-agent turn carrying an inline image block", t, func() {
+		sess := &fakeSession{stream: &emptyStream{}, sid: "pi-session"}
+		restore := SetSessionFactoryForTest(func(_ agentruntime.RunRequest, _ map[string]string, _ string) (sessionHandle, error) {
+			return sess, nil
+		})
+		defer restore()
+
+		Convey("When Run executes Then the image reaches Pi as a multimodal attachment", func() {
+			events, _, err := New().Run(context.Background(), agentruntime.RunRequest{
+				Backend:   &agent_backend_entity.AgentBackend{Type: string(agent_backend_entity.TypePiAgent), EnvJSON: "{}"},
+				SessionID: 1,
+				Cwd:       t.TempDir(),
+				UserText:  "what is this?",
+				UserBlocks: []cagoblocks.ContentBlock{
+					cagoblocks.TextBlock{Text: "what is this?"},
+					cagoblocks.ImageBlock{MediaType: "image/png", Source: cagoblocks.BlobSource{Inline: []byte{1, 2, 3}}},
+				},
+			})
+			So(err, ShouldBeNil)
+			for range events {
+			}
+			So(sess.gotImages, ShouldHaveLength, 1)
+			So(sess.gotImages[0].MimeType, ShouldEqual, "image/png")
+			So(string(sess.gotImages[0].Data), ShouldEqual, string([]byte{1, 2, 3}))
+		})
+	})
+}
+
 type fakeSession struct {
-	stream stream
-	sid    string
+	stream     stream
+	sid        string
+	gotImages  []pkgpiagent.Image
+	gotPrompt  string
+	streamCall int
 }
 
 func (s *fakeSession) Close(context.Context) error { return nil }
 func (s *fakeSession) ID() string                  { return s.sid }
-func (s *fakeSession) Stream(context.Context, string, string) (stream, error) {
+func (s *fakeSession) Stream(_ context.Context, prompt, _ string, images []pkgpiagent.Image) (stream, error) {
+	s.streamCall++
+	s.gotPrompt = prompt
+	s.gotImages = images
 	return s.stream, nil
 }
 func (s *fakeSession) Compact(context.Context) (stream, error)          { return s.stream, nil }

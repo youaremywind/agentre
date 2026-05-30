@@ -108,6 +108,11 @@ func (s *Stream) drain(ctx context.Context) {
 			if isAcceptedPromptResponse(resp) {
 				promptAccepted = true
 			}
+			// compact turn 不发 agent_end —— compact response 即终止信号。
+			if resp.Command == "compact" {
+				s.emit(Event{Kind: EventDone})
+				return
+			}
 			continue
 		}
 		if !promptAccepted && probe.Type != "extension_ui_request" {
@@ -133,6 +138,12 @@ func (s *Stream) drain(ctx context.Context) {
 
 func (s *Stream) handleRPCEvent(ev rpcEvent) {
 	switch ev.Type {
+	case "message_start":
+		// 只有 user 消息回显才 surface（首条 prompt + mid-turn steer 注入）；
+		// runtime 据此对照 pending steer emit SteerConsumed。
+		if text, ok := userEchoText(ev.Message); ok {
+			s.emit(Event{Kind: EventUserMessage, Text: text})
+		}
 	case "message_update":
 		s.handleAssistantDelta(ev.AssistantMessageEvent)
 	case "message_end":
@@ -161,14 +172,9 @@ func (s *Stream) handleAssistantDelta(delta assistantDelta) {
 		s.emit(Event{Kind: EventTextDelta, Text: delta.Delta})
 	case "thinking_delta":
 		s.emit(Event{Kind: EventThinkingDelta, Text: delta.Delta})
-	case "toolcall_end":
-		var blk contentBlock
-		if len(delta.ToolCall) > 0 {
-			_ = json.Unmarshal(delta.ToolCall, &blk)
-		}
-		if blk.ID != "" || blk.Name != "" {
-			s.emit(Event{Kind: EventPreToolUse, Tool: ToolEvent{ID: blk.ID, Name: blk.Name, Input: blk.Arguments}})
-		}
+	// 注意：toolcall_end 不再 emit PreToolUse。Pi 对一次工具调用会同时发
+	// message_update/toolcall_end 和后续的 tool_execution_start（同一个
+	// toolCallId），PreToolUse 只从 tool_execution_start 出，避免下游工具卡重复。
 	case "error":
 		err := fmt.Errorf("piagent: %s", strings.TrimSpace(delta.Reason))
 		s.setErr(err)

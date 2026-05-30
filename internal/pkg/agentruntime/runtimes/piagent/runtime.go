@@ -13,6 +13,7 @@ import (
 	"agentre/internal/model/entity/agent_backend_entity"
 	"agentre/internal/pkg/agentruntime"
 	"agentre/internal/pkg/agentruntime/capability"
+	pkgpi "agentre/pkg/piagent"
 )
 
 var defaultRuntime = New()
@@ -38,8 +39,10 @@ func New() *Runtime { return &Runtime{active: map[int64]*activeSession{}} }
 func (r *Runtime) Capabilities() capability.Capabilities {
 	return capability.Capabilities{
 		Set: map[capability.Capability]bool{
-			capability.CapSteer: true,
-			capability.CapAbort: true,
+			capability.CapSteer:      true,
+			capability.CapAbort:      true,
+			capability.CapImageInput: true,
+			capability.CapCompact:    true,
 		},
 	}
 }
@@ -71,7 +74,7 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 	if req.Compact {
 		s, err = sess.Compact(ctx)
 	} else {
-		s, err = sess.Stream(ctx, req.UserText, req.CollaborationMode)
+		s, err = sess.Stream(ctx, req.UserText, req.CollaborationMode, extractImages(req.UserBlocks))
 	}
 	if err != nil {
 		return nil, nil, err
@@ -159,25 +162,19 @@ func (a *activeSession) removePending(id string) {
 	a.pending = out
 }
 
-func (a *activeSession) consumePending(text string) []agentruntime.ConsumedSteer {
+// consumePendingSteer 按 FIFO 找第一条文本匹配的 pending steer，命中即移除并返回。
+// 只有 Pi 真正把 steer 注入对话（回显成 EventUserMessage）时才调用，避免助手输出
+// 文字恰好等于 steer 文本造成误判。
+func (a *activeSession) consumePendingSteer(text string) (agentruntime.ConsumedSteer, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if len(a.pending) == 0 {
-		return nil
-	}
-	if strings.TrimSpace(text) == "" {
-		out := append([]agentruntime.ConsumedSteer(nil), a.pending...)
-		a.pending = nil
-		return out
-	}
 	for i, it := range a.pending {
 		if it.Text == text {
-			out := []agentruntime.ConsumedSteer{it}
 			a.pending = append(a.pending[:i], a.pending[i+1:]...)
-			return out
+			return it, true
 		}
 	}
-	return nil
+	return agentruntime.ConsumedSteer{}, false
 }
 
 func drainStream(s stream, out chan<- agentruntime.Event, result *agentruntime.RunResult, active *activeSession) {
@@ -185,12 +182,21 @@ func drainStream(s stream, out chan<- agentruntime.Event, result *agentruntime.R
 	var stopErr error
 	for s.Next() {
 		raw := s.Event()
-		events, u, err := translate(raw)
-		if active != nil && raw.Text != "" {
-			if steers := active.consumePending(raw.Text); len(steers) > 0 {
-				events = append([]agentruntime.Event{agentruntime.SteerConsumed{Steers: steers}}, events...)
+		if raw.Kind == pkgpi.EventUserMessage {
+			// Pi 把 steer 注入回显成 user message；对照 pending FIFO 命中即 consumed。
+			if active != nil {
+				if steer, ok := active.consumePendingSteer(raw.Text); ok {
+					out <- agentruntime.SteerConsumed{Steers: []agentruntime.ConsumedSteer{steer}}
+				}
 			}
+			continue
 		}
+		if raw.Model != "" {
+			// Pi 在 usage 帧上报真实模型 id；piagent 不绑 provider，靠这里把模型回
+			// 吐给 chat_svc（result.Model → assistantMsg.Model）。
+			result.Model = raw.Model
+		}
+		events, u, err := translate(raw)
 		for _, ev := range events {
 			out <- ev
 		}
