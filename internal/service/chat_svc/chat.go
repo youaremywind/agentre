@@ -744,16 +744,15 @@ func (s *chatSvc) Compact(ctx context.Context, req *CompactRequest) (*CompactRes
 	if sess == nil {
 		return nil, i18n.NewError(ctx, code.ChatSessionNotFound)
 	}
-	if strings.TrimSpace(sess.ProviderSessionID) == "" {
-		return nil, i18n.NewError(ctx, code.ChatCompactNoSession)
-	}
-
 	a, be, prov, err := s.resolveAgentBackend(ctx, sess.AgentID)
 	if err != nil {
 		return nil, err
 	}
-	if !be.IsCodex() {
-		return nil, i18n.NewError(ctx, code.ChatCompactUnsupported)
+	// Codex compact needs an existing provider thread id. Pi Agent resumes by
+	// deterministic session file path (<AppDataDir>/piagent/sessions/agentre-<sid>.jsonl),
+	// so chat_sessions.provider_session_id is intentionally empty and must not gate compact.
+	if compactRequiresProviderSession(be) && strings.TrimSpace(sess.ProviderSessionID) == "" {
+		return nil, i18n.NewError(ctx, code.ChatCompactNoSession)
 	}
 	runner, err := s.selectRunner(ctx, be, sess.ID)
 	if err != nil {
@@ -763,10 +762,26 @@ func (s *chatSvc) Compact(ctx context.Context, req *CompactRequest) (*CompactRes
 			zap.Error(err))
 		return nil, i18n.NewError(ctx, code.ChatCompactUnsupported)
 	}
+	releasePreflight := func() {}
+	if be.IsRemote() {
+		if deviceID, ok := be.DeviceIDInt(); ok {
+			releasePreflight = func() { s.releaseRemoteRuntime(deviceID, sess.ID) }
+		}
+	}
 	if !runner.Capabilities().Has(capability.CapCompact) {
+		releasePreflight()
 		return nil, i18n.NewError(ctx, code.ChatCompactUnsupported)
 	}
-	return s.startCompactTurn(ctx, sess, a, be, prov)
+	resp, err := s.startCompactTurn(ctx, sess, a, be, prov)
+	if err != nil {
+		releasePreflight()
+		return nil, err
+	}
+	return resp, nil
+}
+
+func compactRequiresProviderSession(be *agent_backend_entity.AgentBackend) bool {
+	return be != nil && be.IsCodex()
 }
 
 func (s *chatSvc) GetGoal(ctx context.Context, req *GoalRequest) (*GoalResponse, error) {

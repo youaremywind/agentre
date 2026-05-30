@@ -10,7 +10,7 @@
 
 写代码前自问，**不清楚就停下来问用户**，不要写到一半才发现要回炉：
 
-1. **运行模式**：是 in-process（像 builtin，直接吃 LLMProvider 走 cago app/coding），还是 wrap 一个本地 CLI 子进程（像 claudecode / codex）？两者在 ProviderType 匹配、cli_path 校验、env 透传、Prober 实现上完全不一样。
+1. **运行模式**：是 in-process（像 builtin，直接吃 LLMProvider 走 cago app/coding），还是 wrap 一个本地 CLI 子进程（像 claudecode / codex / piagent）？两者在 ProviderType 匹配、cli_path 校验、env 透传、Prober 实现上完全不一样。
 2. **是否支持远端执行**：要走 `agentred` daemon 投到 LAN 机器上跑吗？支持的话要保证 init() 注册到的 `RuntimeFor` 不依赖 desktop-only 的服务（chat_repo / GUI），且 wire 协议覆盖到所有 RPC 帧。
 3. **能力矩阵**：能不能 mid-turn steer？能不能 abort？是否有 `can_use_tool` 协议？是否支持 ask_user_question？是否支持 plan / permission mode 切换？是否能 fork session？逐项列出来——这直接决定你要实现 `agentruntime` 哪几个可选子接口。
 4. **协议形态**：事件流是 stdout JSONL（claudecode）？JSON-RPC over stdio（codex app-server）？还是内存 channel（builtin）？translator 是无状态纯函数 vs. 有状态聚合，决定从哪写第一条测试。
@@ -20,17 +20,18 @@
 
 ## 0.5 现有 backend 速查（接口 / 能力 / Permission Mode）
 
-仓库目前内置三个 backend，定位差异明显，**新 backend 选档前先对号入座**：
+仓库目前内置四个 backend，定位差异明显，**新 backend 选档前先对号入座**：
 
 - **builtin** — in-process 跑 cago `app/coding`，直接吃 `llm_provider` 配置。定位是「轻量自带」，暴露 steer / cancel / abort / image input 这几种 in-process 单 provider 模式天生支持的能力，没有 CLI 子进程开销，也没有 plan / 工具审批等高级协议。
-- **claudecode** — wrap 本地 `claude` CLI（Anthropic 家族），通过 stdout JSONL + `control_request` 帧双向通信，子进程常驻并 LRU 复用 session。功能最全：能跑 plan / `can_use_tool` / `AskUserQuestion` / Subagent / fork-session / mid-turn 切 permission mode。
+- **claudecode** — wrap 本地 `claude` CLI（Anthropic 家族），通过 stdout JSONL + `control_request` 帧双向通信，子进程常驻并 LRU 复用 session。功能最全：能跑 plan / `can_use_tool` / `AskUserQuestion` / Subagent / fork-session / mid-turn 切 permission mode / 图片输入。
 - **codex** — wrap 本地 `codex` CLI（OpenAI 家族），通过 JSON-RPC over stdio app-server 协议交互，每个 turn 起新进程（fire-and-forget）。原生支持 context window 上报、原生 compact turn 和图片输入，但没有 `can_use_tool` 协议、不能 mid-turn 切 mode、也不发 Subagent 事件。
+- **piagent** — wrap 本地 `pi` CLI（Pi coding agent RPC mode），不绑定 Agentre `LLMProvider`，而是读取 Pi 自己的 `~/.pi/agent` 配置和认证。支持 steer / abort / compact / 图片输入 / context window 上报；会话上下文通过 Agentre 专用 Pi session 文件跨 turn resume，不支持工具审批、反向问答、fork-session 或 permission mode meta。
 
 > 仓库里还有 `runtimes/remote/`，它**不是独立 backend**——而是 desktop 调远端 `agentred` daemon 时的代理，capability 通过 `Prefetch` 从 daemon 端真实 backend 同步过来，本节不单列。
 
 数据来源（schema 改动必须三处同步）：
 
-- `internal/pkg/agentruntime/runtimes/{builtin,claudecode,codex}/runtime.go` 的 `Capabilities()` 实现
+- `internal/pkg/agentruntime/runtimes/{builtin,claudecode,codex,piagent}/runtime.go` 的 `Capabilities()` 实现
 - `internal/pkg/agentruntime/capability/capability.go` 的 cap 常量
 - `runtime_test.go::TestXxxCapabilities` 矩阵断言
 
@@ -38,19 +39,19 @@
 
 每行 = 一个反向通道。最右列给出该能力的语义和「为什么 ❌」——照搬前先确认你的 backend 是否真有同类协议，没有就老实返 `ErrUnsupported`，不要硬塞模拟实现。
 
-| Capability（常量 / wire string） | 子接口 | builtin | claudecode | codex | 说明 |
-| --- | --- | --- | --- | --- | --- |
-| `CapSteer` / `"steer"` | `Steerer` | ✅ | ✅ | ✅ | mid-turn 注入用户消息；chat_svc 生成 queuedID，backend 真正消费后必须 emit `SteerConsumed` |
-| `CapCancelSteer` / `"cancel_steer"` | `SteerCanceler` | ✅ | ✅ | ❌ | 注入后撤回；codex 的 `Stream.Steer` 是 fire-and-forget，进协议后无法回收 |
-| `CapDrainSteer` / `"drain_steer"` | `SteerDrainer` | ❌ | ✅ | ❌ | turn 间 leftover 自动续投到下一 turn；仅 claudecode 维护本地 hook 队列 |
-| `CapAbort` / `"abort"` | `Aborter` | ✅ | ✅ | ✅ | 「停止」按钮；必须幂等 + 必须 unblock 所有阻塞 I/O，否则前端永远停在「生成中」 |
-| `CapSetPermission` / `"set_permission_mode"` | `PermissionModeSetter` | ❌ | ✅ mid-turn | ✅ 仅 launch | 运行时切 permission mode；codex 协议不允许 mid-turn 切，DB 落库后下次 spawn 生效 |
-| `CapAnswerUserAsk` / `"answer_user_ask"` | `AskAnswerSink` | ❌ | ✅ | ✅ | 反向问用户问题（单选 / 多选 / Other / 密码框）；Skip 必须走 deny 而非空 map，否则 turn 静默挂死 |
-| `CapToolPermission` / `"tool_permission_gate"` | `ToolPermissionSink` | ❌ | ✅ `can_use_tool` | ❌ | 工具执行前 allow/deny 审批 + 「Remember for session」+ DenyReason 回灌 LLM；codex 无等价协议 |
-| `CapForkSession` / `"fork_session"` | `RunRequest.ForkAnchor` 内置 | ❌ | ✅ `--fork-session` | ✅ `thread/rollback` | 「重新生成」从某个 anchor 派生新 session 重跑 |
-| `CapReportContextWindow` / `"report_context_window"` | emit `ContextWindowUpdated` | ❌ | ✅ | ✅ | runtime 探到模型实际上下文窗口大小后 emit，前端展示用量条；claudecode SDK 自己不报窗口，translator 在 `system.init` 帧上查 `llmcatalog` 兜底 |
-| `CapCompact` / `"compact"` | `RunRequest.Compact=true` | ❌ | ❌ | ✅ | 原生 compact turn——让 LLM 把历史摘要后清掉占用 |
-| `CapImageInput` / `"image_input"` | `RunRequest.UserBlocks` 包含 `blocks.ImageBlock` | ✅ | ❌ | ✅ | 用户消息可携带 PNG / JPEG / WebP 图片。builtin 直接透传 cago blocks；codex 将 inline 图片物化为临时本地文件后走 app-server `localImage` |
+| Capability（常量 / wire string） | 子接口 | builtin | claudecode | codex | piagent | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `CapSteer` / `"steer"` | `Steerer` | ✅ | ✅ | ✅ | ✅ | mid-turn 注入用户消息；chat_svc 生成 queuedID，backend 真正消费后必须 emit `SteerConsumed` |
+| `CapCancelSteer` / `"cancel_steer"` | `SteerCanceler` | ✅ | ✅ | ❌ | ❌ | 注入后撤回；codex / piagent 的 steer 进协议后无法回收 |
+| `CapDrainSteer` / `"drain_steer"` | `SteerDrainer` | ❌ | ✅ | ❌ | ❌ | turn 间 leftover 自动续投到下一 turn；仅 claudecode 维护本地 hook 队列 |
+| `CapAbort` / `"abort"` | `Aborter` | ✅ | ✅ | ✅ | ✅ | 「停止」按钮；必须幂等 + 必须 unblock 所有阻塞 I/O，否则前端永远停在「生成中」 |
+| `CapSetPermission` / `"set_permission_mode"` | `PermissionModeSetter` | ❌ | ✅ mid-turn | ✅ 仅 launch | ❌ | 运行时切 permission mode；codex 协议不允许 mid-turn 切，DB 落库后下次 spawn 生效；piagent 不暴露 permission mode meta |
+| `CapAnswerUserAsk` / `"answer_user_ask"` | `AskAnswerSink` | ❌ | ✅ | ✅ | ❌ | 反向问用户问题（单选 / 多选 / Other / 密码框）；Skip 必须走 deny 而非空 map，否则 turn 静默挂死 |
+| `CapToolPermission` / `"tool_permission_gate"` | `ToolPermissionSink` | ❌ | ✅ `can_use_tool` | ❌ | ❌ | 工具执行前 allow/deny 审批 + 「Remember for session」+ DenyReason 回灌 LLM；codex / piagent 无等价协议 |
+| `CapForkSession` / `"fork_session"` | `RunRequest.ForkAnchor` 内置 | ❌ | ✅ `--fork-session` | ✅ `thread/rollback` | ❌ | 「重新生成」从某个 anchor 派生新 session 重跑 |
+| `CapReportContextWindow` / `"report_context_window"` | emit `ContextWindowUpdated` | ❌ | ✅ | ✅ | ✅ | runtime 探到模型实际上下文窗口大小后 emit，前端展示用量条；claudecode SDK 自己不报窗口，translator 在 `system.init` 帧上查 `llmcatalog` 兜底；piagent 每轮结束通过 Pi RPC `get_session_stats.contextUsage.contextWindow` 上报，并用 usage 帧 model 查 `llmcatalog` 兜底 |
+| `CapCompact` / `"compact"` | `RunRequest.Compact=true` | ❌ | ❌ | ✅ | ✅ | 原生 compact turn——让 LLM 把历史摘要后清掉占用；piagent 走 Pi RPC compact |
+| `CapImageInput` / `"image_input"` | `RunRequest.UserBlocks` 包含 `blocks.ImageBlock` | ✅ | ✅ | ✅ | ✅ | 用户消息可携带 PNG / JPEG / WebP 图片。builtin 直接透传 cago blocks；claudecode 把 inline 图片编码成 stream-json user frame 的 base64 `image` content block（图片在前、文本在后，CLI 原生支持）；codex 将 inline 图片物化为临时本地文件后走 app-server `localImage`；piagent 透传 RPC image content |
 
 > **规则**：未声明 cap 调对应接口必须返 `agentruntime.ErrUnsupported`（sentinel 错误，跨进程透明，chat_svc 据此翻成 wire code）。声明 cap=true 但未实现接口会被 `TestXxxCapabilities` 矩阵测试卡掉（type-assert 失败）。
 
@@ -58,28 +59,28 @@
 
 这张表回答「跑起来长什么样」——进程形态、session 寿命、translator 设计、plan / Subagent 事件来源。新 backend 落到哪一档基本由你选的协议形态决定，**先选定再写代码**，不要中途换。
 
-| 维度 | builtin | claudecode | codex | 备注 |
-| --- | --- | --- | --- | --- |
-| 运行形态 | in-process（cago app/coding + LLMProvider） | CLI 子进程（stdout JSONL） | CLI 子进程（JSON-RPC over stdio app-server） | 决定 Prober / cli_path 校验 / env 装配路径 |
-| ProviderType 绑定 | 任意 LLM provider | Anthropic 家族（含网关代理） | OpenAI / Codex 家族 | entity `BackendKind.ProviderTypeMatch` 实现 |
-| Session 模式 | turn-scoped cago `Runner`，turn 结束即销毁 | 子进程常驻 + LRU 缓存复用，跨 turn 复用 session | 每个 turn 起新进程，无本地复用 | 复用要管 idle evict / abort 解锁 / 跨 turn 状态 |
-| Translator | 纯函数（cago events → sealed） | 纯函数 + `task_aggregator` 跨 turn 维护 Subagent 列表 | 纯函数 | 状态聚合统一在 `Run` drain 循环里做；translator 必须能在表驱动测试里独立跑 |
-| Plan 来源 | 不发 | `TodoWrite` 工具内联（canonical）+ `Task*` 增量聚合（PlanUpdated 快照） | `turn/plan/updated`（Steps）+ `item/plan/delta`（Text）合并到单一 PlanUpdated | 下游 chat_svc 看到的都是同一个 sealed `agentruntime.PlanUpdated` |
-| 反向问答 | 不支持 | control_request `can_use_tool` + `AskUserQuestion` 工具 | app-server `item/tool/requestUserInput` JSON-RPC | claudecode 用 question 文本做 key，codex 用 question ID 做 key |
-| Subagent 事件 | ❌ | ✅ `SubagentStarted/Progress/Done` | ❌ | 只 claudecode 有原生 `Task` 工具协议 |
-| 远端 daemon | ✅ | ✅ | ✅ | runtime 不得依赖 desktop-only 服务（chat_repo / GUI），状态走 `RunResult` 回吐 |
+| 维度 | builtin | claudecode | codex | piagent | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 运行形态 | in-process（cago app/coding + LLMProvider） | CLI 子进程（stdout JSONL） | CLI 子进程（JSON-RPC over stdio app-server） | CLI 子进程（Pi RPC mode） | 决定 Prober / cli_path 校验 / env 装配路径 |
+| ProviderType 绑定 | 任意 LLM provider | Anthropic 家族（含网关代理） | OpenAI / Codex 家族 | 不绑定 provider；读 `~/.pi/agent` | entity `BackendKind.ProviderTypeMatch` 实现；piagent 恒 false |
+| Session 模式 | turn-scoped cago `Runner`，turn 结束即销毁 | 子进程常驻 + LRU 缓存复用，跨 turn 复用 session | 每个 turn 起新进程，无本地复用 | 每 turn 新 Pi client；通过 `<AppDataDir>/piagent/sessions/agentre-<sessionID>.jsonl` resume | 复用要管 idle evict / abort 解锁 / 跨 turn 状态 |
+| Translator | 纯函数（cago events → sealed） | 纯函数 + `task_aggregator` 跨 turn 维护 Subagent 列表 | 纯函数 | 纯函数（Pi RPC events → sealed） | 状态聚合统一在 `Run` drain 循环里做；translator 必须能在表驱动测试里独立跑 |
+| Plan 来源 | 不发 | `TodoWrite` 工具内联（canonical）+ `Task*` 增量聚合（PlanUpdated 快照） | `turn/plan/updated`（Steps）+ `item/plan/delta`（Text）合并到单一 PlanUpdated | 不发 | 下游 chat_svc 看到的都是同一个 sealed `agentruntime.PlanUpdated` |
+| 反向问答 | 不支持 | control_request `can_use_tool` + `AskUserQuestion` 工具 | app-server `item/tool/requestUserInput` JSON-RPC | 不支持 | claudecode 用 question 文本做 key，codex 用 question ID 做 key |
+| Subagent 事件 | ❌ | ✅ `SubagentStarted/Progress/Done` | ❌ | ❌ | 只 claudecode 有原生 `Task` 工具协议 |
+| 远端 daemon | ✅ | ✅ | ✅ | ✅ | runtime 不得依赖 desktop-only 服务（chat_repo / GUI），状态走 `RunResult` 回吐 |
 
 ### PermissionModeMeta
 
-permission mode 是**会话级权限状态机**（不是 plan 内容）。三个 backend 的 mode 集合和 mid-turn 切换能力完全不同——前端 `PermissionModePill` 直接读这张 meta 决定渲染。
+permission mode 是**会话级权限状态机**（不是 plan 内容）。各 backend 的 mode 集合和 mid-turn 切换能力完全不同——前端 `PermissionModePill` 直接读这张 meta 决定渲染；未声明 `CapSetPermission` 的 backend（builtin / piagent）没有 meta。
 
-| 字段 | builtin | claudecode | codex | 字段含义 |
-| --- | --- | --- | --- | --- |
-| `AllowedModes` | —（未声明 CapSetPermission） | `default, acceptEdits, plan, bypassPermissions` | `default, plan` | 该 backend 合法的 mode 名集合，service 层做白名单 |
-| `DefaultMode` | — | `"acceptEdits"` | `"default"` | UI 展示 / 计算用的默认 mode（chat_svc 落库默认值） |
-| `LaunchDefaultMode` | — | `""`（不附 `--permission-mode`，pkg/claudecode 内部兜底成 acceptEdits） | `"default"`（协议要求 launch 显式 collaborationMode，**不能空**） | spawn 时 wire 层兜底字符串；空 vs 非空决定「用户未显式选」vs「显式选了 default」 |
-| `SwitchableDuringTurn` | — | `true`（写 control_request 即时切） | `false`（落库后下次 spawn 生效） | 前端 pill 在 `agentStatus=="waiting"` 时是否可点 |
-| `Order` | — | 同 AllowedModes | 同 AllowedModes | pill 循环顺序，UI 直接按顺序 next |
+| 字段 | builtin | claudecode | codex | piagent | 字段含义 |
+| --- | --- | --- | --- | --- | --- |
+| `AllowedModes` | —（未声明 CapSetPermission） | `default, acceptEdits, plan, bypassPermissions` | `default, plan` | —（未声明 CapSetPermission） | 该 backend 合法的 mode 名集合，service 层做白名单 |
+| `DefaultMode` | — | `"acceptEdits"` | `"default"` | — | UI 展示 / 计算用的默认 mode（chat_svc 落库默认值） |
+| `LaunchDefaultMode` | — | `""`（不附 `--permission-mode`，pkg/claudecode 内部兜底成 acceptEdits） | `"default"`（协议要求 launch 显式 collaborationMode，**不能空**） | — | spawn 时 wire 层兜底字符串；空 vs 非空决定「用户未显式选」vs「显式选了 default」 |
+| `SwitchableDuringTurn` | — | `true`（写 control_request 即时切） | `false`（落库后下次 spawn 生效） | — | 前端 pill 在 `agentStatus=="waiting"` 时是否可点 |
+| `Order` | — | 同 AllowedModes | 同 AllowedModes | — | pill 循环顺序，UI 直接按顺序 next |
 
 > **易混字段**：`chat_sessions.permission_mode` = CLI 运行时当前 mode（被 SetPermissionMode 修改）；`chat_sessions.permission_mode_at_launch` = spawn 时下发的快照（由 runtime 经 `RunResult.LaunchPermissionMode` 回吐）。前者前端用于显示当前状态，后者决定 `bypassPermissions` 是否出现在 pill 里——只有 launch 时显式选过 bypass 才会显示该项，避免事后被滥用。
 
@@ -129,7 +130,7 @@ permission mode 是**会话级权限状态机**（不是 plan 内容）。三个
   }
   ```
 
-- `IsXxx()` 便捷判断方法不强制加，但加了 chat_svc / 前端可读性更好（参考 `IsClaudeCode/IsCodex`）。
+- `IsXxx()` 便捷判断方法不强制加，但加了 chat_svc / 前端可读性更好（参考 `IsClaudeCode/IsCodex/IsPiAgent`）。
 - 充血模型边界：**新增字段优先放在 entity，方法（校验、默认值、序列化）也写在 entity**，service 只做跨 entity 编排。`AgentBackend.Check` 已经分派到 `BackendKind.ValidateExtra`——千万别在 service 里再写 switch。
 
 ### 2.2 数据库迁移
@@ -155,8 +156,8 @@ permission mode 是**会话级权限状态机**（不是 plan 内容）。三个
   }
   ```
 
-- CLI 类后端如果要走本地 gateway 测，把 env 装配抽到 `internal/pkg/agentruntime/<name>_env.go`，**和 chat path 的 runtime 共享同一份装配规则**（chat 实跑和 Test 不能漂移；参考 `BuildClaudeCodeEnv` / `BuildCodexEnv`）。
-- 如果是 CLI 类，在 `internal/pkg/cliprober/` 里加 `Type` 分支（当前 `cliprober.ResolveCLIPath` 只识别 `claudecode` / `codex`，非这两个值会返 `ErrInvalidType`），让前端编辑器能扫到本机 binary 绝对路径。`agent_backend_svc/resolve_cli.go` 是入口适配层，本身不分类型，不需要改。
+- CLI 类后端如果要走本地 gateway 测，把 env 装配抽到 `internal/pkg/agentruntime/<name>_env.go`，**和 chat path 的 runtime 共享同一份装配规则**（chat 实跑和 Test 不能漂移；参考 `BuildClaudeCodeEnv` / `BuildCodexEnv` / `BuildPiAgentEnv`）。piagent 这类不走 Agentre gateway 的 backend 也要共用同一个 env builder，避免 prober 和 runtime 对 `env_json` / 保留键理解漂移。
+- 如果是 CLI 类，在 `internal/pkg/cliprober/` 里加 `Type` 分支（当前 `cliprober.ResolveCLIPath` 识别 `claudecode` / `codex` / `piagent`，非这些值会返 `ErrInvalidType`），让前端编辑器能扫到本机 binary 绝对路径。`agent_backend_svc/resolve_cli.go` 是入口适配层，本身不分类型，不需要改。
 
 ### 2.4 Runtime（核心）
 
@@ -217,7 +218,7 @@ permission mode 是**会话级权限状态机**（不是 plan 内容）。三个
 | `CapAnswerUserAsk` | `AskAnswerSink` | 处理反向 ask_user_question |
 | `CapToolPermission` | `ToolPermissionSink` | 处理 `can_use_tool` 协议 |
 | `CapForkSession` | `RunRequest.ForkAnchor` 内置语义 | 「重新生成」走 fork |
-| `CapReportContextWindow` | emit `ContextWindowUpdated` | runtime 能探到模型实际窗口（codex 协议原生有；claudecode 靠 `llmcatalog.Lookup(model)` 兜底） |
+| `CapReportContextWindow` | emit `ContextWindowUpdated` | runtime 能探到模型实际窗口（codex 协议原生有；claudecode 靠 `llmcatalog.Lookup(model)` 兜底；piagent 优先读 Pi RPC `get_session_stats.contextUsage.contextWindow`，再用 usage 帧 model 查 `llmcatalog` 兜底） |
 | `CapCompact` | `RunRequest.Compact=true` 内置语义 | 原生 compact turn |
 | `CapImageInput` | `RunRequest.UserBlocks` image blocks | 支持多模态用户输入；不支持时 chat_svc 会在调 runtime 前拒绝带图 turn |
 
@@ -225,7 +226,7 @@ permission mode 是**会话级权限状态机**（不是 plan 内容）。三个
 
 #### 控制接口逐个展开（**接入前必读**）
 
-下面把六个反向通道的协议细节、字段语义、claudecode/codex 差异拆开讲。新 backend 接入时，**逐项**对照实现，不要凭直觉猜。
+下面把六个反向通道的协议细节、字段语义、claudecode/codex/piagent 差异拆开讲。新 backend 接入时，**逐项**对照实现，不要凭直觉猜。
 
 ##### A. Steerer / SteerCanceler / SteerDrainer — mid-turn 注入
 
@@ -248,9 +249,10 @@ type SteerDrainer interface {
 - **CancelSteer 语义**：
   - `queuedID == ""` → 清空整个 pending 队列，返回被清的 ID 列表（FIFO）
   - `queuedID` 非空 → 单条撤回；不在队列返 `ErrSteerNotFound`（已被 AI 消费 / 从未入队）
-- **DrainPending 副作用**：返回非空 slice 时**必须**原子地把 session 标记回 "still in turn"，否则 chat_svc 在两次 Run 之间到的 Steer 会落到 ChatSendInFlight 被丢。codex 故意不实现 SteerDrainer——它的 turn/steer 是 fire-and-forget，没有本地队列。
+- **DrainPending 副作用**：返回非空 slice 时**必须**原子地把 session 标记回 "still in turn"，否则 chat_svc 在两次 Run 之间到的 Steer 会落到 ChatSendInFlight 被丢。codex / piagent 故意不实现 SteerDrainer——它们的 steer 进协议后没有可 drain 的本地 hook 队列。
 - **claudecode 实现**：通过 `httpgateway.SteerInbox` push 给 CLI hook 子进程。
 - **codex 实现**：调 `*codex.Stream.Steer(text)`，本地维护 pending 队列做 echo 配对。
+- **piagent 实现**：调 Pi RPC stream 的 `Steer(text)`；Pi 把 steer 注入回显成 user message 后，runtime 用本地 pending FIFO 配对并 emit `SteerConsumed`。
 
 ##### B. Aborter — 「停止」按钮
 
@@ -263,13 +265,13 @@ type Aborter interface {
 ```
 
 - **幂等 + 并发安全**：可能和 runner 自己的 drain goroutine 同时被调。
-- **必须解锁 I/O**：claudecode 写 `control_request{interrupt}` 一帧到 stdin；codex 调 `turn/interrupt` RPC；builtin 取消 `turnCtx`。**ctx cancel 必须 unblock 所有阻塞读**——这是「停止」生效的前提。
+- **必须解锁 I/O**：claudecode 写 `control_request{interrupt}` 一帧到 stdin；codex 调 `turn/interrupt` RPC；piagent 调 Pi RPC stream `Interrupt`；builtin 取消 `turnCtx`。**ctx cancel 必须 unblock 所有阻塞读**——这是「停止」生效的前提。
 - **返回值**：sessionID 没 in-flight turn 时返 `ErrNoActiveTurn`，chat_svc 翻 `code.ChatStopNoActive`。
 - **RunResult.StopErr**：用户主动 Abort 时 runner **应当**填 `agentruntime.ErrAborted`，让 chat_svc 区分「正常 Done / 用户中止 / 真错误」三态。
 
 ##### C. ToolPermissionSink — `can_use_tool` 工具审批
 
-> **codex 当前不支持**（无等价协议）。下文以 claudecode 为蓝本，新 backend 有同类协议时照搬。
+> **codex / piagent 当前不支持**（无等价协议）。下文以 claudecode 为蓝本，新 backend 有同类协议时照搬。
 
 接口签名（runner.go:218-220）：
 
@@ -365,6 +367,7 @@ type AskAnswerSink interface {
    - **claudecode**：写 control_response，`UpdatedInput.answers` 按 question 文本聚合 csv labels（`OtherAnswerLabel` 替换为 `OtherText`）；`Behavior:"allow"`。
    - **codex**：响应 app-server 的 `item/tool/requestUserInput` JSON-RPC，payload = `map[codexQuestionID][]string`；按 `buildUserInputAnswers` 装配。
    - **内置 Agent**：in-process channel。
+   - **piagent**：当前未声明 `CapAnswerUserAsk`，前端不会开放该反向通道。
 
 7. **Skipped 语义**：必须让 LLM 优雅看到拒答信号，**不要** allow 一个空 map（会让 turn 静默挂死，hapi gotcha #4）：
    - claudecode：写 deny message。
@@ -487,7 +490,7 @@ agentruntime.SubagentDone{ToolCallID, Info: SubagentInfo{Status: "completed"|"fa
 - **ToolCallID** = 外层父级 `Task` / Agent 工具的 tool_use id。
 - **Info.Status**：runtime 只产 `running` / `completed` / `failed`；`canceled` 由 `handlers.MarkRunningSubagentsCancelled` 在 turn abort 收尾时推断（CLI 被 interrupt 后 Done 不会到，留 running 会让前端 AgentSpawnCard 永远 spin）。
 - **ToolCall / ToolResult 的 ParentToolCallID 字段**：subagent 内部调的工具填外层 Task tool_use id，前端据此把子卡归集到父 SubagentInvocationCard。
-- **codex / builtin 目前不发**——只 claudecode 有原生 subagent 协议。新 backend 有类似 fork-execute 工具时再考虑接入这一组事件。
+- **codex / builtin / piagent 目前不发**——只 claudecode 有原生 subagent 协议。新 backend 有类似 fork-execute 工具时再考虑接入这一组事件。
 
 #### Sentinel 错误（必须用，不要造新的）
 
@@ -509,6 +512,7 @@ import (
     _ "agentre/internal/pkg/agentruntime/runtimes/builtin"
     _ "agentre/internal/pkg/agentruntime/runtimes/claudecode"
     _ "agentre/internal/pkg/agentruntime/runtimes/codex"
+    _ "agentre/internal/pkg/agentruntime/runtimes/piagent"
     _ "agentre/internal/pkg/agentruntime/runtimes/myagent"   // ← 加这行
 )
 ```

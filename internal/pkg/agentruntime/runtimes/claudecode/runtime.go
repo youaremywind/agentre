@@ -80,6 +80,9 @@ func (r *Runtime) Capabilities() capability.Capabilities {
 			// translator.EventInit 路径用 llmcatalog 兜底 emit ContextWindowUpdated;
 			// Claude Code SDK 协议本身不报窗口,这里靠 catalog 给前端 turn 内总量。
 			capability.CapReportContextWindow: true,
+			// user frame 携带 base64 image content block(CLI stream-json 原生支持);
+			// extractImages 从 RunRequest.UserBlocks 抽 inline 图片经 handle.Stream 透传。
+			capability.CapImageInput: true,
 		},
 		PermissionModeMeta: capability.PermissionModeMeta{
 			AllowedModes:         []string{"default", "acceptEdits", "plan", "bypassPermissions"},
@@ -240,7 +243,7 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		zap.String("launchPermissionMode", launchMode),
 		zap.String("providerSessionID", a.handle.ID()))
 
-	stream, err := a.handle.Stream(ctx, req.UserText)
+	stream, err := a.handle.Stream(ctx, req.UserText, extractImages(req.UserBlocks))
 	if err != nil {
 		logger.Ctx(ctx).Error("claudecode runtime: handle.Stream failed",
 			zap.Int64("sessionID", req.SessionID),
