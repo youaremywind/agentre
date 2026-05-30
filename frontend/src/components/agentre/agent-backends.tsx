@@ -836,9 +836,7 @@ function BackendEditor({
     setCliProbeMiss(null);
     // create 模式下，切到 CLI 类型自动尝试探测一次，命中就填进去；用户随时可手改/清空。
     // edit 模式 type 是 disabled 的，所以这里不会跑；编辑场景只靠 Input 旁的「自动识别」按钮。
-    if (
-      state.kind === "create" && isCliBackend(nextType)
-    ) {
+    if (state.kind === "create" && isCliBackend(nextType)) {
       void (async () => {
         // 新建流程的隐式自动填：静默吞错，远端不可达就当没识别到。
         const path = await detectCLIPath(nextType, deviceId).catch(() => null);
@@ -1512,19 +1510,23 @@ function LlmProviderField({
     return (
       <div className="flex flex-col gap-1.5 text-xs">
         <div className="flex items-center justify-between">
-          <span className="font-medium">LLM 供应商</span>
+          <span className="font-medium">
+            {t("agentBackends.provider.label")}
+          </span>
           <Badge
             variant="secondary"
             className="rounded-sm bg-secondary px-1.5 py-0 font-mono text-2xs text-muted-foreground"
           >
-            使用 ~/.pi/agent
+            {t("agentBackends.provider.piAgentSource")}
           </Badge>
         </div>
         <Alert className="border-border bg-secondary text-xs">
           <AlertCircle className="size-4" aria-hidden="true" />
-          <AlertTitle className="text-xs">Pi Agent 独立配置</AlertTitle>
+          <AlertTitle className="text-xs">
+            {t("agentBackends.provider.piAgentTitle")}
+          </AlertTitle>
           <AlertDescription className="text-2xs">
-            Pi Agent 会读取本机 Pi 配置与认证，不关联 Agentre LLM Provider。
+            {t("agentBackends.provider.piAgentDescription")}
           </AlertDescription>
         </Alert>
       </div>

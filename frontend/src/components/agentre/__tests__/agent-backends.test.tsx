@@ -448,7 +448,9 @@ describe("AgentBackendsPanel", () => {
         within(dialog).queryByText(/original LLM provider is disabled/),
       ).not.toBeInTheDocument();
       if (type === "piagent") {
-        expect(within(dialog).getByText(/Pi Agent 独立配置/)).toBeInTheDocument();
+        expect(
+          within(dialog).getByText(/Pi Agent standalone config/),
+        ).toBeInTheDocument();
       } else {
         expect(
           within(dialog).getByText(/No link \(use CLI login\)/),
@@ -466,23 +468,27 @@ describe("AgentBackendsPanel", () => {
     });
     render(<AgentBackendsPanel />);
 
-    await screen.findByRole("table", { name: "Agent 后端列表" });
-    await user.click(screen.getByRole("button", { name: /新增后端/ }));
+    await screen.findByRole("table", { name: "Agent backend list" });
+    await user.click(screen.getByRole("button", { name: /New Backend/ }));
 
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(
-      within(dialog).getByPlaceholderText("例如：本机 · Claude Code"),
+      within(dialog).getByPlaceholderText("Example: Local · Claude Code"),
       { target: { value: "本机 Pi" } },
     );
-    await user.click(within(dialog).getByRole("button", { name: /Pi Agent CLI/ }));
+    await user.click(
+      within(dialog).getByRole("button", { name: /Pi Agent CLI/ }),
+    );
 
     const input = within(dialog).getByPlaceholderText(
       "/usr/local/bin/pi",
     ) as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe("/opt/homebrew/bin/pi"));
-    expect(within(dialog).getByText(/Pi Agent 独立配置/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Pi Agent standalone config/),
+    ).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(mocks.CreateAgentBackend).toHaveBeenCalledWith(
