@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"log"
 	"os"
 	stdruntime "runtime"
+	"strings"
 
 	"agentre/internal/app"
 	"agentre/internal/bootstrap"
@@ -49,7 +52,7 @@ func main() {
 	appInst := app.NewApp()
 
 	// Create application with options
-	err = wails.Run(newWailsOptions(appInst, assets))
+	err = wails.Run(newWailsOptionsForDataDir(appInst, assets, stdruntime.GOOS, runtime.DataDir()))
 
 	if err != nil {
 		logger.Default().Error("wails run failed", zap.Error(err))
@@ -57,11 +60,7 @@ func main() {
 	}
 }
 
-func newWailsOptions(a *app.App, assets fs.FS) *options.App {
-	return newWailsOptionsForGOOS(a, assets, stdruntime.GOOS)
-}
-
-func newWailsOptionsForGOOS(a *app.App, assets fs.FS, goos string) *options.App {
+func newWailsOptionsForDataDir(a *app.App, assets fs.FS, goos, dataDir string) *options.App {
 	appOptions := &options.App{
 		Title:       "Agentre",
 		Width:       defaultWindowWidth,
@@ -83,9 +82,29 @@ func newWailsOptionsForGOOS(a *app.App, assets fs.FS, goos string) *options.App 
 		},
 	}
 
+	if !isWailsDevMode() {
+		appOptions.SingleInstanceLock = &options.SingleInstanceLock{
+			UniqueId: singleInstanceUniqueID(dataDir),
+			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
+				logger.Default().Info("second instance launch",
+					zap.Strings("args", secondInstanceData.Args),
+					zap.String("workingDirectory", secondInstanceData.WorkingDirectory))
+			},
+		}
+	}
+
 	configurePlatformWindowOptions(appOptions, goos)
 
 	return appOptions
+}
+
+func isWailsDevMode() bool {
+	return strings.TrimSpace(os.Getenv("devserver")) != ""
+}
+
+func singleInstanceUniqueID(dataDir string) string {
+	sum := sha256.Sum256([]byte(dataDir))
+	return "agentre-" + hex.EncodeToString(sum[:8])
 }
 
 func configurePlatformWindowOptions(appOptions *options.App, goos string) {
