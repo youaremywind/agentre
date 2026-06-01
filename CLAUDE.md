@@ -32,12 +32,20 @@ Two binaries ship from this repo:
    - Agent / 用户 / 终端 / 代码 / markdown 等动态输出不要翻译；它们天然不会进入 `t(...)`，禁止用全局文本改写兜底。
    - 所有静态 UI 文案都显式 `t(...)`。展开细节见 [docs/frontend.md](docs/frontend.md)。
 
+## 高内聚低耦合（编码规则）
+
+**高内聚** —— 一个 domain 一套包（`<domain>_entity` / `<domain>_repo` / `<domain>_svc`），新 domain 开新包，别往沾边的旧包里塞不相干功能。单实体的校验 / 状态 / 序列化放充血 entity（`Check` / `IsActive` / `GetXxx`），service 只做跨实体协调与外部依赖编排，不堆规则。Wails 绑定一个 domain 一个文件（`internal/app/<domain>.go`），方法只 parse → `svc.Xxx().Method` → return。横切关注点放 `internal/pkg/<concern>`（每个包单一职责、self-contained），别散进 domain。
+
+**低耦合** —— 依赖单向 `internal/app → service → repository → model/entity`；`internal/pkg` 是叶子横切层，被各层引用但**绝不反向 import** service / repository（当前零反向依赖，守住它）。service 只依赖 repository **接口**（DIP），实现靠 `RegisterXxx(impl)` 在 bootstrap/main 装配 —— 这是 mock 单测的前提。跨包协作只走 accessor（`xxx_repo.Xxx()` / `xxx_svc.Default()`），不要 `new` 别人的实现或直接 `db.Ctx` 摸别的 domain 的表。不越级：`internal/app` 不碰 repository / db，service 不绕过自己的 repo 拼裸 SQL。前后端只走 Wails binding（不加 HTTP-style app API），远端执行细节锁在 `internal/daemon/client` 接口后。
+
+> SOLID + 高内聚低耦合展开见 [docs/development.md](docs/development.md)，分层与依赖方向见 [docs/architecture.md](docs/architecture.md)。
+
 ## 开发规范（必读）
 
 写代码前先看这些文档，规则在里面：
 
 - [docs/architecture.md](docs/architecture.md) — 项目布局、cago 分层约定（entity / repo / service / wails 绑定）、远端 chat 架构、存储路径、数据库与迁移、生成文件。
-- [docs/development.md](docs/development.md) — TDD/BDD 工作流、SOLID、Fix Discipline、测试栈（sqlmock / mockgen / goconvey）、日志规范、linter 例外。
+- [docs/development.md](docs/development.md) — TDD/BDD 工作流、SOLID、高内聚低耦合、Fix Discipline、测试栈（sqlmock / mockgen / goconvey）、日志规范、linter 例外。
 - [docs/frontend.md](docs/frontend.md) — shadcn UI 强制约定、pnpm、格式化 / lint、commit 风格、模块路径。
 - [docs/debugging.md](docs/debugging.md) — 读 SQLite / 查日志 / 复现线上 bug 的命令清单。
 - [docs/agent-backend.md](docs/agent-backend.md) — 接入新 AI Agent backend 的路径：entity / migration / runtime / translator / capability / daemon import / 前端 gating，含 TDD 测试清单与常见坑。
