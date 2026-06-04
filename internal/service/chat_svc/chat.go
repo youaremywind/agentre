@@ -150,7 +150,11 @@ type chatSvc struct {
 	// aborted：sessionID(int64) → struct{}。Stop 触发时 store；runTurn 收尾时
 	// LoadAndDelete 判定是否走 StreamAborted 路径 + 跳过 DrainPending 自动接续。
 	aborted *sync.Map
-	gateway httpgateway.TokenIssuer
+	// autoWatchers：sessionID(int64) → struct{}。startAutonomousWatcher 用它防同一
+	// session 重复起 watcher goroutine(每会话一个,惰性启动);watcher 在底层
+	// AutonomousTurns channel close(子进程 evict / CloseSession)时退出并清这条。
+	autoWatchers sync.Map
+	gateway      httpgateway.TokenIssuer
 	// chatTokens 缓存每个 chat session 的常驻 gateway token(sessionID int64 → token string)。
 	// 该 token 在 spawn 时烤进 claude 子进程 env 给 PostToolUse hook 用,子进程跨轮复用
 	// 时 env 不重建 —— 所以 token 必须签成永久(ttl=0)并跨轮稳定复用,否则长会话(>15min)
@@ -2309,6 +2313,13 @@ func (s *chatSvc) runTurn(
 	}
 	if result != nil && (be.IsClaudeCode() || be.IsCodex()) {
 		s.persistProviderSessionID(ctx, sess, result.ProviderSessionID, "runner-start")
+	}
+	// runtime 若支持「自主续轮」(claudecode / remote claudecode 在 run_in_background
+	// 任务完成后**自主**跑一轮),惰性起每会话 watcher 把它落成纯 assistant 轮。session
+	// 已在 Run 内 spawn,此刻订阅 AutonomousTurns 才能拿到该会话的 channel;每会话去重,
+	// 重复调用幂等。watcher 在子进程 evict / CloseSession(channel close)时自行退出。
+	if src, ok := runner.(agentruntime.AutonomousTurnSource); ok {
+		s.startAutonomousWatcher(sess.ID, be, src)
 	}
 	// runtime spawn 新 CLI 子进程时把实际下发的 --permission-mode 同步回吐到
 	// result.LaunchPermissionMode(claudecode 专用,其它 runtime 留空);这里把
