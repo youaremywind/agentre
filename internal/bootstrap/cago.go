@@ -18,6 +18,7 @@ import (
 	"agentre/internal/repository/app_setting_repo"
 	"agentre/internal/repository/chat_repo"
 	"agentre/internal/repository/department_repo"
+	"agentre/internal/repository/group_repo"
 	"agentre/internal/repository/hook_repo"
 	"agentre/internal/repository/issue_repo"
 	"agentre/internal/repository/llm_provider_repo"
@@ -26,6 +27,7 @@ import (
 	"agentre/internal/service/agent_backend_svc"
 	"agentre/internal/service/app_settings_svc"
 	"agentre/internal/service/chat_svc"
+	"agentre/internal/service/group_svc"
 	"agentre/internal/service/issue_svc"
 	"agentre/internal/service/notification_svc"
 	"agentre/internal/service/project_svc"
@@ -102,6 +104,9 @@ func Init(ctx context.Context) (*Runtime, error) {
 	project_repo.RegisterProject(project_repo.NewProject())
 	project_repo.RegisterProjectAgent(project_repo.NewProjectAgent())
 	project_location_repo.RegisterProjectLocation(project_location_repo.NewProjectLocation())
+	group_repo.RegisterGroup(group_repo.NewGroup())
+	group_repo.RegisterMember(group_repo.NewMember())
+	group_repo.RegisterMessage(group_repo.NewMessage())
 	project_svc.SetDefault(project_svc.New())
 	issue_repo.RegisterIssue(issue_repo.NewIssue())
 	issue_repo.RegisterLabel(issue_repo.NewLabel())
@@ -135,6 +140,12 @@ func Init(ctx context.Context) (*Runtime, error) {
 	agent_backend_svc.RegisterGateway(gw)
 	app_settings_svc.RegisterGateway(gw)
 	chat_svc.RegisterGateway(gw)
+
+	// 挂群聊 group_send MCP handler 到 gateway，并把 gateway base URL 注入 group_svc——
+	// agent 子进程通过 <base>/mcp/group/ 回投消息。gateway 绑定失败时 BaseURL() 返回空串，
+	// group MCP 不可达(软降级，App 继续)。
+	gw.RegisterMCP("/mcp/group/", group_svc.Default().MCPHandler())
+	group_svc.Default().SetGatewayBaseURL(gw.BaseURL())
 
 	// 注入平台原生通知实现，供前端 App.ShowNotification 调用。
 	notification_svc.RegisterNotifier(sysnotify.New())

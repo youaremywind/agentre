@@ -17,6 +17,8 @@ import (
 
 type SessionRepo interface {
 	Find(ctx context.Context, id int64) (*chat_entity.Session, error)
+	// FindByGroupAndAgent 查某 agent 在某群的 active backing session, 无则返回 nil。
+	FindByGroupAndAgent(ctx context.Context, groupID, agentID int64) (*chat_entity.Session, error)
 	ListByAgent(ctx context.Context, agentID int64, limit int) ([]*chat_entity.Session, error)
 	ListByAgentPaged(ctx context.Context, agentID int64, offset, limit int) ([]*chat_entity.Session, error)
 	ListIDsByAgents(ctx context.Context, agentIDs []int64) (map[int64][]int64, error)
@@ -55,6 +57,12 @@ func Session() SessionRepo             { return defaultSession }
 func RegisterSession(impl SessionRepo) { defaultSession = impl }
 func NewSession() SessionRepo          { return &sessionRepo{} }
 
+// defaultSessionScope 限定为「普通单 agent 会话」(排除群聊成员 backing session)。
+// 所有默认会话列表/计数查询统一挂这个 scope, 避免逐个手写 group_id = 0 漏一个。
+func defaultSessionScope(db *gorm.DB) *gorm.DB {
+	return db.Where("group_id = ?", 0)
+}
+
 type sessionRepo struct{}
 
 func (r *sessionRepo) Find(ctx context.Context, id int64) (*chat_entity.Session, error) {
@@ -70,6 +78,18 @@ func (r *sessionRepo) Find(ctx context.Context, id int64) (*chat_entity.Session,
 	return out, nil
 }
 
+func (r *sessionRepo) FindByGroupAndAgent(ctx context.Context, groupID, agentID int64) (*chat_entity.Session, error) {
+	out := &chat_entity.Session{}
+	err := db.Ctx(ctx).Where("group_id = ? AND agent_id = ? AND status = ?", groupID, agentID, consts.ACTIVE).First(out).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (r *sessionRepo) ListByAgent(ctx context.Context, agentID int64, limit int) ([]*chat_entity.Session, error) {
 	if limit <= 0 {
 		limit = 5
@@ -77,6 +97,7 @@ func (r *sessionRepo) ListByAgent(ctx context.Context, agentID int64, limit int)
 	var rows []*chat_entity.Session
 	err := db.Ctx(ctx).
 		Where("agent_id = ? AND status = ?", agentID, consts.ACTIVE).
+		Scopes(defaultSessionScope).
 		Order("last_message_at DESC, id DESC").
 		Limit(limit).
 		Find(&rows).Error
@@ -90,6 +111,7 @@ func (r *sessionRepo) ListByAgentPaged(ctx context.Context, agentID int64, offse
 	var rows []*chat_entity.Session
 	err := db.Ctx(ctx).
 		Where("agent_id = ? AND status = ?", agentID, consts.ACTIVE).
+		Scopes(defaultSessionScope).
 		Order("last_message_at DESC, id DESC").
 		Offset(offset).
 		Limit(limit).
@@ -111,6 +133,7 @@ func (r *sessionRepo) ListIDsByAgents(ctx context.Context, agentIDs []int64) (ma
 		Table("chat_sessions").
 		Select("agent_id, id").
 		Where("agent_id IN ? AND status = ?", agentIDs, consts.ACTIVE).
+		Scopes(defaultSessionScope).
 		Order("agent_id ASC, last_message_at DESC, id DESC").
 		Scan(&rows).Error
 	if err != nil {
@@ -130,6 +153,7 @@ func (r *sessionRepo) ListAttentionByAgent(ctx context.Context, agentID int64, l
 	err := db.Ctx(ctx).
 		Where("agent_id = ? AND status = ? AND agent_status IN ?",
 			agentID, consts.ACTIVE, []string{"running", "waiting", "error"}).
+		Scopes(defaultSessionScope).
 		Order("last_message_at DESC, id DESC").
 		Limit(limit).
 		Find(&rows).Error
@@ -153,6 +177,7 @@ func (r *sessionRepo) CountByAgents(ctx context.Context, agentIDs []int64) (map[
 		Table("chat_sessions").
 		Select("agent_id, COUNT(*) AS n").
 		Where("agent_id IN ? AND status = ?", agentIDs, consts.ACTIVE).
+		Scopes(defaultSessionScope).
 		Group("agent_id").
 		Scan(&rows).Error
 	if err != nil {
@@ -170,6 +195,7 @@ func (r *sessionRepo) CountByAgent(ctx context.Context, agentID int64) (int64, e
 	err := db.Ctx(ctx).
 		Model(&chat_entity.Session{}).
 		Where("agent_id = ? AND status = ?", agentID, consts.ACTIVE).
+		Scopes(defaultSessionScope).
 		Count(&n).Error
 	return n, err
 }
@@ -191,6 +217,7 @@ func (r *sessionRepo) CountRunningByAgents(ctx context.Context, agentIDs []int64
 		Table("chat_sessions").
 		Select("agent_id, COUNT(*) AS n").
 		Where("agent_id IN ? AND agent_status = ? AND status = ?", agentIDs, "running", consts.ACTIVE).
+		Scopes(defaultSessionScope).
 		Group("agent_id").
 		Scan(&rows).Error
 	if err != nil {
@@ -208,6 +235,7 @@ func (r *sessionRepo) ListByProject(ctx context.Context, projectID int64) ([]*ch
 	var rows []*chat_entity.Session
 	err := db.Ctx(ctx).
 		Where("project_id = ? AND status = ?", projectID, consts.ACTIVE).
+		Scopes(defaultSessionScope).
 		Order("last_message_at DESC, id DESC").
 		Find(&rows).Error
 	applySessionDerivedFields(rows)
@@ -223,6 +251,7 @@ func (r *sessionRepo) CountActiveByProject(ctx context.Context, projectID int64,
 	if len(agentStatuses) > 0 {
 		q = q.Where("agent_status IN ?", agentStatuses)
 	}
+	q = q.Scopes(defaultSessionScope)
 	var n int64
 	err := q.Count(&n).Error
 	return n, err

@@ -493,6 +493,7 @@
       "empty": "No current goal",
       "imageUnsupported": "/goal cannot be sent with images",
       "needsSession": "Send one message first so the Codex session starts before setting a goal",
+      "waitForTurn": "Wait for this turn to finish before changing the goal",
       "updated": "Goal updated",
       "updatedWithObjective": "Goal updated: {{objective}}"
     },
@@ -542,16 +543,38 @@
     "untitled": "(Untitled)"
   },
   "chatPage": {
+    "add": {
+      "aria": "New",
+      "newAgentChat": "New agent chat",
+      "newGroup": "New group"
+    },
     "agents": "Agents",
+    "filter": {
+      "open": "Filter sidebar",
+      "options": {
+        "agents": "Agents",
+        "all": "All",
+        "groups": "Group chats",
+        "running": "Running",
+        "unread": "Unread"
+      }
+    },
+    "newChat": "New chat",
     "notChattable": {
       "defaultHint": "Bind a built-in backend to this Agent on the org chart page first",
       "message": "Not available for chat — {{hint}}"
     },
+    "pin": {
+      "pin": "Pin",
+      "pinAria": "Pin {{name}}",
+      "unpin": "Unpin",
+      "unpinAria": "Unpin {{name}}"
+    },
     "search": {
-      "aria": "Filter agents and sessions",
+      "aria": "Search agents and group chats",
       "clear": "Clear filter",
-      "noMatches": "No agents or sessions match \"{{query}}\"",
-      "placeholder": "Search Agent / session"
+      "noMatches": "No agents or group chats match \"{{query}}\"",
+      "placeholder": "Search Agent / group"
     },
     "sections": {
       "agents": "AGENTS",
@@ -604,6 +627,50 @@
       "hint": "Activate · click ✕ to close",
       "session": "sess-{{id}}",
       "worktree": "worktree {{branch}}"
+    }
+  },
+  "group": {
+    "title": "Groups",
+    "section": "Group Chats",
+    "tabs": { "members": "Members", "settings": "Settings", "group": "Group" },
+    "roster": {
+      "coordinator": "Coordinator",
+      "members": "Members",
+      "invite": "Invite member",
+      "backToGroup": "← Back to group",
+      "openMember": "Open member"
+    },
+    "runStatus": {
+      "running": "Running",
+      "waitingUser": "Waiting for you",
+      "paused": "Paused",
+      "idle": "Idle",
+      "error": "Error"
+    },
+    "rounds": "{{count}} rounds",
+    "controls": { "pause": "Pause", "stop": "Stop", "resume": "Resume" },
+    "composer": {
+      "placeholder": "Message the group… use @ to mention",
+      "send": "Send"
+    },
+    "settings": { "workdir": "Working directory", "archive": "Archive group" },
+    "you": "You",
+    "onlyXReceived": "Only {{name}} received this",
+    "new": {
+      "title": "New group",
+      "groupTitle": "Group title",
+      "groupTitlePlaceholder": "Frontend refactor squad",
+      "coordinator": "Coordinator",
+      "coordinatorPlaceholder": "Select coordinator",
+      "coordinatorHint": "Only group_send-capable agents (claudecode) can coordinate",
+      "project": "Project",
+      "projectNone": "(No project)",
+      "members": "Initial members",
+      "membersHint": "The coordinator can invite more members anytime",
+      "addMember": "Add member",
+      "removeMember": "Remove {{name}}",
+      "noCandidates": "No agents available to add",
+      "create": "Create group"
     }
   },
   "commandPalette": {

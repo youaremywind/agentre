@@ -32,5 +32,8 @@ func migrationList() []*gormigrate.Migration {
 		migration202605220009(), // server_state + paired_agentreds
 		migration202605220010(), // projects.sort_order
 		migration202605220011(), // issues + labels + issue_labels + label seed
+		migration202606030001(), // chat_sessions.group_id + index
+		migration202606030002(), // groups + group_members + group_messages
+		migration202606030003(), // agents.pinned + groups.pinned
 	}
 }

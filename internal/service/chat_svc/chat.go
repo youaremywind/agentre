@@ -94,6 +94,14 @@ type ChatSvc interface {
 	AnswerUserQuestion(ctx context.Context, req *AnswerUserQuestionRequest) (*AnswerUserQuestionResponse, error)
 	AnswerToolPermission(ctx context.Context, req *AnswerToolPermissionRequest) (*AnswerToolPermissionResponse, error)
 	ResolvePlanAction(ctx context.Context, req *ResolvePlanActionRequest) (*ResolvePlanActionResponse, error)
+	// EnsureGroupMemberSession 创建/返回某 agent 在指定群的 backing session(带 group_id)。
+	// 幂等: 同 (groupID, agentID) 的 active session 已存在则复用。
+	EnsureGroupMemberSession(ctx context.Context, agentID, projectID, groupID int64) (int64, error)
+	// ObserveTurn 订阅指定 session 下一次 turn 完成(服务端, 不经 Wails)。
+	ObserveTurn(sessionID int64) (<-chan TurnResult, func())
+	// AgentBackendHasCapability 报告某 agent 的后端 runtime 是否声明指定能力(领域无关探针)。
+	// 后端缺失/类型无法解析 → (false, nil)。MVP 仅解析本地 runtime; 远程后端目前返回 (false, nil)。
+	AgentBackendHasCapability(ctx context.Context, agentID int64, wantCap capability.Capability) (bool, error)
 	CountActiveSessions(ctx context.Context) (int, error)
 }
 
@@ -119,6 +127,7 @@ func NewChat(emitter Emitter) ChatSvc {
 		locks:         &sync.Map{},
 		activeCancels: &sync.Map{},
 		aborted:       &sync.Map{},
+		turnObservers: &sync.Map{},
 		gateway:       defaultGateway,
 	}
 	s.dispatcher = newPackageDispatcher(s)
@@ -150,6 +159,10 @@ type chatSvc struct {
 	// aborted：sessionID(int64) → struct{}。Stop 触发时 store；runTurn 收尾时
 	// LoadAndDelete 判定是否走 StreamAborted 路径 + 跳过 DrainPending 自动接续。
 	aborted *sync.Map
+	// turnObservers：sessionID(int64) → *sync.Map(chan TurnResult → struct{})。
+	// 服务端 turn 完成观察口(不经 Wails);group_svc 在 Send 前 ObserveTurn 订阅,
+	// finalize / failTurn 各回灌恰好一条终态用于释放调度位 + 判定 quiesce。
+	turnObservers *sync.Map
 	// autoWatchers：sessionID(int64) → struct{}。startAutonomousWatcher 用它防同一
 	// session 重复起 watcher goroutine(每会话一个,惰性启动);watcher 在底层
 	// AutonomousTurns channel close(子进程 evict / CloseSession)时退出并清这条。
@@ -252,13 +265,14 @@ func (s *chatSvc) ListAgents(ctx context.Context, _ *ListAgentsRequest) (*ListAg
 			AvatarColor:   a.AvatarColor,
 			AvatarIcon:    a.AvatarIcon,
 			AvatarDataURL: a.AvatarDataURL,
-			Pinned:        a.IsSystem(),
+			Pinned:        a.IsSystem() || a.Pinned,
 			ActiveCount:   counts[a.ID],
 			TotalSessions: totals[a.ID],
 			SessionIDs:    ids,
 		}
 		if be := backends[a.AgentBackendID]; be != nil {
 			item.BackendType = be.Type
+			item.SupportsGroup = backendSupportsGroup(be)
 			if agent_backend_entity.BackendType(be.Type) == agent_backend_entity.TypeClaudeCode {
 				// 仅 claudecode 透出；entity.Check 限定其它后端为空串。
 				item.DefaultPermissionMode = be.DefaultPermissionMode
@@ -1153,7 +1167,10 @@ func (s *chatSvc) send(ctx context.Context, req *SendRequest, opts sendOptions) 
 		_ = chat_repo.Session().Update(ctx, sess)
 	}
 
-	return s.startTurn(ctx, sess, a, be, prov, userBlocksForSend(text, imageBlocks), nil /*preTxHook*/, "" /*forkAnchor*/)
+	return s.startTurn(ctx, sess, a, be, prov, userBlocksForSend(text, imageBlocks), nil /*preTxHook*/, "" /*forkAnchor*/, turnExtras{
+		mcpServers:         req.MCPServers,
+		systemPromptSuffix: req.SystemPromptSuffix,
+	})
 }
 
 func userBlocksForSend(text string, imageBlocks []blocks.ContentBlock) []blocks.ContentBlock {
@@ -1314,6 +1331,30 @@ func (s *chatSvc) resolveAgentBackend(ctx context.Context, agentID int64) (
 	}
 
 	return a, be, prov, nil
+}
+
+// AgentBackendHasCapability 报告某 agent 的后端 runtime 是否声明指定能力(领域无关探针)。
+//
+// 复用 resolveAgentBackend 的 agent → backend 解析链;对本地后端经全局 runtime 注册表
+// (RuntimeFor)取能力矩阵。后端缺失/类型无法解析 → (false, nil)。
+// MVP: 远程后端的能力探测需借 session(borrowRemoteRuntime),这里没有 session,
+// 暂统一返回 (false, nil)。
+func (s *chatSvc) AgentBackendHasCapability(ctx context.Context, agentID int64, wantCap capability.Capability) (bool, error) {
+	_, be, _, err := s.resolveAgentBackend(ctx, agentID)
+	if err != nil {
+		return false, err
+	}
+	if be == nil {
+		return false, nil
+	}
+	if !be.IsLocal() {
+		return false, nil
+	}
+	r := agentruntime.RuntimeFor(agent_backend_entity.BackendType(be.Type))
+	if r == nil {
+		return false, nil
+	}
+	return r.Capabilities().Has(wantCap), nil
 }
 
 // Enqueue 在 AI 还在回答时把一条新的用户消息插入当前 turn。
@@ -1836,7 +1877,7 @@ func (s *chatSvc) Regenerate(ctx context.Context, req *RegenerateRequest) (*Send
 		_, derr := chat_repo.Message().DeleteFromSeq(txCtx, sess.ID, anchorSeq)
 		return derr
 	}
-	return s.startTurn(ctx, sess, a, be, prov, userBlocks, preTx, forkAnchor)
+	return s.startTurn(ctx, sess, a, be, prov, userBlocks, preTx, forkAnchor, turnExtras{})
 }
 
 // Edit 编辑历史 user 消息后用新文本重跑 turn。截到目标 user 消息（含）开始的全部
@@ -1902,7 +1943,7 @@ func (s *chatSvc) Edit(ctx context.Context, req *EditRequest) (*SendResponse, er
 		_, derr := chat_repo.Message().DeleteFromSeq(txCtx, sess.ID, anchorSeq)
 		return derr
 	}
-	return s.startTurn(ctx, sess, a, be, prov, replaceTextPreserveImages(text, targetBlocks), preTx, forkAnchor)
+	return s.startTurn(ctx, sess, a, be, prov, replaceTextPreserveImages(text, targetBlocks), preTx, forkAnchor, turnExtras{})
 }
 
 func replaceTextPreserveImages(text string, old []blocks.ContentBlock) []blocks.ContentBlock {
@@ -2001,6 +2042,14 @@ func (s *chatSvc) codexRollbackAnchor(ctx context.Context, sess *chat_entity.Ses
 // preTx, if non-nil, runs at the very top of the transaction — before NextSeq —
 // so it can free up seq numbers by truncating older rows. Returning a non-nil
 // error from preTx aborts the whole turn (and unlocks).
+// turnExtras 是从 SendRequest 透传到 RunRequest 的领域无关可选项;单聊一律零值,
+// 群聊由 group_svc 填(per-member MCP server + 群上下文 system-prompt 后缀)。
+// 在同一会话的自动续轮(auto-continue)里需要保持不变,所以随 runTurn 一路携带。
+type turnExtras struct {
+	mcpServers         []agentruntime.MCPServerSpec
+	systemPromptSuffix string
+}
+
 func (s *chatSvc) startTurn(
 	ctx context.Context,
 	sess *chat_entity.Session,
@@ -2010,6 +2059,7 @@ func (s *chatSvc) startTurn(
 	userBlocks []blocks.ContentBlock,
 	preTx func(txCtx context.Context) error,
 	forkAnchor string,
+	extras turnExtras,
 ) (*SendResponse, error) {
 	lock := s.lockFor(sess.ID)
 	if !lock.TryLock() {
@@ -2081,7 +2131,7 @@ func (s *chatSvc) startTurn(
 			s.activeCancels.Delete(sess.ID)
 			cancel() // 兜底：runTurn 自己没 cancel（正常完成路径）也补一刀，无副作用
 		}()
-		s.runTurn(turnCtx, sess, a, be, prov, userMsg, assistantMsg, stream, forkAnchor, false)
+		s.runTurn(turnCtx, sess, a, be, prov, userMsg, assistantMsg, stream, forkAnchor, false, extras)
 		return nil
 	}, gogo.WithIgnorePanic())
 
@@ -2153,7 +2203,7 @@ func (s *chatSvc) startCompactTurn(
 			s.activeCancels.Delete(sess.ID)
 			cancel()
 		}()
-		s.runTurn(turnCtx, sess, a, be, prov, nil, assistantMsg, stream, "", true)
+		s.runTurn(turnCtx, sess, a, be, prov, nil, assistantMsg, stream, "", true, turnExtras{})
 		return nil
 	}, gogo.WithIgnorePanic())
 
@@ -2257,6 +2307,7 @@ func (s *chatSvc) runTurn(
 	stream string,
 	forkAnchor string,
 	compact bool,
+	extras turnExtras,
 ) {
 	startedAt := time.Now()
 
@@ -2289,15 +2340,18 @@ func (s *chatSvc) runTurn(
 		return
 	}
 	req := agentruntime.RunRequest{
-		Backend:           be,
-		Provider:          prov,
-		AgentID:           a.ID,
-		SessionID:         sess.ID,
-		Cwd:               cwd,
-		SystemPrompt:      strings.Join(a.GetPrompt(), "\n"),
+		Backend:   be,
+		Provider:  prov,
+		AgentID:   a.ID,
+		SessionID: sess.ID,
+		Cwd:       cwd,
+		// SystemPromptSuffix 单聊为空 ⇒ 与今日 strings.Join(...) 逐字节一致(raw concat);
+		// 群聊由 group_svc 自带前导换行格式化,此处只做原样追加。
+		SystemPrompt:      strings.Join(a.GetPrompt(), "\n") + extras.systemPromptSuffix,
 		ProviderSessionID: sess.ProviderSessionID,
 		Compact:           compact,
 		ForkAnchor:        forkAnchor,
+		MCPServers:        extras.mcpServers,
 	}
 	if userMsg != nil {
 		req.UserText = textOfMessage(userMsg)
@@ -2604,7 +2658,9 @@ func (s *chatSvc) runTurn(
 			// chatMessageForEvent / StreamDone 会以 nextAssistant 为目标 emit，
 			// 前端 store 通过 StreamSteerConsumed.AssistantMessage 已经把活动
 			// assistant 切到 nextAssistant。
-			s.runTurn(ctx, sess, a, be, prov, nextUser, nextAssistant, stream, "", false)
+			// 自动续轮沿用本轮 extras:群成员会话的 MCP 注入 + 群上下文 suffix
+			// 需要在同一会话的整个生命周期内保持,而非只在首轮生效。
+			s.runTurn(ctx, sess, a, be, prov, nextUser, nextAssistant, stream, "", false, extras)
 			return
 		}
 		// 写新轮失败 → pending 已经从 SteerInbox drain 走，无法回滚，只能丢。
@@ -2639,6 +2695,14 @@ func (s *chatSvc) runTurn(
 		s.emitter.Emit(finalCtx, stream, ChatStreamEvent{Kind: StreamDone, Message: final})
 	}
 	s.emitter.Emit(finalCtx, stream, ChatStreamEvent{Kind: StreamClosed})
+	// turn 正常收尾(含 abort)的唯一终态回灌点。错误路径走 failTurn 后 return,
+	// 自动接续路径在递归 runTurn 的 finalize 回灌(本帧 len(pending)>0 已提前 return)。
+	s.publishTurnResult(sess.ID, TurnResult{
+		SessionID:          sess.ID,
+		AssistantMessageID: assistantMsg.ID,
+		Aborted:            aborted,
+		Err:                stopErr,
+	})
 }
 
 func (s *chatSvc) persistProviderSessionID(ctx context.Context, sess *chat_entity.Session, providerSessionID, reason string) {
@@ -3062,6 +3126,13 @@ func (s *chatSvc) failTurn(ctx context.Context, sess *chat_entity.Session, msg *
 		Message: chatMessageForEvent(sess, msg),
 	})
 	s.emitter.Emit(ctx, stream, ChatStreamEvent{Kind: StreamClosed})
+	// 错误路径的唯一终态回灌点。failTurn 直线到此(无内部 early return),尾端单点
+	// publish 即覆盖全部退出路径;与 finalize 互斥(调用方 failTurn 后立即 return)。
+	s.publishTurnResult(sess.ID, TurnResult{
+		SessionID:          sess.ID,
+		AssistantMessageID: msg.ID,
+		Err:                err,
+	})
 }
 
 func (s *chatSvc) lockFor(sessionID int64) *trylockMutex {
@@ -3370,4 +3441,51 @@ func (s *chatSvc) selectRunner(ctx context.Context, be *agent_backend_entity.Age
 		return r, nil
 	}
 	return s.borrowRemoteRuntime(ctx, be, sessionID)
+}
+
+// backendSupportsGroup 报告某后端 runtime 是否声明 CapMCPTools（群聊资格）。nil → false。
+func backendSupportsGroup(be *agent_backend_entity.AgentBackend) bool {
+	if be == nil {
+		return false
+	}
+	r := agentruntime.RuntimeFor(agent_backend_entity.BackendType(be.Type))
+	if r == nil {
+		return false
+	}
+	return r.Capabilities().Has(capability.CapMCPTools)
+}
+
+// EnsureGroupMemberSession 创建/返回某 agent 在指定群的 backing session(带 group_id)。
+// 幂等: 同 (groupID, agentID) 的 active session 已存在则复用。
+func (s *chatSvc) EnsureGroupMemberSession(ctx context.Context, agentID, projectID, groupID int64) (int64, error) {
+	if agentID <= 0 || groupID <= 0 {
+		return 0, i18n.NewError(ctx, code.InvalidParameter)
+	}
+	existing, err := chat_repo.Session().FindByGroupAndAgent(ctx, groupID, agentID)
+	if err != nil {
+		logger.Ctx(ctx).Warn("chat_svc.EnsureGroupMemberSession: find failed",
+			zap.Int64("agentId", agentID),
+			zap.Int64("groupId", groupID),
+			zap.Error(err))
+		return 0, i18n.NewError(ctx, code.OperationFailed)
+	}
+	if existing != nil {
+		return existing.ID, nil
+	}
+	sess := &chat_entity.Session{
+		AgentID:   agentID,
+		ProjectID: projectID,
+		GroupID:   groupID,
+		// Title intentionally empty: 群成员 backing session 无首条用户消息, 标题由群聊层展示。
+		AgentStatus: "idle",
+		Status:      consts.ACTIVE,
+	}
+	if err := chat_repo.Session().Create(ctx, sess); err != nil {
+		logger.Ctx(ctx).Error("chat_svc.EnsureGroupMemberSession: create failed",
+			zap.Int64("agentId", agentID),
+			zap.Int64("groupId", groupID),
+			zap.Error(err))
+		return 0, i18n.NewError(ctx, code.OperationFailed)
+	}
+	return sess.ID, nil
 }

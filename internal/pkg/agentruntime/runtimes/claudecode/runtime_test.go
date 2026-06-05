@@ -43,6 +43,9 @@ func TestClaudeCodeCapabilities(t *testing.T) {
 		// stream-json 原生支持)。extractImages 从 RunRequest.UserBlocks 抽 inline
 		// 图片,Run 经 handle.Stream 透传。
 		So(caps.Has(capability.CapImageInput), ShouldBeTrue)
+		// CapMCPTools=true:claudecode runtime 接受 RunRequest.MCPServers,可带注入
+		// 的 MCP tool 服务器启动;群聊是首个消费者,入群资格门控于此 cap。
+		So(caps.Has(capability.CapMCPTools), ShouldBeTrue)
 		// CapAutonomousTurn=true:CLI 后台任务完成自主续轮;必须实现 AutonomousTurnSource。
 		So(caps.Has(capability.CapAutonomousTurn), ShouldBeTrue)
 		_, ok := agentruntime.Runtime(r).(agentruntime.AutonomousTurnSource)

@@ -145,6 +145,21 @@ func (mr *MockSessionRepoMockRecorder) Find(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Find", reflect.TypeOf((*MockSessionRepo)(nil).Find), ctx, id)
 }
 
+// FindByGroupAndAgent mocks base method.
+func (m *MockSessionRepo) FindByGroupAndAgent(ctx context.Context, groupID, agentID int64) (*chat_entity.Session, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FindByGroupAndAgent", ctx, groupID, agentID)
+	ret0, _ := ret[0].(*chat_entity.Session)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FindByGroupAndAgent indicates an expected call of FindByGroupAndAgent.
+func (mr *MockSessionRepoMockRecorder) FindByGroupAndAgent(ctx, groupID, agentID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByGroupAndAgent", reflect.TypeOf((*MockSessionRepo)(nil).FindByGroupAndAgent), ctx, groupID, agentID)
+}
+
 // ListAttentionByAgent mocks base method.
 func (m *MockSessionRepo) ListAttentionByAgent(ctx context.Context, agentID int64, limit int) ([]*chat_entity.Session, error) {
 	m.ctrl.T.Helper()

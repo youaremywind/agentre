@@ -2,6 +2,7 @@
 package chat_svc
 
 import (
+	"agentre/internal/pkg/agentruntime"
 	"agentre/internal/service/chat_svc/blocks"
 	"agentre/internal/service/chat_svc/view"
 )
@@ -417,16 +418,19 @@ type ChatAgentItem struct {
 	// （codex / builtin）一律留空。前端新会话场景下用它作为 pill 起手值兜底，并把
 	// 同值随 SendChatMessage.permissionMode 透回，让 chat_svc.createPermissionMode
 	// 的「raw 非空就直接用」分支照样落到管理员预设上。
-	DefaultPermissionMode string            `json:"defaultPermissionMode"`
-	Chattable             bool              `json:"chattable"`
-	Pinned                bool              `json:"pinned"`
-	ChattableHint         string            `json:"chattableHint"`
-	ActiveCount           int               `json:"activeCount"`
-	RecentCount           int               `json:"recentCount"`
-	TotalSessions         int64             `json:"totalSessions"`
-	SessionIDs            []int64           `json:"sessionIds"`
-	Sessions              []ChatSessionLite `json:"sessions"`
-	AttentionSessions     []ChatSessionLite `json:"attentionSessions"`
+	DefaultPermissionMode string `json:"defaultPermissionMode"`
+	Chattable             bool   `json:"chattable"`
+	Pinned                bool   `json:"pinned"`
+	// SupportsGroup 报告该 agent 的后端是否声明 CapMCPTools（可作为群聊协调者/成员）。
+	// MVP 仅 claudecode 为 true。前端「新建群聊」picker 用它过滤候选（OCP，不写 backendType 字面量）。
+	SupportsGroup     bool              `json:"supportsGroup"`
+	ChattableHint     string            `json:"chattableHint"`
+	ActiveCount       int               `json:"activeCount"`
+	RecentCount       int               `json:"recentCount"`
+	TotalSessions     int64             `json:"totalSessions"`
+	SessionIDs        []int64           `json:"sessionIds"`
+	Sessions          []ChatSessionLite `json:"sessions"`
+	AttentionSessions []ChatSessionLite `json:"attentionSessions"`
 
 	// 远端 device 归属 — 给前端 DeviceTag 渲染本地/远端 chip 用。
 	// 空 DeviceID = 本地 backend；非空 = paired_agentred.id 字符串化。
@@ -498,6 +502,10 @@ type SendRequest struct {
 	//   - codex: default / plan
 	// 空串表示不改已有会话；新建 codex 会话空串按 default 落库。
 	PermissionMode string `json:"permissionMode,omitempty"`
+	// MCPServers 透传到 RunRequest.MCPServers(注入额外 MCP tool server)。群聊用; 单聊空。
+	MCPServers []agentruntime.MCPServerSpec `json:"-"`
+	// SystemPromptSuffix 追加到 RunRequest.SystemPrompt 之后(群上下文/角色/roster)。群聊用; 单聊空。
+	SystemPromptSuffix string `json:"-"`
 }
 type SendImage struct {
 	Name    string `json:"name,omitempty"`
