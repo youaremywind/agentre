@@ -57,19 +57,33 @@ func (mr *MockChatGatewayMockRecorder) AgentBackendHasCapability(ctx, agentID, w
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AgentBackendHasCapability", reflect.TypeOf((*MockChatGateway)(nil).AgentBackendHasCapability), ctx, agentID, wantCap)
 }
 
-// EnsureGroupMemberSession mocks base method.
-func (m *MockChatGateway) EnsureGroupMemberSession(ctx context.Context, agentID, projectID, groupID int64) (int64, error) {
+// DeleteSession mocks base method.
+func (m *MockChatGateway) DeleteSession(ctx context.Context, sessionID int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnsureGroupMemberSession", ctx, agentID, projectID, groupID)
-	ret0, _ := ret[0].(int64)
+	ret := m.ctrl.Call(m, "DeleteSession", ctx, sessionID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteSession indicates an expected call of DeleteSession.
+func (mr *MockChatGatewayMockRecorder) DeleteSession(ctx, sessionID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteSession", reflect.TypeOf((*MockChatGateway)(nil).DeleteSession), ctx, sessionID)
+}
+
+// EnsureSession mocks base method.
+func (m *MockChatGateway) EnsureSession(ctx context.Context, req *chat_svc.EnsureSessionRequest) (*chat_svc.EnsureSessionResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EnsureSession", ctx, req)
+	ret0, _ := ret[0].(*chat_svc.EnsureSessionResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// EnsureGroupMemberSession indicates an expected call of EnsureGroupMemberSession.
-func (mr *MockChatGatewayMockRecorder) EnsureGroupMemberSession(ctx, agentID, projectID, groupID any) *gomock.Call {
+// EnsureSession indicates an expected call of EnsureSession.
+func (mr *MockChatGatewayMockRecorder) EnsureSession(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureGroupMemberSession", reflect.TypeOf((*MockChatGateway)(nil).EnsureGroupMemberSession), ctx, agentID, projectID, groupID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureSession", reflect.TypeOf((*MockChatGateway)(nil).EnsureSession), ctx, req)
 }
 
 // ObserveTurn mocks base method.

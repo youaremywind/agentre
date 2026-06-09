@@ -41,11 +41,15 @@ func MintTokenForTest(svc GroupSvc, groupID, memberID int64) string {
 	return ""
 }
 
-// TokenValidForTest 报告该 token 是否仍能解析到成员(吊销后应为 false)。
+// TokenValidForTest 报告该 token 当前是否仍可用于 group_send(验签通过 + 按 DB 成员资格仍有
+// 发言权)。无状态 token 验签恒过, 失权(离群 / 群归档)体现在 authorized;停止不失权。
 func TokenValidForTest(svc GroupSvc, token string) bool {
 	if s, ok := svc.(*groupSvc); ok {
-		_, ok := s.mcp.lookup(token)
-		return ok
+		ref, ok := s.mcp.lookup(token)
+		if !ok {
+			return false
+		}
+		return s.mcp.authorized(context.Background(), ref.groupID, ref.memberID)
 	}
 	return false
 }

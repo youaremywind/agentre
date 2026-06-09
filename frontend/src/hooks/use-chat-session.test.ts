@@ -4,6 +4,7 @@ import { useChatSession } from "./use-chat-session";
 import { useSessionMetaStore } from "@/stores/session-meta-store";
 import { useSessionReadStore } from "@/stores/session-read-store";
 import { useSessionStatusStore } from "@/stores/session-status-store";
+import { useChatStreamsStore } from "@/stores/chat-streams-store";
 
 vi.mock("../../wailsjs/go/app/App", () => ({
   LoadChatSession: vi.fn(),
@@ -22,6 +23,89 @@ describe("useChatSession", () => {
     // session-read-store 没有 __reset,直接重建 Map(单调推进语义保证不会被旧值污染,
     // 但跨用例 override 残留会影响 "no override" 类断言)。
     useSessionReadStore.setState({ overrides: new Map() });
+    useChatStreamsStore.setState({ streams: new Map() });
+  });
+
+  // Bug: 群聊成员轮(及任何非前端发起的 turn)在中途打开会话时,前端没有 per-turn
+  // 流入口 → 看不到"生成中"和流式内容。修复:LoadSession 在有活跃 turn 时回传
+  // activeStream;hook 据此 openStream 重挂实时流。
+  it("reattaches live stream on load when activeStream is present", async () => {
+    loadChatSession.mockResolvedValueOnce({
+      session: {
+        id: 9,
+        agentId: 1,
+        agentName: "Eng",
+        title: "x",
+        agentStatus: "running",
+        activeStream: "chat:event:9:42",
+        lastMessageAt: 0,
+        createtime: 0,
+      },
+      messages: [
+        { id: 40, sessionId: 9, role: "user", blocks: [], seq: 1 },
+        { id: 42, sessionId: 9, role: "assistant", blocks: [], seq: 2 },
+      ],
+    });
+    const { result } = renderHook(() => useChatSession(9));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const live = useChatStreamsStore.getState().streams.get(9);
+    expect(live?.name).toBe("chat:event:9:42");
+    expect(live?.assistantMessageId).toBe(42);
+  });
+
+  it("does not reattach when activeStream is absent", async () => {
+    loadChatSession.mockResolvedValueOnce({
+      session: {
+        id: 9,
+        agentId: 1,
+        agentName: "Eng",
+        title: "x",
+        agentStatus: "idle",
+        lastMessageAt: 0,
+        createtime: 0,
+      },
+      messages: [
+        { id: 42, sessionId: 9, role: "assistant", blocks: [], seq: 1 },
+      ],
+    });
+    const { result } = renderHook(() => useChatSession(9));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(useChatStreamsStore.getState().streams.get(9)).toBeUndefined();
+  });
+
+  it("does not clobber an already-open live stream", async () => {
+    // 模拟用户在自己会话里正常 Send 已经 openStream;reload 不得覆盖它。
+    act(() => {
+      useChatStreamsStore.getState().openStream({
+        name: "chat:event:9:1",
+        sessionId: 9,
+        assistantMessageId: 1,
+        streamStartedAt: 123,
+      });
+    });
+    loadChatSession.mockResolvedValueOnce({
+      session: {
+        id: 9,
+        agentId: 1,
+        agentName: "Eng",
+        title: "x",
+        agentStatus: "running",
+        activeStream: "chat:event:9:99",
+        lastMessageAt: 0,
+        createtime: 0,
+      },
+      messages: [
+        { id: 99, sessionId: 9, role: "assistant", blocks: [], seq: 1 },
+      ],
+    });
+    const { result } = renderHook(() => useChatSession(9));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const live = useChatStreamsStore.getState().streams.get(9);
+    expect(live?.name).toBe("chat:event:9:1");
+    expect(live?.assistantMessageId).toBe(1);
   });
 
   it("returns null when sessionId is 0", async () => {

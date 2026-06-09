@@ -39,6 +39,22 @@ func registerCapabilityRepos(t *testing.T, ctrl *gomock.Controller) (
 	return agentMock, backendMock
 }
 
+func expectCapabilityBackend(
+	ctx context.Context,
+	agentMock *mock_agent_repo.MockAgentRepo,
+	backendMock *mock_agent_backend_repo.MockAgentBackendRepo,
+	agentID int64,
+	backendID int64,
+	deviceID string,
+) {
+	agentMock.EXPECT().Find(ctx, agentID).Return(&agent_entity.Agent{
+		ID: agentID, AgentBackendID: backendID,
+	}, nil)
+	backendMock.EXPECT().Find(ctx, backendID).Return(&agent_backend_entity.AgentBackend{
+		ID: backendID, Type: string(agent_backend_entity.TypeClaudeCode), DeviceID: deviceID,
+	}, nil)
+}
+
 func TestAgentBackendHasCapability_LocalClaudeCodeHasMCPTools(t *testing.T) {
 	Convey("给定本地 claudecode 后端, 探测 CapMCPTools 应返回 true", t, func() {
 		ctrl := gomock.NewController(t)
@@ -47,12 +63,7 @@ func TestAgentBackendHasCapability_LocalClaudeCodeHasMCPTools(t *testing.T) {
 		ctx := context.Background()
 
 		// agent 11 → backend 12(本地 claudecode, DeviceID 空 → IsLocal())。
-		agentMock.EXPECT().Find(ctx, int64(11)).Return(&agent_entity.Agent{
-			ID: 11, AgentBackendID: 12,
-		}, nil)
-		backendMock.EXPECT().Find(ctx, int64(12)).Return(&agent_backend_entity.AgentBackend{
-			ID: 12, Type: string(agent_backend_entity.TypeClaudeCode), DeviceID: "",
-		}, nil)
+		expectCapabilityBackend(ctx, agentMock, backendMock, 11, 12, "")
 
 		svc := chat_svc.NewChat(chat_svc.NoopEmitter{})
 		ok, err := svc.AgentBackendHasCapability(ctx, 11, capability.CapMCPTools)
@@ -69,12 +80,7 @@ func TestAgentBackendHasCapability_RuntimeLacksCap(t *testing.T) {
 		agentMock, backendMock := registerCapabilityRepos(t, ctrl)
 		ctx := context.Background()
 
-		agentMock.EXPECT().Find(ctx, int64(11)).Return(&agent_entity.Agent{
-			ID: 11, AgentBackendID: 12,
-		}, nil)
-		backendMock.EXPECT().Find(ctx, int64(12)).Return(&agent_backend_entity.AgentBackend{
-			ID: 12, Type: string(agent_backend_entity.TypeClaudeCode), DeviceID: "",
-		}, nil)
+		expectCapabilityBackend(ctx, agentMock, backendMock, 11, 12, "")
 
 		svc := chat_svc.NewChat(chat_svc.NoopEmitter{})
 		ok, err := svc.AgentBackendHasCapability(ctx, 11, capability.Capability("definitely-not-a-real-cap"))
@@ -124,12 +130,7 @@ func TestAgentBackendHasCapability_RemoteBackendUnsupported(t *testing.T) {
 
 		// LLMProviderKey 空 → resolveAgentBackend 跳过 gateway 校验, 远端后端也能解析成功;
 		// AgentBackendHasCapability 因 !IsLocal() 在解析 runtime 前短路返回 false。
-		agentMock.EXPECT().Find(ctx, int64(21)).Return(&agent_entity.Agent{
-			ID: 21, AgentBackendID: 22,
-		}, nil)
-		backendMock.EXPECT().Find(ctx, int64(22)).Return(&agent_backend_entity.AgentBackend{
-			ID: 22, Type: string(agent_backend_entity.TypeClaudeCode), DeviceID: "5",
-		}, nil)
+		expectCapabilityBackend(ctx, agentMock, backendMock, 21, 22, "5")
 
 		svc := chat_svc.NewChat(chat_svc.NoopEmitter{})
 		ok, err := svc.AgentBackendHasCapability(ctx, 21, capability.CapMCPTools)

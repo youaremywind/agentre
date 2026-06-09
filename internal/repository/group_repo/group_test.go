@@ -24,9 +24,9 @@ func TestGroupRepo_Create(t *testing.T) {
 	mock.ExpectCommit()
 
 	g := &group_entity.Group{
-		Title:              "队",
-		CoordinatorAgentID: 1,
-		Status:             consts.ACTIVE,
+		Title:       "队",
+		HostAgentID: 1,
+		Status:      consts.ACTIVE,
 	}
 	err := group_repo.NewGroup().Create(ctx, g)
 	require.NoError(t, err)

@@ -99,6 +99,12 @@ var allowedAvatarColors = map[string]struct{}{
 	"agent-8":  {},
 	"agent-9":  {},
 	"agent-10": {},
+	"agent-11": {},
+	"agent-12": {},
+	"agent-13": {},
+	"agent-14": {},
+	"agent-15": {},
+	"agent-16": {},
 	"neutral":  {},
 }
 

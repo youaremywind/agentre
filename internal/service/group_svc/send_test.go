@@ -32,7 +32,7 @@ func TestSendGroupMessage_ResolvesMentionsAndPersists(t *testing.T) {
 		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunIdle, Status: consts.ACTIVE, RoundCount: 7}
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return([]*group_entity.GroupMember{
-			{ID: 1, GroupID: 5, AgentID: 1, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive},
+			{ID: 1, GroupID: 5, AgentID: 1, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
 			{ID: 2, GroupID: 5, AgentID: 2, BackingSessionID: 12, Status: group_entity.MemberActive},
 		}, nil).AnyTimes()
 		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
@@ -49,7 +49,7 @@ func TestSendGroupMessage_ResolvesMentionsAndPersists(t *testing.T) {
 				So(gg.RoundCount, ShouldEqual, 0)
 				return nil
 			}).AnyTimes()
-		// C5 调度器: 收件成员被 kick 起 turn → 容忍 ObserveTurn/Send。
+		// 调度器会把收件成员 kick 起 turn → 容忍 ObserveTurn/Send。
 		ch12 := make(chan chat_svc.TurnResult, 1)
 		gw.EXPECT().ObserveTurn(int64(12)).Return((<-chan chat_svc.TurnResult)(ch12), func() {}).AnyTimes()
 		gw.EXPECT().Send(gomock.Any(), gomock.Any()).Return(&chat_svc.SendResponse{}, nil).AnyTimes()
@@ -60,8 +60,8 @@ func TestSendGroupMessage_ResolvesMentionsAndPersists(t *testing.T) {
 	})
 }
 
-func TestSendGroupMessage_DefaultsToCoordinator(t *testing.T) {
-	Convey("用户未选收件人且非发给自己 → 默认投协调者(spec §17)", t, func() {
+func TestSendGroupMessage_DefaultsToHost(t *testing.T) {
+	Convey("用户未选收件人且非发给自己 → 默认投主持人(spec §17)", t, func() {
 		ctx := context.Background()
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
@@ -76,19 +76,19 @@ func TestSendGroupMessage_DefaultsToCoordinator(t *testing.T) {
 		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunIdle, Status: consts.ACTIVE, RoundCount: 3}
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return([]*group_entity.GroupMember{
-			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive},
+			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
 			{ID: 2, GroupID: 5, AgentID: 2, BackingSessionID: 12, Status: group_entity.MemberActive},
 		}, nil).AnyTimes()
 		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
 		msgRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 			func(_ context.Context, m *group_entity.GroupMessage) error {
 				So(m.SenderKind, ShouldEqual, group_entity.SenderKindUser)
-				So(m.Recipients(), ShouldResemble, []int64{1}) // 协调者 member id
+				So(m.Recipients(), ShouldResemble, []int64{1}) // 主持人 member id
 				So(m.ToUser, ShouldBeFalse)
 				return nil
 			})
 		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-		// C5 调度器: 默认收件人(协调者 member1)被 kick 起 turn → 容忍 ObserveTurn/Send。
+		// 调度器会把默认收件人(主持人 member1)kick 起 turn → 容忍 ObserveTurn/Send。
 		ch11 := make(chan chat_svc.TurnResult, 1)
 		gw.EXPECT().ObserveTurn(int64(11)).Return((<-chan chat_svc.TurnResult)(ch11), func() {}).AnyTimes()
 		gw.EXPECT().Send(gomock.Any(), gomock.Any()).Return(&chat_svc.SendResponse{}, nil).AnyTimes()
@@ -99,8 +99,8 @@ func TestSendGroupMessage_DefaultsToCoordinator(t *testing.T) {
 	})
 }
 
-func TestSendGroupMessage_ToUserNoCoordinatorFallback(t *testing.T) {
-	Convey("用户发给自己(ToUser=true)且无收件人 → 不回退协调者, ToUser 透传", t, func() {
+func TestSendGroupMessage_ToUserNoHostFallback(t *testing.T) {
+	Convey("用户发给自己(ToUser=true)且无收件人 → 不回退主持人, ToUser 透传", t, func() {
 		ctx := context.Background()
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
@@ -115,7 +115,7 @@ func TestSendGroupMessage_ToUserNoCoordinatorFallback(t *testing.T) {
 		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunIdle, Status: consts.ACTIVE, RoundCount: 2}
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return([]*group_entity.GroupMember{
-			{ID: 1, AgentID: 1, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive},
+			{ID: 1, AgentID: 1, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
 		}, nil).AnyTimes()
 		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
 		msgRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(

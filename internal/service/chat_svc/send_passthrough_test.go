@@ -125,3 +125,50 @@ func TestSend_PassthroughMCPAndSystemPromptSuffix(t *testing.T) {
 		})
 	})
 }
+
+func findRecordedEvent(m *chatMocks, name string) *recorded {
+	for i := range m.events {
+		if m.events[i].Name == name {
+			return &m.events[i]
+		}
+	}
+	return nil
+}
+
+func TestSend_EmitsTurnStartedBypass(t *testing.T) {
+	convey.Convey("EmitTurnStartedBypass 经会话级旁路把 per-turn 流名推给已打开的查看者", t, func() {
+		convey.Convey("Given Send 带 EmitTurnStartedBypass(群成员轮), When Send, Then emit chat:autonomous:<sid> 带 StreamAutonomousStarted + per-turn stream + 新 assistant 行", func() {
+			m, runner, _ := sendPassthroughFixture(t)
+
+			captureSendRunRequest(t, m, runner, &chat_svc.SendRequest{
+				SessionID:             100,
+				AgentID:               7,
+				Text:                  "hi",
+				EmitTurnStartedBypass: true,
+			})
+
+			ev := findRecordedEvent(m, chat_svc.AutonomousStreamName(100))
+			require.NotNil(t, ev, "应 emit 会话级旁路事件 %s", chat_svc.AutonomousStreamName(100))
+			payload, ok := ev.Payload.(chat_svc.ChatStreamEvent)
+			require.True(t, ok, "payload 应为 ChatStreamEvent")
+			assert.Equal(t, chat_svc.StreamAutonomousStarted, payload.Kind)
+			// 旁路携带 per-turn 流名(assistant msg id=1001 见 fixture)+ 新 assistant 行,
+			// 前端 onAutonomousEvent 据此 openStream + 插行。
+			assert.Equal(t, chat_svc.StreamName(100, 1001), payload.Stream)
+			require.NotNil(t, payload.AssistantMessage)
+			assert.Equal(t, int64(1001), payload.AssistantMessage.ID)
+		})
+
+		convey.Convey("Given Send 不带该标志(普通前端 Send 回归), When Send, Then 不 emit 会话级旁路(避免发起者双开流)", func() {
+			m, runner, _ := sendPassthroughFixture(t)
+
+			captureSendRunRequest(t, m, runner, &chat_svc.SendRequest{
+				SessionID: 100,
+				AgentID:   7,
+				Text:      "hi",
+			})
+
+			convey.So(findRecordedEvent(m, chat_svc.AutonomousStreamName(100)), convey.ShouldBeNil)
+		})
+	})
+}

@@ -9,11 +9,11 @@ import (
 	"log"
 	"os"
 	stdruntime "runtime"
-	"strings"
 
 	"agentre/internal/app"
 	"agentre/internal/bootstrap"
 	"agentre/internal/cli/claudecodecmd"
+	"agentre/internal/pkg/paths"
 
 	"github.com/cago-frame/cago/pkg/logger"
 	"github.com/wailsapp/wails/v2"
@@ -48,6 +48,8 @@ func main() {
 	}
 	defer runtime.Close()
 
+	installE2EFakes(context.Background())
+
 	// Create an instance of the app structure
 	appInst := app.NewApp()
 
@@ -62,7 +64,7 @@ func main() {
 
 func newWailsOptionsForDataDir(a *app.App, assets fs.FS, goos, dataDir string) *options.App {
 	appOptions := &options.App{
-		Title:       "Agentre",
+		Title:       windowTitle(),
 		Width:       defaultWindowWidth,
 		Height:      defaultWindowHeight,
 		MinWidth:    minWindowWidth,
@@ -100,7 +102,16 @@ func newWailsOptionsForDataDir(a *app.App, assets fs.FS, goos, dataDir string) *
 }
 
 func isWailsDevMode() bool {
-	return strings.TrimSpace(os.Getenv("devserver")) != ""
+	return paths.IsDevMode()
+}
+
+// windowTitle 在 wails dev 下给标题加 (Dev) 后缀，方便和已安装的 App 窗口区分
+// （两者数据已隔离、可同时运行，见 paths.AppDataDir）。
+func windowTitle() string {
+	if isWailsDevMode() {
+		return "Agentre (Dev)"
+	}
+	return "Agentre"
 }
 
 func singleInstanceUniqueID(dataDir string) string {

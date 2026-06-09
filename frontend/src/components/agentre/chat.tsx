@@ -1,5 +1,6 @@
 import * as React from "react";
 import type { TFunction } from "i18next";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowDown,
   ArrowUp,
@@ -34,8 +35,9 @@ import { AutoTriggerBanner } from "./auto-trigger-banner";
 import { CompactBoundaryDivider } from "./compact-boundary-divider";
 import { CompactHistoryFold } from "./compact-history-fold";
 import { MarkdownText, StreamingMarkdown } from "./markdown-text";
-import { AgentAvatar } from "./primitives";
+import { MessageRow, MessageCopyButton } from "./message-row";
 import { ThinkingBlock } from "./thinking-block";
+import { TranscriptUIStateProvider } from "./transcript-ui-state";
 
 // isSubagentCanonical 替代旧 isSubagentTool(name) — name-based 检测改为读
 // canonical.kind。translator 在 emit 时已经把 Task/Agent/collabAgent 工具识别成
@@ -95,46 +97,33 @@ function ChatMessage({
   const { t } = useTranslation();
   const isUser = variant === "user";
   return (
-    <article className={cn("flex gap-3 text-sm", className)} {...props}>
-      {isUser ? (
-        <span
-          aria-label={t("chat.message.me")}
-          role="img"
-          className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-[11px] font-semibold text-muted-foreground"
-        >
-          {t("chat.message.me")}
-        </span>
-      ) : (
-        <AgentAvatar
-          name={author}
-          initials={initials}
-          color={avatarColor}
-          size="md"
-          className="size-7 text-[11px]"
-        />
-      )}
-      <div className="flex min-w-0 max-w-[720px] flex-1 flex-col gap-1">
-        <div className="flex items-center gap-2">
-          {/* user 行: 不渲染名字（前缀 "›" 已是充足的「这是我说的」信号）。
-              assistant 行：保留 agent 名字 + 时间。 */}
-          {isUser ? null : <span className="font-semibold">{author}</span>}
-          <span className="font-mono text-[10px] text-muted-foreground">
-            {time}
+    <MessageRow
+      className={className}
+      avatar={
+        isUser ? (
+          <span
+            aria-label={t("chat.message.me")}
+            role="img"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-[11px] font-semibold text-muted-foreground"
+          >
+            {t("chat.message.me")}
           </span>
-        </div>
-        <div
-          data-selectable-text="true"
-          className="flex flex-col gap-2 leading-[1.55]"
-        >
-          {children}
-        </div>
-        {meta ? (
-          <div className="mt-1 font-mono text-[10px] text-subtle-foreground">
-            {meta}
-          </div>
-        ) : null}
-      </div>
-    </article>
+        ) : undefined
+      }
+      avatarName={author}
+      avatarInitials={initials}
+      avatarColor={avatarColor}
+      name={isUser ? null : author}
+      headerExtra={
+        <span className="font-mono text-[10px] text-muted-foreground">
+          {time}
+        </span>
+      }
+      footer={meta}
+      {...props}
+    >
+      {children}
+    </MessageRow>
   );
 }
 
@@ -298,6 +287,56 @@ function MessageMeta({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+type AssistantMessageActionsProps = {
+  cacheCreationTokens?: number;
+  cachedTokens?: number;
+  completionTokens: number;
+  copyText: string;
+  durationMs: number;
+  model: string;
+  onRerun?: () => void;
+  promptTokens: number;
+  reasoningTokens?: number;
+};
+
+function AssistantMessageActions({
+  cacheCreationTokens,
+  cachedTokens,
+  completionTokens,
+  copyText,
+  durationMs,
+  model,
+  onRerun,
+  promptTokens,
+  reasoningTokens,
+}: AssistantMessageActionsProps) {
+  const { t } = useTranslation();
+
+  return (
+    <>
+      {durationMs > 0 ? (
+        <MessageMeta
+          model={model}
+          promptTokens={promptTokens}
+          completionTokens={completionTokens}
+          cachedTokens={cachedTokens}
+          cacheCreationTokens={cacheCreationTokens}
+          reasoningTokens={reasoningTokens}
+          durationMs={durationMs}
+          onRerun={onRerun}
+        />
+      ) : null}
+      <MessageCopyButton
+        text={copyText}
+        label={t("common.copy")}
+        ariaLabel={t("chat.actions.copyOutput")}
+        successTitle={t("chat.actions.copyOutputDone")}
+        errorTitle={t("chat.actions.copyOutputFailed")}
+      />
+    </>
   );
 }
 
@@ -476,7 +515,6 @@ function formatTokens(n: number): string {
 //   - <24h → "Nh"(向下取整)
 //   - >=24h → "XdYh"(Yh=0 时省略,写 "Xd")
 // nowMs 可选(测试注入固定 now);省略走 Date.now()。
-// eslint-disable-next-line react-refresh/only-export-components
 export function formatResetIn(value: unknown, nowMs?: number): string {
   if (value == null || value === "") return "";
   const target =
@@ -1082,6 +1120,11 @@ function RetryNoticeCard({ retry }: { retry: RetryNotice }) {
 
 // ─── ChatTranscript ──────────────────────────────────────────────────────────
 
+// 距底 ≤32px 视为"贴底",与 chat-panel 的 TRANSCRIPT_BOTTOM_THRESHOLD 同义:
+// 它是 anchorTo:"end" 在 live 行流式增长时"是否继续钉底"的容差;
+// 用户上滑超过它就不再钉底,保住阅读历史的位置。
+const STICK_TO_BOTTOM_THRESHOLD_PX = 32;
+
 type ChatTranscriptProps = {
   agentName: string;
   agentColor: AgentColor;
@@ -1089,6 +1132,12 @@ type ChatTranscriptProps = {
   cwd?: string;
   /** 当前 chat session id —— AskUserQuestionCard 提交答案时要带它去 Wails 绑定。 */
   sessionId?: number;
+  /** Transcript 的滚动容器。传入时启用动态高度虚拟列表。 */
+  scrollElement?: HTMLElement | null;
+  /** scrollElement 挂上前也保持虚拟化路径，避免长对话首帧全量 mount。 */
+  virtualize?: boolean;
+  /** 当前 tab 是否可见；从隐藏切回时触发虚拟列表重新测量。 */
+  active?: boolean;
   messages: chat_svc.ChatMessage[];
   liveDelta?: string;
   /** 流式中累积的 thinking 增量。挂在 liveTargetId 对应的 assistant 上作为一张 streaming thinking 卡。 */
@@ -1113,6 +1162,16 @@ type ChatTranscriptProps = {
    *  "正在压缩上下文…" chip,让用户知道这段时间在做什么。compact_boundary 到达自动清空。*/
   liveCompacting?: boolean;
   onPlanActionStarted?: (stream: PlanActionStream, userText: string) => void;
+  /** Stable mounted chat tab key for UI drafts that survive route/tab remounts. */
+  tabStateKey?: string;
+};
+
+type ChatTranscriptHandle = {
+  scrollToMessage: (messageId: number) => void;
+  // 锚点恢复:把 messageId 这条消息钉到距视口顶 offset px 处,并随虚拟器逐行复测
+  // 收敛。返回 false 表示该消息当前不在 displayMessages(被折叠 / 尚未加载),
+  // 调用方应回退到像素恢复。
+  scrollToAnchor: (messageId: number, offset: number) => boolean;
 };
 
 // findLastCompactBoundary 顺序扫所有 messages.blocks 找最后一条 type=compact_boundary
@@ -1132,24 +1191,34 @@ function findLastCompactBoundary(
   return found;
 }
 
-function ChatTranscript({
-  agentName,
-  agentColor,
-  cwd,
-  sessionId,
-  messages,
-  liveDelta,
-  liveThinking,
-  liveTargetId,
-  liveBlocks,
-  liveRetry,
-  liveStreamStartedAt,
-  onRerun,
-  onEdit,
-  onPlanActionStarted,
-  streaming = false,
-  liveCompacting = false,
-}: ChatTranscriptProps) {
+const ChatTranscript = React.forwardRef<
+  ChatTranscriptHandle,
+  ChatTranscriptProps
+>(function ChatTranscript(
+  {
+    agentName,
+    agentColor,
+    cwd,
+    sessionId,
+    scrollElement,
+    virtualize = false,
+    active = true,
+    messages,
+    liveDelta,
+    liveThinking,
+    liveTargetId,
+    liveBlocks,
+    liveRetry,
+    liveStreamStartedAt,
+    onRerun,
+    onEdit,
+    onPlanActionStarted,
+    tabStateKey,
+    streaming = false,
+    liveCompacting = false,
+  },
+  ref,
+) {
   // 只有当整个序列的「最后一条」就是 assistant 时才挂指示器：
   // 正常 stream 流程下 doSend 会同时插入 user + assistant 占位，所以末尾一定是 assistant；
   // 如果末尾是 user（异常态或还没插占位），不应该在更早的 assistant 上挂指示器误导用户。
@@ -1217,62 +1286,306 @@ function ChatTranscript({
   const stableOnEdit = React.useCallback((id: number) => {
     onEditRef.current?.(id);
   }, []);
+  const shouldVirtualize = virtualize || scrollElement != null;
+  const lastScrollRectRef = React.useRef({ height: 0, width: 0 });
+  const lastScrollOffsetRef = React.useRef(0);
+  const restoreScrollOffsetRef = React.useRef(false);
+
+  const observeScrollRect = React.useCallback(
+    (
+      el: HTMLElement | null,
+      cb: (rect: { height: number; width: number }) => void,
+    ) => {
+      const next = {
+        height: el?.clientHeight ?? 0,
+        width: el?.clientWidth ?? 0,
+      };
+      if (next.height > 0 || next.width > 0) {
+        lastScrollRectRef.current = next;
+        cb(next);
+        return;
+      }
+      cb(active ? next : lastScrollRectRef.current);
+    },
+    [active],
+  );
+
+  React.useLayoutEffect(() => {
+    if (!active) {
+      restoreScrollOffsetRef.current = true;
+      return;
+    }
+    if (!restoreScrollOffsetRef.current) return;
+    restoreScrollOffsetRef.current = false;
+    const el = scrollElement;
+    if (!el) return;
+    const offset = lastScrollOffsetRef.current;
+    if (offset <= 0 || el.scrollTop === offset) return;
+    el.scrollTop = offset;
+  }, [active, scrollElement]);
+
+  const renderRow = React.useCallback(
+    (m: chat_svc.ChatMessage) => {
+      const isLive = m.id === liveTargetId;
+      const isAutonomous = autonomousIds.has(m.id);
+      return (
+        <React.Fragment key={m.id}>
+          {isAutonomous ? <AutoTriggerBanner /> : null}
+          <MessageItem
+            m={m}
+            agentName={agentName}
+            agentColor={agentColor}
+            cwd={cwd}
+            sessionId={sessionId}
+            // 关键: 非 live 消息的所有 live* prop 都收敛到稳定的"空值",
+            // 让 React.memo 的 shallow 比较恒命中。
+            liveTail={isLive ? (liveDelta ?? "") : ""}
+            liveThinking={isLive ? (liveThinking ?? "") : ""}
+            liveBlocks={isLive ? liveBlocks : undefined}
+            liveRetry={isLive ? (liveRetry ?? null) : null}
+            liveStreamStartedAt={isLive ? (liveStreamStartedAt ?? null) : null}
+            showIndicator={
+              streaming && m.role === "assistant" && m.id === lastAssistantId
+            }
+            compacting={
+              isLive &&
+              streaming &&
+              m.role === "assistant" &&
+              m.id === lastAssistantId &&
+              liveCompacting
+            }
+            onRerun={stableOnRerun}
+            onEdit={stableOnEdit}
+            onPlanActionStarted={onPlanActionStarted}
+            tabStateKey={tabStateKey}
+          />
+        </React.Fragment>
+      );
+    },
+    [
+      agentColor,
+      agentName,
+      autonomousIds,
+      cwd,
+      lastAssistantId,
+      liveBlocks,
+      liveCompacting,
+      liveDelta,
+      liveRetry,
+      liveStreamStartedAt,
+      liveTargetId,
+      liveThinking,
+      onPlanActionStarted,
+      sessionId,
+      stableOnEdit,
+      stableOnRerun,
+      tabStateKey,
+      streaming,
+    ],
+  );
+
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual intentionally owns mutable measurement callbacks.
+  const virtualizer = useVirtualizer({
+    count: displayMessages.length,
+    estimateSize: () => 132,
+    getItemKey: (index) => displayMessages[index]?.id ?? index,
+    getScrollElement: () => scrollElement ?? null,
+    initialRect: {
+      height: scrollElement?.clientHeight ?? 0,
+      width: scrollElement?.clientWidth ?? 0,
+    },
+    observeElementOffset: (_instance, cb) => {
+      const el = scrollElement;
+      const readOffset = () => {
+        const offset = el?.scrollTop ?? 0;
+        if (active && !restoreScrollOffsetRef.current) {
+          lastScrollOffsetRef.current = offset;
+          return offset;
+        }
+        if (offset > 0) {
+          lastScrollOffsetRef.current = offset;
+          return offset;
+        }
+        return lastScrollOffsetRef.current;
+      };
+      cb(readOffset(), false);
+      if (!el) return;
+      let scrollEndTimer: number | null = null;
+      const handler = () => {
+        const offset = readOffset();
+        cb(offset, true);
+        if (scrollEndTimer != null) window.clearTimeout(scrollEndTimer);
+        scrollEndTimer = window.setTimeout(() => {
+          cb(readOffset(), false);
+          scrollEndTimer = null;
+        }, 150);
+      };
+      el.addEventListener("scroll", handler, { passive: true });
+      return () => {
+        if (scrollEndTimer != null) window.clearTimeout(scrollEndTimer);
+        el.removeEventListener("scroll", handler);
+      };
+    },
+    observeElementRect: (_instance, cb) => {
+      const el = scrollElement ?? null;
+      observeScrollRect(el, cb);
+      if (!el || typeof ResizeObserver === "undefined") return;
+      const observer = new ResizeObserver(() => {
+        observeScrollRect(el, cb);
+      });
+      observer.observe(el);
+      return () => observer.disconnect();
+    },
+    overscan: 10,
+    // 流式贴底交给虚拟器自己的测量回路,而不是 chat-panel 在每个 chunk 用
+    // scrollTop=maxScrollTop 手动追(那条路读的是异步复测前的旧 getTotalSize,
+    // 永远慢一帧→最新输出被压到折叠线以下)。anchorTo:"end" 在 live 行被
+    // ResizeObserver 复测变高、且当前距底 ≤ 阈值时,于 resizeItem 测量回路内
+    // 同步把滚动钉回底部,天然消除"慢一帧";上滑超过阈值则不钉,保住阅读位置。
+    //
+    // 刻意不开 followOnAppend:追"新追加整条消息"已由 chat-panel 的结构性 follow
+    //(atBottom 时随 messages 变化滚到底)覆盖;而 followOnAppend 会在会话打开、
+    // messages 从 0→N 时把空列表判定为"在末尾"抢先 scrollToEnd,覆盖掉
+    //「恢复到上次上滑位置」的还原(正是要修的 wrong-restore),故不启用。
+    anchorTo: "end",
+    scrollEndThreshold: STICK_TO_BOTTOM_THRESHOLD_PX,
+  });
+  React.useLayoutEffect(() => {
+    if (!scrollElement) return;
+    virtualizer.measure();
+  }, [scrollElement, virtualizer]);
+  // 注意:这里不能在 active 翻成 true 时再调 virtualizer.measure()。
+  // measure() 会 itemSizeCache.clear() 把所有行的真实测量值丢弃、整列瞬间塌回
+  // estimateSize(132px),切回 tab 时引发可见的塌缩 / 闪烁 reflow。隐藏期间行的
+  // ResizeObserver 不触发(display:none 不参与布局),重新可见时 measureElement 的
+  // ResizeObserver 会自然对可见窗口逐行复测,无需整列清缓存。
+  const [pendingScrollMessageId, setPendingScrollMessageId] = React.useState<
+    number | null
+  >(null);
+  const scrollToMessage = React.useCallback(
+    (messageId: number) => {
+      const index = displayMessages.findIndex((m) => m.id === messageId);
+      if (index >= 0) {
+        virtualizer.scrollToIndex(index, { align: "start" });
+        return;
+      }
+      if (folding && messages.some((m) => m.id === messageId)) {
+        setExpanded(true);
+        setPendingScrollMessageId(messageId);
+      }
+    },
+    [displayMessages, folding, messages, virtualizer],
+  );
+
+  React.useEffect(() => {
+    if (pendingScrollMessageId == null) return;
+    const index = displayMessages.findIndex(
+      (m) => m.id === pendingScrollMessageId,
+    );
+    if (index < 0) return;
+    virtualizer.scrollToIndex(index, { align: "start" });
+    setPendingScrollMessageId(null);
+  }, [displayMessages, pendingScrollMessageId, virtualizer]);
+
+  const anchorRestoreFrameRef = React.useRef<number | null>(null);
+  const cancelAnchorRestore = React.useCallback(() => {
+    if (anchorRestoreFrameRef.current != null) {
+      window.cancelAnimationFrame(anchorRestoreFrameRef.current);
+      anchorRestoreFrameRef.current = null;
+    }
+  }, []);
+  // scrollToAnchor:把"保存时位于视口顶部的那条消息"(messageId)重新钉到距视口顶
+  // offset px 处。路由重挂时虚拟器整列只有 estimate 高度,getOffsetForIndex 会随可见
+  // 窗口逐行复测而变化;这里用 rAF 循环重算 target 直到稳定(连续 2 帧不变)或封顶,
+  // 从而消除"仅凭像素 scrollTop 会落到错消息"的冷启动漂移——锚点钉的是消息身份,
+  // 不是像素值。返回 false=该消息不在 displayMessages(被折叠/未加载),交回调用方
+  // 回退像素恢复。
+  const scrollToAnchor = React.useCallback(
+    (messageId: number, offset: number): boolean => {
+      const index = displayMessages.findIndex((m) => m.id === messageId);
+      const el = scrollElement;
+      if (index < 0 || !el) return false;
+      cancelAnchorRestore();
+      let prevTarget = -1;
+      let stableFrames = 0;
+      let frames = 0;
+      const settle = () => {
+        anchorRestoreFrameRef.current = null;
+        const info = virtualizer.getOffsetForIndex(index, "start");
+        if (!info) return;
+        const target = Math.max(0, info[0] + offset);
+        if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
+        stableFrames =
+          Math.abs(target - prevTarget) <= 1 ? stableFrames + 1 : 0;
+        prevTarget = target;
+        frames += 1;
+        if (stableFrames < 2 && frames < 30) {
+          anchorRestoreFrameRef.current = window.requestAnimationFrame(settle);
+        }
+      };
+      // 同步先钉一帧(调用点是 chat-panel 的 useLayoutEffect,paint 前生效),
+      // 避免路由重挂首帧闪在顶部;后续逐帧由 settle 自己挂 rAF 收敛。
+      settle();
+      return true;
+    },
+    [cancelAnchorRestore, displayMessages, scrollElement, virtualizer],
+  );
+  React.useEffect(() => () => cancelAnchorRestore(), [cancelAnchorRestore]);
+
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      scrollToMessage,
+      scrollToAnchor,
+    }),
+    [scrollToAnchor, scrollToMessage],
+  );
 
   return (
     <TooltipProvider delayDuration={200}>
-      {/* 不再加 max-w-4xl —— 内部 ChatMessage 已经 cap 在 720px,
+      <TranscriptUIStateProvider>
+        {/* 不再加 max-w-4xl —— 内部 ChatMessage 已经 cap 在 720px,
           这里再叠一层外层 max-w 没有任何收紧效果,只会留出 phantom 空白。 */}
-      <div className="flex flex-col gap-5">
-        {folding && foldedCount > 0 ? (
-          <CompactHistoryFold
-            count={foldedCount}
-            onExpand={() => setExpanded(true)}
-          />
-        ) : null}
-        {displayMessages.map((m) => {
-          const isLive = m.id === liveTargetId;
-          const isAutonomous = autonomousIds.has(m.id);
-          return (
-            <React.Fragment key={m.id}>
-              {isAutonomous ? <AutoTriggerBanner /> : null}
-              <MessageItem
-                m={m}
-                agentName={agentName}
-                agentColor={agentColor}
-                cwd={cwd}
-                sessionId={sessionId}
-                // 关键: 非 live 消息的所有 live* prop 都收敛到稳定的"空值",
-                // 让 React.memo 的 shallow 比较恒命中。
-                liveTail={isLive ? (liveDelta ?? "") : ""}
-                liveThinking={isLive ? (liveThinking ?? "") : ""}
-                liveBlocks={isLive ? liveBlocks : undefined}
-                liveRetry={isLive ? (liveRetry ?? null) : null}
-                liveStreamStartedAt={
-                  isLive ? (liveStreamStartedAt ?? null) : null
-                }
-                showIndicator={
-                  streaming &&
-                  m.role === "assistant" &&
-                  m.id === lastAssistantId
-                }
-                compacting={
-                  isLive &&
-                  streaming &&
-                  m.role === "assistant" &&
-                  m.id === lastAssistantId &&
-                  liveCompacting
-                }
-                onRerun={stableOnRerun}
-                onEdit={stableOnEdit}
-                onPlanActionStarted={onPlanActionStarted}
-              />
-            </React.Fragment>
-          );
-        })}
-      </div>
+        <div
+          className={shouldVirtualize ? "min-h-full" : "flex flex-col gap-5"}
+        >
+          {folding && foldedCount > 0 ? (
+            <CompactHistoryFold
+              count={foldedCount}
+              onExpand={() => setExpanded(true)}
+            />
+          ) : null}
+          {shouldVirtualize ? (
+            <div
+              className="relative w-full"
+              style={{ height: `${virtualizer.getTotalSize()}px` }}
+            >
+              {virtualizer.getVirtualItems().map((virtualItem) => {
+                const message = displayMessages[virtualItem.index];
+                if (!message) return null;
+                return (
+                  <div
+                    key={virtualItem.key}
+                    ref={virtualizer.measureElement}
+                    data-index={virtualItem.index}
+                    className="absolute left-0 top-0 w-full pb-5"
+                    style={{
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                  >
+                    {renderRow(message)}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            displayMessages.map(renderRow)
+          )}
+        </div>
+      </TranscriptUIStateProvider>
     </TooltipProvider>
   );
-}
+});
 
 type MessageItemProps = {
   m: chat_svc.ChatMessage;
@@ -1291,6 +1604,7 @@ type MessageItemProps = {
   onRerun: (id: number) => void;
   onEdit: (id: number) => void;
   onPlanActionStarted?: (stream: PlanActionStream, userText: string) => void;
+  tabStateKey?: string;
 };
 
 // MessageItem 是 transcript 里单条消息的渲染单元。memo 后,只要传入 props
@@ -1313,12 +1627,16 @@ const MessageItem = React.memo(function MessageItem({
   onRerun,
   onEdit,
   onPlanActionStarted,
+  tabStateKey,
 }: MessageItemProps) {
   const { t } = useTranslation();
   const isAssistant = m.role === "assistant";
   // 每条 assistant 都允许重新生成；后端按消息 id 截断后重跑。
   const rerunHandler = isAssistant ? () => onRerun(m.id) : undefined;
   const editHandler = !isAssistant ? () => onEdit(m.id) : undefined;
+  const assistantOutputText = isAssistant
+    ? extractAssistantOutputText(m.blocks, liveBlocks, liveTail)
+    : "";
 
   return (
     <ChatMessage
@@ -1329,11 +1647,8 @@ const MessageItem = React.memo(function MessageItem({
       variant={isAssistant ? "assistant" : "user"}
       time={formatHHmm(m.createtime)}
       meta={
-        // claude/codex 后端走 CLI 自身 login 时 m.model 落库是空串 —
-        // 用 durationMs > 0 作为「turn 已结束」的可靠信号，让这些会话也
-        // 能看到耗时/重新生成。streaming 占位（durationMs=0）仍然不出 meta。
-        isAssistant && m.durationMs > 0 ? (
-          <MessageMeta
+        isAssistant && (m.durationMs > 0 || assistantOutputText) ? (
+          <AssistantMessageActions
             model={m.model}
             promptTokens={m.promptTokens}
             completionTokens={m.completionTokens}
@@ -1342,6 +1657,7 @@ const MessageItem = React.memo(function MessageItem({
             reasoningTokens={m.reasoningTokens}
             durationMs={m.durationMs}
             onRerun={rerunHandler}
+            copyText={assistantOutputText}
           />
         ) : !isAssistant && editHandler ? (
           <UserMessageActions onEdit={editHandler} />
@@ -1349,6 +1665,7 @@ const MessageItem = React.memo(function MessageItem({
       }
     >
       {renderMessageBlocks(
+        m.id,
         m.blocks,
         liveTail,
         cwd,
@@ -1357,6 +1674,7 @@ const MessageItem = React.memo(function MessageItem({
         liveBlocks,
         sessionId,
         onPlanActionStarted,
+        tabStateKey,
         t,
       )}
       {liveRetry ? <RetryNoticeCard retry={liveRetry} /> : null}
@@ -1373,6 +1691,18 @@ const MessageItem = React.memo(function MessageItem({
     </ChatMessage>
   );
 });
+
+function extractAssistantOutputText(
+  blocks: ChatBlockData[] = [],
+  liveBlocks: ChatBlockData[] = [],
+  liveTail: string = "",
+): string {
+  const text = [...blocks, ...liveBlocks]
+    .filter((block) => block.type === "text")
+    .map((block) => block.text ?? "")
+    .join("");
+  return text + liveTail;
+}
 
 function TypingIndicator() {
   const { t } = useTranslation();
@@ -1425,6 +1755,7 @@ function CompactingIndicator() {
 // liveThinking 非空时在末尾追加一张「streaming thinking」卡片；当 liveTail 已有内容（文字已开始流式）
 // 时该卡片显示为已完成态（思考结束、文字接力中），符合 spec 中「文字 chunk 一来思考即折叠」规则。
 function renderMessageBlocks(
+  messageId: number,
   blocks: ChatBlockData[] = [],
   liveTail: string,
   cwd?: string,
@@ -1438,6 +1769,7 @@ function renderMessageBlocks(
   // AskUserQuestionCard 提交答案时要带它去 Wails 绑定。
   sessionId: number = 0,
   onPlanActionStarted?: (stream: PlanActionStream, userText: string) => void,
+  tabStateKey?: string,
   t?: TFunction,
 ): React.ReactNode {
   type RenderItem =
@@ -1665,6 +1997,15 @@ function renderMessageBlocks(
     (item) => !(item.type === "tool_permission_request" && item._consumed),
   );
 
+  const uiStateKey = (
+    type: string,
+    idx: number,
+    block?: ChatBlockData,
+  ): string => {
+    const identity = stableBlockIdentity(block) ?? idx;
+    return `message:${messageId}:${type}:${identity}`;
+  };
+
   return visibleItems.map((item, idx) => {
     switch (item.type) {
       case "text":
@@ -1681,6 +2022,8 @@ function renderMessageBlocks(
             sessionId={sessionId}
             toolBlock={item.block}
             onPlanActionStarted={onPlanActionStarted}
+            uiStateKey={uiStateKey("plan", idx, item.block)}
+            tabStateKey={tabStateKey}
           />
         );
       case "thinking":
@@ -1690,6 +2033,7 @@ function renderMessageBlocks(
             startedAt={item.startedAt}
             streaming={item.streaming}
             text={item.block.text ?? ""}
+            uiStateKey={uiStateKey("thinking", idx, item.block)}
           />
         );
       case "image":
@@ -1711,6 +2055,8 @@ function renderMessageBlocks(
             toolBlock={item.toolBlock ?? { type: "tool_use" }}
             childBlocks={item.childBlocks}
             onPlanActionStarted={onPlanActionStarted}
+            uiStateKey={uiStateKey("tool", idx, item.toolBlock)}
+            tabStateKey={tabStateKey}
           />
         );
       }
@@ -1724,6 +2070,8 @@ function renderMessageBlocks(
             sessionId={sessionId}
             toolBlock={item.block}
             onPlanActionStarted={onPlanActionStarted}
+            uiStateKey={uiStateKey("permission", idx, item.block)}
+            tabStateKey={tabStateKey}
           />
         );
       case "compact_boundary": {
@@ -1755,6 +2103,30 @@ function renderMessageBlocks(
   });
 }
 
+function stableBlockIdentity(block?: ChatBlockData): string | undefined {
+  if (!block) return undefined;
+  if (block.toolUseId) return `tool:${block.toolUseId}`;
+  if (block.toolPermission?.requestId) {
+    return `permission:${block.toolPermission.requestId}`;
+  }
+  if (block.askUserQuestion?.requestId) {
+    return `ask:${block.askUserQuestion.requestId}`;
+  }
+  const canonical = (block as { canonical?: unknown }).canonical;
+  if (!canonical || typeof canonical !== "object") return undefined;
+  const c = canonical as {
+    planApprove?: { requestId?: string };
+    toolPermission?: { requestId?: string };
+    userAsk?: { requestId?: string };
+  };
+  if (c.planApprove?.requestId) return `plan:${c.planApprove.requestId}`;
+  if (c.toolPermission?.requestId) {
+    return `permission:${c.toolPermission.requestId}`;
+  }
+  if (c.userAsk?.requestId) return `ask:${c.userAsk.requestId}`;
+  return undefined;
+}
+
 export {
   ApprovalGate,
   ChatComposer,
@@ -1765,3 +2137,4 @@ export {
   MessageMeta,
   ToolCall,
 };
+export type { ChatTranscriptHandle };

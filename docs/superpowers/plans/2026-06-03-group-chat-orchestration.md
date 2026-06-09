@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在 agentre 桌面端新增「群聊 agent 编排」——一个协调者牵头、可动态招募成员、成员/用户通过 `@` 寻址收发、并行 fan-out 自动推进的多 agent 协作房间；**agent 经注入的 `group_send` MCP tool 发言**，能力门控 `CapMCPTools`（MVP 仅 claudecode）。
+**Goal:** 在 agentre 桌面端新增「群聊 agent 编排」——一个主持人牵头、可动态招募成员、成员/用户通过 `@` 寻址收发、并行 fan-out 自动推进的多 agent 协作房间；**agent 经注入的 `group_send` MCP tool 发言**，能力门控 `CapMCPTools`（MVP 仅 claudecode）。
 
 **Architecture:** 新增自包含 domain `group_*`（entity/repo/svc/app 绑定 + 前端面板），作为纯应用层编排器，**架在 `chat_svc` 之上**（走窄接口 accessor）。成员 = 真实的 `chat_sessions` 行（带 `group_id`，从默认列表隐藏），复用 history / steering / 工具权限 / capability gating。**发消息机制 = `group_send` MCP tool**：成员 turn 内调 tool（结构化 `mentions[]`）→ gateway `/mcp/group` handler → `group_svc.IngestAgentMessage` 路由；私有叙述不进群。`ObserveTurn` 退居**生命周期观察**（释放调度槽 + quiesce），不再解析 turn 文本。seam：`ObserveTurn` + `chat_sessions.group_id` + `EnsureGroupMemberSession` + **新能力 `CapMCPTools`** + **`RunRequest.MCPServers`/`pkg/claudecode --mcp-config`** + **`SendRequest` 透传 `MCPServers`/`SystemPromptSuffix`（领域无关）** + **gateway 注册 `/mcp/group`**。`<mention>` 解析**保留但仅供前端高亮 chip + 点击跳转**，不参与路由。
 
@@ -802,10 +802,10 @@ func TestGroupMessageRecipientsRoundTrip(t *testing.T) {
 	})
 }
 
-func TestGroupMemberIsCoordinator(t *testing.T) {
-	Convey("IsCoordinator 看 role", t, func() {
-		So((&group_entity.GroupMember{Role: group_entity.RoleCoordinator}).IsCoordinator(), ShouldBeTrue)
-		So((&group_entity.GroupMember{Role: group_entity.RoleMember}).IsCoordinator(), ShouldBeFalse)
+func TestGroupMemberIsHost(t *testing.T) {
+	Convey("IsHost 看 role", t, func() {
+		So((&group_entity.GroupMember{Role: group_entity.RoleHost}).IsHost(), ShouldBeTrue)
+		So((&group_entity.GroupMember{Role: group_entity.RoleMember}).IsHost(), ShouldBeFalse)
 	})
 }
 ```
@@ -845,7 +845,7 @@ const (
 type Group struct {
 	ID                 int64  `gorm:"column:id;primaryKey;autoIncrement"`
 	Title              string `gorm:"column:title;type:text;not null;default:''"`
-	CoordinatorAgentID int64  `gorm:"column:coordinator_agent_id;type:bigint;not null;default:0"`
+	HostAgentID int64  `gorm:"column:host_agent_id;type:bigint;not null;default:0"`
 	DepartmentID       int64  `gorm:"column:department_id;type:bigint;not null;default:0"`
 	ProjectID          int64  `gorm:"column:project_id;type:bigint;not null;default:0"`
 	RunStatus          string `gorm:"column:run_status;type:text;not null;default:'idle'"`
@@ -880,8 +880,8 @@ func (g *Group) Check(ctx context.Context) error {
 	if strings.TrimSpace(g.Title) == "" {
 		return i18n.NewError(ctx, code.GroupTitleRequired)
 	}
-	if g.CoordinatorAgentID <= 0 {
-		return i18n.NewError(ctx, code.GroupCoordinatorRequired)
+	if g.HostAgentID <= 0 {
+		return i18n.NewError(ctx, code.GroupHostRequired)
 	}
 	return nil
 }
@@ -893,7 +893,7 @@ func (g *Group) Check(ctx context.Context) error {
 package group_entity
 
 const (
-	RoleCoordinator = "coordinator"
+	RoleHost = "host"
 	RoleMember      = "member"
 
 	MemberActive = "active"
@@ -913,7 +913,7 @@ type GroupMember struct {
 
 func (*GroupMember) TableName() string { return "group_members" }
 
-func (m *GroupMember) IsCoordinator() bool { return m != nil && m.Role == RoleCoordinator }
+func (m *GroupMember) IsHost() bool { return m != nil && m.Role == RoleHost }
 func (m *GroupMember) IsActive() bool      { return m != nil && m.Status == MemberActive }
 ```
 
@@ -1034,7 +1034,7 @@ func migration202606030002() *gormigrate.Migration {
 			if err := tx.Exec(`CREATE TABLE IF NOT EXISTS groups (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	title TEXT NOT NULL DEFAULT '',
-	coordinator_agent_id INTEGER NOT NULL DEFAULT 0,
+	host_agent_id INTEGER NOT NULL DEFAULT 0,
 	department_id INTEGER NOT NULL DEFAULT 0,
 	project_id INTEGER NOT NULL DEFAULT 0,
 	run_status TEXT NOT NULL DEFAULT 'idle',
@@ -1135,7 +1135,7 @@ func TestGroupRepo_CreateAndList(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectExec(`INSERT INTO .groups.`).WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
-		So(group_repo.Group().Create(ctx, &group_entity.Group{Title: "队", CoordinatorAgentID: 1, Status: consts.ACTIVE}), ShouldBeNil)
+		So(group_repo.Group().Create(ctx, &group_entity.Group{Title: "队", HostAgentID: 1, Status: consts.ACTIVE}), ShouldBeNil)
 
 		mock.ExpectQuery(`SELECT \* FROM .groups.*status. = .*`).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "title"}).AddRow(1, "队"))
@@ -1399,7 +1399,7 @@ git commit -m "✨ group: group_repo(Group/Member/Message 三仓储 + mock + 注
 const (
 	GroupNotFound            = iota + 19000 // 群不存在
 	GroupTitleRequired                      // 群名不能为空
-	GroupCoordinatorRequired                // 协调者不能为空
+	GroupHostRequired                // 主持人不能为空
 	GroupMemberNotFound                     // 群成员不存在
 	GroupMemberExists                       // 该 agent 已在群中
 	GroupMemberLimit                        // 群成员数已达上限
@@ -1416,7 +1416,7 @@ const (
 // Group
 GroupNotFound:            "群不存在",
 GroupTitleRequired:       "群名不能为空",
-GroupCoordinatorRequired: "协调者不能为空",
+GroupHostRequired: "主持人不能为空",
 GroupMemberNotFound:      "群成员不存在",
 GroupMemberExists:        "该 agent 已在群中",
 GroupMemberLimit:         "群成员数已达上限",
@@ -1430,7 +1430,7 @@ GroupBackendUnsupported:  "该 agent 的后端不支持群聊",
 // Group
 GroupNotFound:            "Group not found",
 GroupTitleRequired:       "Group title is required",
-GroupCoordinatorRequired: "Coordinator is required",
+GroupHostRequired: "Host is required",
 GroupMemberNotFound:      "Group member not found",
 GroupMemberExists:        "Agent is already in the group",
 GroupMemberLimit:         "Group member limit reached",
@@ -1546,7 +1546,7 @@ import (
 
 type CreateGroupRequest struct {
 	Title              string
-	CoordinatorAgentID int64
+	HostAgentID int64
 	DepartmentID       int64
 	ProjectID          int64
 }
@@ -1570,8 +1570,8 @@ const maxMembers = 8
 - [ ] **Step 2: 写 CRUD 测试（先红）**
 
 ```go
-func TestGroupSvc_CreateGroup_AddsCoordinatorMember(t *testing.T) {
-	Convey("建群应建协调者成员 + backing session", t, func() {
+func TestGroupSvc_CreateGroup_AddsHostMember(t *testing.T) {
+	Convey("建群应建主持人成员 + backing session", t, func() {
 		ctx, _ := testutils.Database(t) // 仅给 ctx; repo 全 mock 时可不用真库
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
@@ -1589,13 +1589,13 @@ func TestGroupSvc_CreateGroup_AddsCoordinatorMember(t *testing.T) {
 		gw.EXPECT().EnsureGroupMemberSession(gomock.Any(), int64(1), int64(0), int64(5)).Return(int64(11), nil)
 		memberRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 			func(_ context.Context, m *group_entity.GroupMember) error {
-				So(m.Role, ShouldEqual, group_entity.RoleCoordinator)
+				So(m.Role, ShouldEqual, group_entity.RoleHost)
 				So(m.BackingSessionID, ShouldEqual, 11)
 				return nil
 			})
 
 		svc := group_svc.NewForTest(gw)
-		detail, err := svc.CreateGroup(ctx, &group_svc.CreateGroupRequest{Title: "支付小队", CoordinatorAgentID: 1})
+		detail, err := svc.CreateGroup(ctx, &group_svc.CreateGroupRequest{Title: "支付小队", HostAgentID: 1})
 		So(err, ShouldBeNil)
 		So(detail.Group.ID, ShouldEqual, 5)
 	})
@@ -1695,7 +1695,7 @@ func (s *groupSvc) ListGroups(ctx context.Context) ([]*group_entity.Group, error
 func (s *groupSvc) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*GroupDetail, error) {
 	g := &group_entity.Group{
 		Title:              req.Title,
-		CoordinatorAgentID: req.CoordinatorAgentID,
+		HostAgentID: req.HostAgentID,
 		DepartmentID:       req.DepartmentID,
 		ProjectID:          req.ProjectID,
 		RunStatus:          group_entity.RunIdle,
@@ -1707,8 +1707,8 @@ func (s *groupSvc) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*G
 	if err := group_repo.Group().Create(ctx, g); err != nil {
 		return nil, err
 	}
-	// 协调者成员 + backing session
-	if _, err := s.ensureMember(ctx, g, req.CoordinatorAgentID, group_entity.RoleCoordinator); err != nil {
+	// 主持人成员 + backing session
+	if _, err := s.ensureMember(ctx, g, req.HostAgentID, group_entity.RoleHost); err != nil {
 		return nil, err
 	}
 	return s.LoadGroup(ctx, g.ID)
@@ -1781,8 +1781,8 @@ func (s *groupSvc) AddGroupMember(ctx context.Context, groupID, agentID int64) (
 	return s.ensureMember(ctx, g, agentID, group_entity.RoleMember)
 }
 
-// 注: CreateGroup 的协调者、maybeRecruit 的被招募者同样要过 backendSupportsGroup ——
-// 协调者在 CreateGroup 里校验(不支持则建群失败), recruit 已在 C5 maybeRecruit 内校验。
+// 注: CreateGroup 的主持人、maybeRecruit 的被招募者同样要过 backendSupportsGroup ——
+// 主持人在 CreateGroup 里校验(不支持则建群失败), recruit 已在 C5 maybeRecruit 内校验。
 
 func (s *groupSvc) RemoveGroupMember(ctx context.Context, memberID int64) error {
 	m, err := group_repo.Member().Find(ctx, memberID)
@@ -1843,7 +1843,7 @@ func TestSendGroupMessage_ResolvesMentionsAndPersists(t *testing.T) {
 		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunIdle, Status: consts.ACTIVE}
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return([]*group_entity.GroupMember{
-			{ID: 1, AgentID: 1, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive},
+			{ID: 1, AgentID: 1, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
 			{ID: 2, AgentID: 2, Status: group_entity.MemberActive},
 		}, nil).AnyTimes()
 		// 名字解析依赖 agent 名 → 用一个可注入的 nameResolver(见实现说明)
@@ -1910,9 +1910,9 @@ func (s *groupSvc) SendGroupMessage(ctx context.Context, req *SendGroupMessageRe
 		return err
 	}
 	recipientIDs, toUser := s.resolveRecipientsFromRequest(req)
-	if len(recipientIDs) == 0 && !toUser { // 用户没选收件人 → 默认投协调者(spec §17)
+	if len(recipientIDs) == 0 && !toUser { // 用户没选收件人 → 默认投主持人(spec §17)
 		for _, m := range members {
-			if m.IsCoordinator() {
+			if m.IsHost() {
 				recipientIDs = []int64{m.ID}
 				break
 			}
@@ -2014,7 +2014,7 @@ func TestScheduler_FanOutThenToolRoute(t *testing.T) {
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		members := []*group_entity.GroupMember{
-			{ID: 1, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive},
+			{ID: 1, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
 			{ID: 2, AgentID: 2, BackingSessionID: 12, Status: group_entity.MemberActive},
 			{ID: 3, AgentID: 3, BackingSessionID: 13, Status: group_entity.MemberActive},
 		}
@@ -2154,7 +2154,7 @@ func (s *groupSvc) IngestAgentMessage(ctx context.Context, memberID int64, body 
 }
 
 // resolveMentionNames 把成员显示名解析成 member id(+ 是否 @用户)。
-// 解析不到的名字: sender 是协调者 → 尝试招募(maybeRecruit); 否则 flag 忽略。
+// 解析不到的名字: sender 是主持人 → 尝试招募(maybeRecruit); 否则 flag 忽略。
 func (s *groupSvc) resolveMentionNames(ctx context.Context, g *group_entity.Group, members []*group_entity.GroupMember, sender *group_entity.GroupMember, names []string) ([]int64, bool) {
 	byName := map[string]int64{}
 	for _, m := range members {
@@ -2172,14 +2172,14 @@ func (s *groupSvc) resolveMentionNames(ctx context.Context, g *group_entity.Grou
 			ids = append(ids, byName[name])
 		case byName[name] == sender.ID:
 			// 自己 mention 自己 → 忽略
-		case sender.IsCoordinator():
+		case sender.IsHost():
 			if rid := s.maybeRecruit(ctx, g, name); rid > 0 {
 				ids = append(ids, rid)
 			} else {
 				logger.Ctx(ctx).Info("group_svc.resolveMentionNames: unresolved/unrecruitable", zap.String("name", name), zap.Int64("groupId", g.ID))
 			}
 		default:
-			logger.Ctx(ctx).Info("group_svc.resolveMentionNames: non-coordinator unresolved mention", zap.String("name", name))
+			logger.Ctx(ctx).Info("group_svc.resolveMentionNames: non-host unresolved mention", zap.String("name", name))
 		}
 	}
 	return ids, toUser
@@ -2196,7 +2196,7 @@ func (s *groupSvc) applyFallback(g *group_entity.Group, sender *group_entity.Gro
 	return ids, true
 }
 
-// maybeRecruit: 协调者 mention 了部门名单内、未进群、且支持 CapMCPTools 的 agent → 招募。
+// maybeRecruit: 主持人 mention 了部门名单内、未进群、且支持 CapMCPTools 的 agent → 招募。
 // 返回新成员 member id(0 = 没招到)。落一条 sender_kind=system 的"X 加入"消息。
 func (s *groupSvc) maybeRecruit(ctx context.Context, g *group_entity.Group, name string) int64 {
 	agentID := s.recruitableAgentByName(ctx, g, name) // 查部门名单内同名 agent; 0=不在名单
@@ -2223,7 +2223,7 @@ func (s *groupSvc) maybeRecruit(ctx context.Context, g *group_entity.Group, name
 > - `buildGroupMCP(g, m)` / `buildGroupSystemPrompt(g, members, m)`：见 Task C8（MCP token 签发）与本任务的 prompt 拼装；`buildGroupSystemPrompt` 产出角色 + 当前 roster 名字 + "用 group_send tool 发言, mentions 填名字, @用户=回人类" + worktree 引导。
 > - `ingestMu(groupID) *sync.Mutex`：`sync.Map` 懒建的 per-group 锁（`groupSvc` 加字段 `ingestLocks *sync.Map`）。串行化 IngestAgentMessage 的 seq/round_count 临界区。
 > - **token 生命周期**（spec §17）：`maybeRecruit`/`launchDelivery` 签发的 MCP token 用加密随机；成员离群（`RemoveGroupMember`）/ 群 `StopGroup`/`ArchiveGroup` 时吊销该 group/member 的 token（`s.mcp.RevokeGroup(groupID)` / `RevokeMember(memberID)`）。
-> - **用户消息无收件人兜底**（spec §17）：`SendGroupMessage`（C4）里若 `recipientIDs` 空且 `!toUser` → 默认投给**协调者**（取 `members` 中 `IsCoordinator()` 的 member id）；与 agent 侧"回上一个发送者"区分。
+> - **用户消息无收件人兜底**（spec §17）：`SendGroupMessage`（C4）里若 `recipientIDs` 空且 `!toUser` → 默认投给**主持人**（取 `members` 中 `IsHost()` 的 member id）；与 agent 侧"回上一个发送者"区分。
 
 - [ ] **Step 5: 跑测试看通过**
 
@@ -2233,7 +2233,7 @@ Expected: PASS（含 race 检测——`scheduler.mu` 保护并发访问）。
 - [ ] **Step 6: 补 recruit / quiesce / 生命周期测试**
 
 `scheduler_test.go` 追加：
-- **招募**：协调者 `IngestAgentMessage` 的 mentions 含名单内未进群且支持 CapMCPTools 的 agent → 断言 `ensureMember`(EnsureGroupMemberSession) 被调 + 系统消息落库 + 新成员被投递；不支持 CapMCPTools → 不招募 + flag。
+- **招募**：主持人 `IngestAgentMessage` 的 mentions 含名单内未进群且支持 CapMCPTools 的 agent → 断言 `ensureMember`(EnsureGroupMemberSession) 被调 + 系统消息落库 + 新成员被投递；不支持 CapMCPTools → 不招募 + flag。
 - **quiesce**：成员 turn 结束（`ch <- TurnResult{}`）且无 pending → 断言 `run_status` 转 `waiting_user`（监听 emitter）。
 - **生命周期**：turn `Err != nil` → 释放槽 + 不落消息 + 继续 kick。
 
@@ -2633,15 +2633,15 @@ func (s *groupSvc) buildGroupMCP(g *group_entity.Group, m *group_entity.GroupMem
 func (s *groupSvc) buildGroupSystemPrompt(g *group_entity.Group, members []*group_entity.GroupMember, me *group_entity.GroupMember) string {
 	var b strings.Builder
 	role := "成员"
-	if me.IsCoordinator() { role = "协调者(部门 leader)" }
+	if me.IsHost() { role = "主持人(部门负责人)" }
 	fmt.Fprintf(&b, "\n\n## 群聊「%s」\n你是本群的%s。", g.Title, role)
 	b.WriteString("\n当前成员：")
 	for _, m := range members {
 		fmt.Fprintf(&b, "\n- %s（%s）", s.names(context.Background(), m.AgentID), m.Role)
 	}
 	b.WriteString("\n\n你只会收到 @ 到你的消息。要发言请调用 `group_send` 工具：body=正文，mentions=收件成员显示名数组（@用户 = 回复人类）。一个回合可多次调用、可分别对不同人发不同内容。**不调用 group_send 的内容不会进群**。")
-	if me.IsCoordinator() {
-		b.WriteString("\n作为协调者，mentions 里写一个本部门、尚未进群的同事名字即可把 ta 拉进群。")
+	if me.IsHost() {
+		b.WriteString("\n作为主持人，mentions 里写一个本部门、尚未进群的同事名字即可把 ta 拉进群。")
 	}
 	b.WriteString("\n若你要修改文件且可能与他人并发，请先 `git worktree add` 在自己的工作树里作业。")
 	return b.String()
@@ -2716,7 +2716,7 @@ type GroupDetailResponse struct {
 
 type GroupCreateRequest struct {
 	Title              string `json:"title"`
-	CoordinatorAgentID int64  `json:"coordinatorAgentID"`
+	HostAgentID int64  `json:"hostAgentID"`
 	DepartmentID       int64  `json:"departmentID"`
 	ProjectID          int64  `json:"projectID"`
 }
@@ -2756,7 +2756,7 @@ func (a *App) GroupList() ([]*GroupItem, error) {
 }
 
 func (a *App) GroupCreate(req *GroupCreateRequest) (*GroupDetailResponse, error) {
-	d, err := group_svc.Default().CreateGroup(a.ctx, &group_svc.CreateGroupRequest{Title: req.Title, CoordinatorAgentID: req.CoordinatorAgentID, DepartmentID: req.DepartmentID, ProjectID: req.ProjectID})
+	d, err := group_svc.Default().CreateGroup(a.ctx, &group_svc.CreateGroupRequest{Title: req.Title, HostAgentID: req.HostAgentID, DepartmentID: req.DepartmentID, ProjectID: req.ProjectID})
 	if err != nil {
 		return nil, err
 	}
@@ -2800,13 +2800,13 @@ func TestApp_GroupLoad_MapsDetail(t *testing.T) {
 	Convey("GroupLoad 应把 svc detail 映射为 DTO", t, func() {
 		group_svc.SetDefault(fakeGroupSvc{detail: &group_svc.GroupDetail{
 			Group:   &group_entity.Group{ID: 5, Title: "队", RunStatus: "running"},
-			Members: []*group_entity.GroupMember{{ID: 1, AgentID: 2, Role: "coordinator"}},
+			Members: []*group_entity.GroupMember{{ID: 1, AgentID: 2, Role: "host"}},
 		}})
 		a := &App{ctx: context.Background()}
 		resp, err := a.GroupLoad(5)
 		So(err, ShouldBeNil)
 		So(resp.Group.Title, ShouldEqual, "队")
-		So(resp.Members[0].Role, ShouldEqual, "coordinator")
+		So(resp.Members[0].Role, ShouldEqual, "host")
 	})
 }
 ```
@@ -2892,7 +2892,7 @@ git commit -m "✨ group: 注入群事件 emitter + 挂 group_send MCP handler +
   "title": "Groups",
   "section": "Group Chats",
   "tabs": { "members": "Members", "settings": "Settings" },
-  "roster": { "coordinator": "Coordinator", "members": "Members", "invite": "Invite member", "backToGroup": "← Back to group" },
+  "roster": { "host": "Host", "members": "Members", "invite": "Invite member", "backToGroup": "← Back to group" },
   "runStatus": { "running": "Running", "waitingUser": "Waiting for you", "paused": "Paused", "idle": "Idle", "error": "Error" },
   "rounds": "{{count}} rounds",
   "controls": { "pause": "Pause", "stop": "Stop", "resume": "Resume" },
@@ -2902,7 +2902,7 @@ git commit -m "✨ group: 注入群事件 emitter + 挂 group_send MCP handler +
 }
 ```
 
-`zh-CN/common.json` 同结构中文：群聊 / 群聊 / 成员·设置 / 协调者·成员·邀请成员·← 返回群聊 / 运行中·等待你·已暂停·空闲·出错 / 已 {{count}} 轮 / 暂停·停止·继续 / 「给群里发消息… 用 @ 提及成员」·发送 / 工作目录·归档群 / 仅 {{name}} 收到。
+`zh-CN/common.json` 同结构中文：群聊 / 群聊 / 成员·设置 / 主持人·成员·邀请成员·← 返回群聊 / 运行中·等待你·已暂停·空闲·出错 / 已 {{count}} 轮 / 暂停·停止·继续 / 「给群里发消息… 用 @ 提及成员」·发送 / 工作目录·归档群 / 仅 {{name}} 收到。
 
 - [ ] **Step 2: 跑 i18n 测试**
 
@@ -2943,7 +2943,7 @@ describe("useGroup", () => {
   beforeEach(() => {
     (GroupLoad as ReturnType<typeof vi.fn>).mockResolvedValue({
       group: { id: 5, title: "队", runStatus: "running", roundCount: 3 },
-      members: [{ id: 1, agentID: 2, role: "coordinator", status: "active" }],
+      members: [{ id: 1, agentID: 2, role: "host", status: "active" }],
       messages: [{ id: 1, seq: 1, senderKind: "user", content: "hi", recipientMemberIDs: [1], toUser: false }],
     });
   });
@@ -3033,8 +3033,8 @@ describe("GroupChat", () => {
     render(<GroupChat groupId={5} />);
     expect(await screen.findByText("队")).toBeInTheDocument();
     expect(screen.getByText(/group.runStatus.running|运行中|Running/)).toBeInTheDocument();
-    // 成员 tab 默认激活, 显示协调者
-    expect(screen.getByText(/group.roster.coordinator|协调者|Coordinator/)).toBeInTheDocument();
+    // 成员 tab 默认激活, 显示主持人
+    expect(screen.getByText(/group.roster.host|主持人|Host/)).toBeInTheDocument();
   });
   it("switches right panel to settings tab", async () => {
     render(<GroupChat groupId={5} />);
@@ -3056,7 +3056,7 @@ Expected: FAIL。
 > 完整组件代码较长；按真实的 `chat-panel.tsx` / `chat-page.tsx` 的子组件拆分风格逐个写。关键点：
 > - 视图 tab 栏：`views: [{id:'group', label:title}, ...memberSessionViews]`，`useState(activeViewId)`，点群聊 tab 渲染群 transcript，点成员会话 tab 渲染复用的单聊视图（嵌 `<ChatView sessionId={member.backingSessionID}/>`）。
 > - 成员行尾 `›` → push 一个成员会话 view tab。
-> - 右 Roster：`useState<"members"|"settings">`；members 渲染协调者+成员（status dot）+邀请；settings 渲染 工作目录/归档群。
+> - 右 Roster：`useState<"members"|"settings">`；members 渲染主持人+成员（status dot）+邀请；settings 渲染 工作目录/归档群。
 
 - [ ] **Step 4: 跑测试看通过**
 
@@ -3175,7 +3175,7 @@ git commit -m "✨ group(fe): 消息正文 mention 高亮 chip + 点击跳转成
 - [ ] **前端全量：** `cd frontend && pnpm test` → 全绿
 - [ ] **lint：** `make lint` → 全绿（含 `i18next/no-literal-string`）
 - [ ] **mock 一致：** `make mock` 后 `git status` 无未提交 mock 漂移
-- [ ] **手动冒烟（`make dev`，协调者/成员均用 claudecode 后端的 agent）：** 建群（协调者自动进群）→ 用户 @ 协调者 → 协调者 turn 内调 `group_send` @两个成员 → 两成员并发跑 → 各自 `group_send` 路由 → 只 @用户时 quiesce → 停止中止全部 → 点成员 `›`/消息里 mention chip 跳转 backing 会话 → 普通单聊列表**不含**群成员 session → 邀请列表只列 claudecode（CapMCPTools）agent，加 codex agent 报 `GroupBackendUnsupported`。
+- [ ] **手动冒烟（`make dev`，主持人/成员均用 claudecode 后端的 agent）：** 建群（主持人自动进群）→ 用户 @ 主持人 → 主持人 turn 内调 `group_send` @两个成员 → 两成员并发跑 → 各自 `group_send` 路由 → 只 @用户时 quiesce → 停止中止全部 → 点成员 `›`/消息里 mention chip 跳转 backing 会话 → 普通单聊列表**不含**群成员 session → 邀请列表只列 claudecode（CapMCPTools）agent，加 codex agent 报 `GroupBackendUnsupported`。
 
 ---
 
@@ -3191,7 +3191,7 @@ git commit -m "✨ group(fe): 消息正文 mention 高亮 chip + 点击跳转成
 | §5 并发 fan-out（跨成员并发/同成员串行/eager/无 cap）+ **tool 路由 `IngestAgentMessage`** | C5 |
 | §6 寻址（**结构化路由** `mentions[]`/`recipientMemberIds` + `(来自 X)` 抬头 + 兜底 + quiesce） | C4（用户侧）/ C5（agent 侧 `resolveMentionNames`） |
 | §6 寻址（**展示** `<mention>`/`@` 高亮 chip + 点击跳转） | **E5** |
-| §7 招募（协调者 `group_send` mention 名单内 + CapMCPTools 门控）/终止（无 max_rounds）/插话/暂停 | C5（maybeRecruit）/ C6 |
+| §7 招募（主持人 `group_send` mention 名单内 + CapMCPTools 门控）/终止（无 max_rounds）/插话/暂停 | C5（maybeRecruit）/ C6 |
 | §8 工具权限透传（`group_send` 自动放行；其它 tool 系统行冒泡 + 复用现有 handler） | AM2（allowedTools）/ E3（transcript 渲染审批卡）；后端事件经 backing session stream 既有路径，无新增 |
 | §9 Wails 绑定（结构化 recipientMemberIds）+ `group:event:<id>` 事件流 | D1 / D2 |
 | §10 四区 UI + 视图 tab 栏 + 成员/设置 tab + 成员/mention 跳转 + 邀请按 CapMCPTools 过滤 | E3 / E4 / E5 |

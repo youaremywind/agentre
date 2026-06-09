@@ -35,7 +35,7 @@ func TestScheduler_FanOutThenToolRoute(t *testing.T) {
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		members := []*group_entity.GroupMember{
-			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive},
+			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
 			{ID: 2, GroupID: 5, AgentID: 2, BackingSessionID: 12, Status: group_entity.MemberActive},
 			{ID: 3, GroupID: 5, AgentID: 3, BackingSessionID: 13, Status: group_entity.MemberActive},
 		}
@@ -84,6 +84,152 @@ func TestScheduler_FanOutThenToolRoute(t *testing.T) {
 	})
 }
 
+func TestScheduler_LazilyCreatesBackingSessionOnFirstDelivery(t *testing.T) {
+	Convey("Given a group member has no backing session, When the member is first mentioned, Then scheduler creates and persists the session before sending", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		msgRepo := mock_group_repo.NewMockGroupMessageRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+		group_repo.RegisterMessage(msgRepo)
+
+		g := &group_entity.Group{ID: 5, Title: "支付小队", ProjectID: 3, RunStatus: group_entity.RunRunning, Status: consts.ACTIVE}
+		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
+		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		member := &group_entity.GroupMember{
+			ID: 2, GroupID: 5, AgentID: 9, BackingSessionID: 0,
+			Role: group_entity.RoleMember, Status: group_entity.MemberActive,
+		}
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return([]*group_entity.GroupMember{member}, nil).AnyTimes()
+		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
+		msgRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+		gw.EXPECT().EnsureSession(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, req *chat_svc.EnsureSessionRequest) (*chat_svc.EnsureSessionResponse, error) {
+				So(req.AgentID, ShouldEqual, 9)
+				So(req.ProjectID, ShouldEqual, 3)
+				So(req.GroupID, ShouldEqual, 5)
+				So(req.Title, ShouldEqual, "支付小队 / 后端")
+				return &chat_svc.EnsureSessionResponse{SessionID: 21, Created: true}, nil
+			})
+		memberRepo.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, m *group_entity.GroupMember) error {
+				So(m.ID, ShouldEqual, 2)
+				So(m.BackingSessionID, ShouldEqual, 21)
+				return nil
+			})
+		ch21 := make(chan chat_svc.TurnResult, 1)
+		gw.EXPECT().ObserveTurn(int64(21)).Return((<-chan chat_svc.TurnResult)(ch21), func() {})
+		sent := make(chan int64, 1)
+		gw.EXPECT().Send(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, req *chat_svc.SendRequest) (*chat_svc.SendResponse, error) {
+				// 群成员轮必须带会话级旁路标志, 否则该 backing session 已打开的 tab
+				// 拿不到 per-turn 流名 → 外部起轮时不接流/不翻 running。
+				So(req.EmitTurnStartedBypass, ShouldBeTrue)
+				sent <- req.SessionID
+				return &chat_svc.SendResponse{SessionID: req.SessionID}, nil
+			})
+
+		svc := group_svc.NewForTestWithNames(gw, map[int64]string{9: "后端"})
+		memberUpdated := make(chan int64, 1)
+		runStatusCh := make(chan string, 8)
+		group_svc.SetEmitterForTest(svc, group_svc.EmitterFunc(func(_ context.Context, _ string, payload any) {
+			if p, ok := payload.(map[string]any); ok && p["kind"] == "member_updated" {
+				if m, ok := p["member"].(group_svc.GroupMemberEvent); ok {
+					memberUpdated <- m.BackingSessionID
+				}
+			}
+			if p, ok := payload.(map[string]any); ok && p["kind"] == "run_status" {
+				if rs, ok := p["runStatus"].(string); ok {
+					select {
+					case runStatusCh <- rs:
+					default:
+					}
+				}
+			}
+		}))
+		So(svc.SendGroupMessage(ctx, &group_svc.SendGroupMessageRequest{GroupID: 5, Text: "开工", RecipientMemberIDs: []int64{2}}), ShouldBeNil)
+		select {
+		case sid := <-sent:
+			So(sid, ShouldEqual, 21)
+		case <-time.After(2 * time.Second):
+			t.Fatal("lazy-created member session was not sent")
+		}
+		select {
+		case sid := <-memberUpdated:
+			So(sid, ShouldEqual, 21)
+		case <-time.After(2 * time.Second):
+			t.Fatal("member_updated event was not emitted")
+		}
+		ch21 <- chat_svc.TurnResult{SessionID: 21}
+		So(waitForRunStatus(runStatusCh, group_entity.RunWaitingUser, time.Second), ShouldBeTrue)
+	})
+}
+
+func TestScheduler_DoesNotSendLazyCreatedSessionAfterStop(t *testing.T) {
+	Convey("Given first delivery is creating a backing session, When StopGroup runs before creation returns, Then the scheduler does not start a turn", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		msgRepo := mock_group_repo.NewMockGroupMessageRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+		group_repo.RegisterMessage(msgRepo)
+
+		g := &group_entity.Group{ID: 5, Title: "支付小队", ProjectID: 3, RunStatus: group_entity.RunRunning, Status: consts.ACTIVE}
+		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
+		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		member := &group_entity.GroupMember{
+			ID: 2, GroupID: 5, AgentID: 9, BackingSessionID: 0,
+			Role: group_entity.RoleMember, Status: group_entity.MemberActive,
+		}
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return([]*group_entity.GroupMember{member}, nil).AnyTimes()
+		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
+		msgRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+		ensureStarted := make(chan struct{})
+		allowEnsure := make(chan struct{})
+		gw.EXPECT().EnsureSession(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(context.Context, *chat_svc.EnsureSessionRequest) (*chat_svc.EnsureSessionResponse, error) {
+				close(ensureStarted)
+				<-allowEnsure
+				return &chat_svc.EnsureSessionResponse{SessionID: 21, Created: true}, nil
+			})
+		memberRepo.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, m *group_entity.GroupMember) error {
+				m.BackingSessionID = 21
+				return nil
+			})
+		// No ObserveTurn/Send expectation: a stopped launch must not start a turn.
+
+		svc := group_svc.NewForTestWithNames(gw, map[int64]string{9: "后端"})
+		done := make(chan error, 1)
+		go func() {
+			done <- svc.SendGroupMessage(ctx, &group_svc.SendGroupMessageRequest{GroupID: 5, Text: "开工", RecipientMemberIDs: []int64{2}})
+		}()
+		select {
+		case <-ensureStarted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("lazy session creation did not start")
+		}
+		So(svc.StopGroup(ctx, 5), ShouldBeNil)
+		close(allowEnsure)
+		select {
+		case err := <-done:
+			So(err, ShouldBeNil)
+		case <-time.After(2 * time.Second):
+			t.Fatal("send did not finish after releasing lazy creation")
+		}
+	})
+}
+
 func TestScheduler_QuiesceToWaitingUser(t *testing.T) {
 	Convey("单成员投递跑完且无新 pending → run_status 静默到 waiting_user", t, func() {
 		ctx := context.Background()
@@ -101,7 +247,7 @@ func TestScheduler_QuiesceToWaitingUser(t *testing.T) {
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		members := []*group_entity.GroupMember{
-			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive},
+			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
 		}
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(members, nil).AnyTimes()
 		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
@@ -181,7 +327,7 @@ func TestScheduler_TurnErrorReleasesSlot(t *testing.T) {
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		members := []*group_entity.GroupMember{
-			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive},
+			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
 		}
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(members, nil).AnyTimes()
 		memberRepo.EXPECT().Find(gomock.Any(), int64(1)).Return(members[0], nil).AnyTimes()

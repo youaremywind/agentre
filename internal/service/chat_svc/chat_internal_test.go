@@ -237,7 +237,7 @@ func TestToChatMessage_UnknownBlockFallback(t *testing.T) {
 }
 
 func TestAskQuestionsToDTO_PreservesRequestUserInputMetadata(t *testing.T) {
-	got := askQuestionsToDTO([]agentruntime.AskQuestion{{
+	got := chatblocks.QuestionsFromRuntime([]agentruntime.AskQuestion{{
 		ID:          "target",
 		Question:    "Which target?",
 		Header:      "Target",

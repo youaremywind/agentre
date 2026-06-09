@@ -149,15 +149,15 @@ var zhCN = map[int]string{
 	ProjectLocationDuplicate:   "该项目在此设备已有路径，无法重复添加",
 
 	// Group 群聊编排
-	GroupNotFound:            "群不存在",
-	GroupTitleRequired:       "群名不能为空",
-	GroupCoordinatorRequired: "协调者不能为空",
-	GroupMemberNotFound:      "群成员不存在",
-	GroupMemberExists:        "该 agent 已在群中",
-	GroupMemberLimit:         "群成员数已达上限",
-	GroupNotRecruitable:      "该 agent 不在可招募名单",
-	GroupBackendUnsupported:  "该 agent 的后端不支持群聊",
-	GroupInviteForbidden:     "只有协调者能邀请成员",
+	GroupNotFound:           "群不存在",
+	GroupTitleRequired:      "群名不能为空",
+	GroupHostRequired:       "主持人不能为空",
+	GroupMemberNotFound:     "群成员不存在",
+	GroupMemberExists:       "该 agent 已在群中",
+	GroupMemberLimit:        "群成员数已达上限",
+	GroupNotRecruitable:     "该 agent 不在可招募名单",
+	GroupBackendUnsupported: "该 agent 的后端不支持群聊",
+	GroupInviteForbidden:    "只有主持人能邀请成员",
 
 	// Server 接入
 	ServerURLInvalid:          "Server URL 不合法",

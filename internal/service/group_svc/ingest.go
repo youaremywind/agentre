@@ -55,7 +55,7 @@ func (s *groupSvc) IngestAgentMessage(ctx context.Context, memberID int64, body 
 }
 
 // resolveMentionNames 把成员显示名解析成 member id(+ 是否 @用户)。剔除自我 mention(防自循环)。
-// 未进群的名字不再自动招募(已退役 @mention 招募);协调者改用 group_invite 工具,仅记日志。
+// 未进群的名字不再自动招募(已退役 @mention 招募);主持人改用 group_invite 工具,仅记日志。
 func (s *groupSvc) resolveMentionNames(ctx context.Context, g *group_entity.Group, members []*group_entity.GroupMember, sender *group_entity.GroupMember, names []string) ([]int64, bool) {
 	byName := map[string]int64{}
 	for _, m := range members {
@@ -74,7 +74,7 @@ func (s *groupSvc) resolveMentionNames(ctx context.Context, g *group_entity.Grou
 		case byName[name] == sender.ID:
 			// 自己 mention 自己 → 忽略
 		default:
-			// 未进群的名字不再自动招募;协调者改用 group_invite 工具。仅记日志。
+			// 未进群的名字不再自动招募;主持人改用 group_invite 工具。仅记日志。
 			logger.Ctx(ctx).Info("group_svc.resolveMentionNames: unresolved mention (use group_invite)",
 				zap.String("name", name), zap.Int64("groupId", g.ID))
 		}

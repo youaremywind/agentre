@@ -20,7 +20,10 @@ type GroupMemberItem struct {
 	AgentID          int64  `json:"agentID"`
 	BackingSessionID int64  `json:"backingSessionID"`
 	Role             string `json:"role"`
-	Status           string `json:"status"`
+	// Status 是成员身份(active/left)。RunState 是运行态(running/idle),区别于身份 ——
+	// roster 的状态点用 RunState 表示该成员此刻是否在跑一轮 turn,空串按 idle 处理。
+	Status   string `json:"status"`
+	RunState string `json:"runState"`
 }
 
 type GroupMessageItem struct {
@@ -41,11 +44,11 @@ type GroupDetailResponse struct {
 }
 
 type GroupCreateRequest struct {
-	Title              string  `json:"title"`
-	CoordinatorAgentID int64   `json:"coordinatorAgentID"`
-	DepartmentID       int64   `json:"departmentID"`
-	ProjectID          int64   `json:"projectID"`
-	MemberAgentIDs     []int64 `json:"memberAgentIDs"`
+	Title          string  `json:"title"`
+	HostAgentID    int64   `json:"hostAgentID"`
+	DepartmentID   int64   `json:"departmentID"`
+	ProjectID      int64   `json:"projectID"`
+	MemberAgentIDs []int64 `json:"memberAgentIDs"`
 }
 
 type GroupSendRequest struct {
@@ -66,7 +69,9 @@ func toGroupMemberItem(m *group_entity.GroupMember) *GroupMemberItem {
 func toGroupDetail(d *group_svc.GroupDetail) *GroupDetailResponse {
 	members := make([]*GroupMemberItem, 0, len(d.Members))
 	for _, m := range d.Members {
-		members = append(members, toGroupMemberItem(m))
+		item := toGroupMemberItem(m)
+		item.RunState = d.MemberRunStates[m.ID]
+		members = append(members, item)
 	}
 	msgs := make([]*GroupMessageItem, 0, len(d.Messages))
 	for _, m := range d.Messages {
@@ -88,7 +93,7 @@ func (a *App) GroupList() ([]*GroupItem, error) {
 }
 
 func (a *App) GroupCreate(req *GroupCreateRequest) (*GroupDetailResponse, error) {
-	d, err := group_svc.Default().CreateGroup(a.ctx, &group_svc.CreateGroupRequest{Title: req.Title, CoordinatorAgentID: req.CoordinatorAgentID, DepartmentID: req.DepartmentID, ProjectID: req.ProjectID, MemberAgentIDs: req.MemberAgentIDs})
+	d, err := group_svc.Default().CreateGroup(a.ctx, &group_svc.CreateGroupRequest{Title: req.Title, HostAgentID: req.HostAgentID, DepartmentID: req.DepartmentID, ProjectID: req.ProjectID, MemberAgentIDs: req.MemberAgentIDs})
 	if err != nil {
 		return nil, err
 	}

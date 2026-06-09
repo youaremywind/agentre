@@ -64,7 +64,7 @@ func TestPersistMessage_EmitsFrontendIsomorphicPayload(t *testing.T) {
 		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunIdle, Status: consts.ACTIVE}
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return([]*group_entity.GroupMember{
-			{ID: 1, GroupID: 5, AgentID: 1, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive},
+			{ID: 1, GroupID: 5, AgentID: 1, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
 			{ID: 2, GroupID: 5, AgentID: 2, BackingSessionID: 12, Status: group_entity.MemberActive},
 		}, nil).AnyTimes()
 		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()

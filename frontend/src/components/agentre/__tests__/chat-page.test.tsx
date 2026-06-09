@@ -32,6 +32,25 @@ function selectSession(sessionId: number) {
   useChatTabsStore.setState({ tabs: [tab], activeTabId: tab.id });
 }
 
+// selectGroupSession: active tab 是群成员 backing session(kind:"groupSession")。
+// 选中态高亮应与普通 session tab 一致 —— 群会话 tab 不该让 sidebar 失去选中态。
+function selectGroupSession(sessionId: number, groupId = 9) {
+  const tab = {
+    id: `seed-grp-${sessionId}`,
+    meta: {
+      kind: "groupSession" as const,
+      groupId,
+      sessionId,
+      title: "Release Squad / Eng",
+    },
+    isPreview: false,
+    isPinned: false,
+    pinAt: 0,
+    openedAt: 0,
+  };
+  useChatTabsStore.setState({ tabs: [tab], activeTabId: tab.id });
+}
+
 const appMocks = vi.hoisted(() => ({
   CancelQueuedChatMessage: vi.fn(),
   DeleteChatSession: vi.fn(),
@@ -133,6 +152,28 @@ describe("ChatPage sidebar — attention bubble", () => {
     fireEvent.click(header);
 
     // 选中后：bubble 出现，里面有 "Debug session"。
+    const bubble = await waitFor(() => {
+      const node = document.querySelector(
+        '[data-slot="agent-attention-bubble"]',
+      );
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    expect(bubble).toHaveTextContent("Debug session");
+  });
+
+  it("pins the selected backing session in the bubble when a groupSession tab is active", async () => {
+    // 群成员 backing session 开成的是 kind:"groupSession" tab。打开它时,
+    // sidebar 的选中态应与普通 session tab 一致 —— 把这条 backing session 钉进
+    // attention bubble。回归:之前 selectedSessionId 只认 kind:"session",
+    // groupSession tab 激活时退化为 0,bubble 整个不渲染。
+    resetTabsStore();
+    selectGroupSession(1);
+
+    renderChatPage();
+
+    await screen.findByRole("button", { name: "Open Eng recent session" });
+
     const bubble = await waitFor(() => {
       const node = document.querySelector(
         '[data-slot="agent-attention-bubble"]',
@@ -531,7 +572,7 @@ describe("ChatPage sidebar — 新建会话按钮接入 chat-tabs", () => {
 });
 
 describe("ChatPage sidebar — 群聊分区", () => {
-  // E4: 左侧对话列表在「Agents」之上混排一个「Group Chats」分区。
+  // 左侧对话列表在「Agents」之上混排一个「Group Chats」分区。
   // 该分区只在有群时渲染;点击群行打开 / 激活一个 group tab。
   beforeEach(() => {
     localStorage.clear();
@@ -574,7 +615,7 @@ describe("ChatPage sidebar — 群聊分区", () => {
     renderChatPage();
 
     const row = await screen.findByRole("button", {
-      name: /status Release Squad/,
+      name: /^Release Squad/,
     });
     // 混排后不再有独立的「Group Chats」分区标题。
     expect(screen.queryByText("Group Chats")).not.toBeInTheDocument();
@@ -591,6 +632,47 @@ describe("ChatPage sidebar — 群聊分区", () => {
         title: "Release Squad",
       });
     });
+  });
+
+  it("混排：群行渲染人群头像 + 轮次标签(已 N 轮)以区分于普通会话", async () => {
+    appMocks.GroupList.mockResolvedValue([
+      {
+        id: 9,
+        title: "Release Squad",
+        runStatus: "idle",
+        roundCount: 3,
+        createtime: 0,
+        updatetime: 0,
+        pinned: false,
+      },
+    ]);
+
+    renderChatPage();
+
+    await screen.findByText("Release Squad");
+    // 群行有专属的人群图标头像(区别于 agent 的字母头像)。
+    expect(screen.getByTestId("group-avatar")).toBeInTheDocument();
+    // 群行尾部展示轮次标签。
+    expect(screen.getByText("3 rounds")).toBeInTheDocument();
+  });
+
+  it("混排：waiting_user 群行尾部展示「等待你」标签", async () => {
+    appMocks.GroupList.mockResolvedValue([
+      {
+        id: 9,
+        title: "Release Squad",
+        runStatus: "waiting_user",
+        roundCount: 0,
+        createtime: 0,
+        updatetime: 0,
+        pinned: false,
+      },
+    ]);
+
+    renderChatPage();
+
+    await screen.findByText("Release Squad");
+    expect(screen.getByText("Waiting for you")).toBeInTheDocument();
   });
 
   it("混排：高活跃度的群排在低活跃度 agent 之上", async () => {
@@ -631,7 +713,7 @@ describe("ChatPage sidebar — 群聊分区", () => {
     });
     renderChatPage();
     const groupRow = await screen.findByRole("button", {
-      name: /status Release Squad/,
+      name: /^Release Squad/,
     });
     const agentRow = await screen.findByRole("button", {
       name: /Open Eng recent session/,
@@ -681,7 +763,7 @@ describe("ChatPage sidebar — 群聊分区", () => {
     });
     renderChatPage();
     const groupRow = await screen.findByRole("button", {
-      name: /status Release Squad/,
+      name: /^Release Squad/,
     });
     expect(screen.getByText("PINNED")).toBeInTheDocument();
     const agentRow = await screen.findByRole("button", {
@@ -696,7 +778,7 @@ describe("ChatPage sidebar — 群聊分区", () => {
 });
 
 describe("ChatPage sidebar — 置顶切换", () => {
-  // E5: 侧栏每行常驻一个置顶切换按钮;点击 → 调 SetAgentPinned / GroupSetPinned
+  // 侧栏每行常驻一个置顶切换按钮;点击 → 调 SetAgentPinned / GroupSetPinned
   // 写库,再 reload 对应 store 让浮顶即时生效。aria-label 随当前置顶态在
   // Pin/Unpin 之间切换。
   beforeEach(() => {
@@ -918,7 +1000,7 @@ describe("ChatPage sidebar — 混排筛选与顶部新建", () => {
 
     // 初始:群 + 两个 agent 全可见。
     expect(
-      await screen.findByRole("button", { name: /status Release Squad/ }),
+      await screen.findByRole("button", { name: /^Release Squad/ }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Open Eng recent session/ }),
@@ -933,9 +1015,7 @@ describe("ChatPage sidebar — 混排筛选与顶部新建", () => {
 
     // 类型 = Agents(单选)→ 群被类型挡掉,两个 agent 都在。
     fireEvent.click(within(panel()).getByRole("button", { name: "Agents" }));
-    expect(
-      screen.queryByRole("button", { name: /status Release Squad/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Release Squad/ })).toBeNull();
     expect(
       screen.getByRole("button", { name: /Open Eng recent session/ }),
     ).toBeInTheDocument();
@@ -946,9 +1026,7 @@ describe("ChatPage sidebar — 混排筛选与顶部新建", () => {
     // 叠加 状态 = Running → 类型 Agents ∧ 运行中:只剩 running 的 Eng;
     // Designer(idle)消失;群仍被类型挡住 —— 证明两维独立组合。
     fireEvent.click(within(panel()).getByRole("button", { name: "Running" }));
-    expect(
-      screen.queryByRole("button", { name: /status Release Squad/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Release Squad/ })).toBeNull();
     expect(
       screen.getByRole("button", { name: /Open Eng recent session/ }),
     ).toBeInTheDocument();
@@ -960,7 +1038,7 @@ describe("ChatPage sidebar — 混排筛选与顶部新建", () => {
     // Designer 仍 idle 消失。证明类型是单选(切换而非追加),状态被保留。
     fireEvent.click(within(panel()).getByRole("button", { name: "All" }));
     expect(
-      screen.getByRole("button", { name: /status Release Squad/ }),
+      screen.getByRole("button", { name: /^Release Squad/ }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Open Eng recent session/ }),
@@ -972,7 +1050,7 @@ describe("ChatPage sidebar — 混排筛选与顶部新建", () => {
     // 再点 Running 取消(状态清空)→ 全部回来。证明状态是可切换的 toggle。
     fireEvent.click(within(panel()).getByRole("button", { name: "Running" }));
     expect(
-      screen.getByRole("button", { name: /status Release Squad/ }),
+      screen.getByRole("button", { name: /^Release Squad/ }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Open Eng recent session/ }),
@@ -983,9 +1061,7 @@ describe("ChatPage sidebar — 混排筛选与顶部新建", () => {
 
     // 仅 状态 = Unread → 只剩有未读会话的 Eng;群(running,非 waiting)在未读下不计入。
     fireEvent.click(within(panel()).getByRole("button", { name: /Unread/ }));
-    expect(
-      screen.queryByRole("button", { name: /status Release Squad/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Release Squad/ })).toBeNull();
     expect(
       screen.getByRole("button", { name: /Open Eng recent session/ }),
     ).toBeInTheDocument();
@@ -1070,10 +1146,10 @@ describe("ChatPage sidebar — 群未读筛选", () => {
 
     // 初始两群都在。
     expect(
-      await screen.findByRole("button", { name: /status Waiting Squad/ }),
+      await screen.findByRole("button", { name: /^Waiting Squad/ }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /status Running Squad/ }),
+      screen.getByRole("button", { name: /^Running Squad/ }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Filter sidebar" }));
@@ -1085,10 +1161,8 @@ describe("ChatPage sidebar — 群未读筛选", () => {
 
     // 未读 = waiting_user:Waiting Squad 在,Running Squad 出局。
     expect(
-      screen.getByRole("button", { name: /status Waiting Squad/ }),
+      screen.getByRole("button", { name: /^Waiting Squad/ }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /status Running Squad/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Running Squad/ })).toBeNull();
   });
 });

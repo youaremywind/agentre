@@ -25,9 +25,11 @@ export type GroupRosterProps = {
   onArchive: () => void;
 };
 
-const statusDotClass: Record<string, string> = {
-  active: "bg-status-running",
-  left: "bg-status-idle",
+// 状态点按运行态(running/idle)着色,而不是成员身份(active/left)。在跑→绿,
+// 否则→灰(空串 / idle / 已离群都算不在跑)。这样 roster 才与该成员的实际状态一致。
+const runStateDotClass: Record<string, string> = {
+  running: "bg-status-running",
+  idle: "bg-status-idle",
 };
 
 function MemberRow({
@@ -40,11 +42,16 @@ function MemberRow({
   onOpen: (member: GroupMemberItem) => void;
 }) {
   const { t } = useTranslation();
+  const canOpen = member.backingSessionID > 0;
   return (
     <button
       type="button"
       onClick={() => onOpen(member)}
-      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent"
+      disabled={!canOpen}
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent",
+        !canOpen && "cursor-default opacity-70 hover:bg-transparent",
+      )}
     >
       <AgentAvatar
         name={name}
@@ -59,13 +66,15 @@ function MemberRow({
         aria-hidden="true"
         className={cn(
           "size-1.5 rounded-full",
-          statusDotClass[member.status] ?? "bg-status-idle",
+          runStateDotClass[member.runState] ?? "bg-status-idle",
         )}
       />
-      <ChevronRight
-        className="size-4 text-muted-foreground"
-        aria-label={t("group.roster.openMember")}
-      />
+      {canOpen ? (
+        <ChevronRight
+          className="size-4 text-muted-foreground"
+          aria-label={t("group.roster.openMember")}
+        />
+      ) : null}
     </button>
   );
 }
@@ -81,8 +90,8 @@ function GroupRoster({
   const { t } = useTranslation();
   const [tab, setTab] = React.useState<RosterTab>("members");
 
-  const coordinators = members.filter((m) => m.role === "coordinator");
-  const regulars = members.filter((m) => m.role !== "coordinator");
+  const hosts = members.filter((m) => m.role === "host");
+  const regulars = members.filter((m) => m.role !== "host");
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-l border-border bg-card">
@@ -109,12 +118,12 @@ function GroupRoster({
 
       {tab === "members" ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-auto p-2">
-          {coordinators.length > 0 ? (
+          {hosts.length > 0 ? (
             <>
               <div className="px-2 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("group.roster.coordinator")}
+                {t("group.roster.host")}
               </div>
-              {coordinators.map((m) => (
+              {hosts.map((m) => (
                 <MemberRow
                   key={m.id}
                   member={m}

@@ -75,31 +75,43 @@ func TestGroupMCP_ToolCallRoutesToIngest(t *testing.T) {
 	})
 }
 
-// TestGroupMCP_RevokeInvalidatesToken 锁住 token 生命周期(spec §17 必修):
-// 成员离群 → RevokeMember; 群 stop/归档 → RevokeGroup; 吊销后该 token 的 group_send 必被拒。
-func TestGroupMCP_RevokeInvalidatesToken(t *testing.T) {
+// TestGroupMCP_AuthzGatesToolCall 锁住发言权门控:token 验签通过后, 还要过 authz(按 DB 成员
+// 资格判定)才放行 group_send。失权(离群 / 群归档)→ 403 且不调 ingest;有发言权 → 200。
+// 取代旧的内存 token 吊销(无状态 token 不再 delete;吊销语义转移到 authz)。
+func TestGroupMCP_AuthzGatesToolCall(t *testing.T) {
 	noop := func(context.Context, int64, string, []string) error { return nil }
 
-	Convey("RevokeMember 吊销该成员 token, 不连累同群其它成员", t, func() {
-		h := group_svc.NewGroupMCPForTest(noop)
-		tokA := h.MintToken(5, 2) // group 5 / member 2
-		tokB := h.MintToken(5, 3) // group 5 / member 3
-		So(groupSendCode(h, tokA), ShouldEqual, 200)
-
-		h.RevokeMember(2)
-		So(groupSendCode(h, tokA), ShouldEqual, http.StatusUnauthorized) // 被吊销
-		So(groupSendCode(h, tokB), ShouldEqual, 200)                     // 同群其它成员不受影响
+	Convey("无发言权(authz=false)的 token → 403, 不调 ingest", t, func() {
+		called := false
+		h := group_svc.NewGroupMCPForTestWithAuthz(
+			func(context.Context, int64, string, []string) error { called = true; return nil },
+			func(context.Context, int64, int64) bool { return false },
+		)
+		So(groupSendCode(h, h.MintToken(5, 2)), ShouldEqual, http.StatusForbidden)
+		So(called, ShouldBeFalse)
 	})
 
-	Convey("RevokeGroup 吊销该群所有 token, 不连累其它群", t, func() {
-		h := group_svc.NewGroupMCPForTest(noop)
-		tokA := h.MintToken(5, 2)
-		tokB := h.MintToken(5, 3)
-		other := h.MintToken(9, 4) // 另一个群
+	Convey("有发言权(authz=true)的 token → 200", t, func() {
+		h := group_svc.NewGroupMCPForTestWithAuthz(noop, func(context.Context, int64, int64) bool { return true })
+		So(groupSendCode(h, h.MintToken(5, 2)), ShouldEqual, 200)
+	})
 
-		h.RevokeGroup(5)
-		So(groupSendCode(h, tokA), ShouldEqual, http.StatusUnauthorized)
-		So(groupSendCode(h, tokB), ShouldEqual, http.StatusUnauthorized)
-		So(groupSendCode(h, other), ShouldEqual, 200) // 其它群 token 仍有效
+	Convey("authz 收到 token 解出的 (group, member)", t, func() {
+		var gotG, gotM int64
+		h := group_svc.NewGroupMCPForTestWithAuthz(noop, func(_ context.Context, g, m int64) bool {
+			gotG, gotM = g, m
+			return true
+		})
+		So(groupSendCode(h, h.MintToken(5, 2)), ShouldEqual, 200)
+		So(gotG, ShouldEqual, 5)
+		So(gotM, ShouldEqual, 2)
+	})
+
+	Convey("无状态 token 跨实例不通用(secret 各进程独立)", t, func() {
+		h1 := group_svc.NewGroupMCPForTest(noop)
+		h2 := group_svc.NewGroupMCPForTest(noop)
+		tok := h1.MintToken(5, 2)
+		So(groupSendCode(h1, tok), ShouldEqual, 200)                     // 自家签的验得过
+		So(groupSendCode(h2, tok), ShouldEqual, http.StatusUnauthorized) // 别家 secret 验不过
 	})
 }

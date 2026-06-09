@@ -3,7 +3,7 @@
 // 共享同一份群列表,任何一处 reload 都立刻被所有订阅者看到。
 //
 // MVP:只负责 mount 时拉一次 + 暴露 reload。live 刷新(建群 / run_status 变更)
-// 由调用方在需要时显式 reload(),本任务范围内不订阅 group:event:*。
+// 由调用方在需要时显式 reload(),这里不订阅 group:event:*。
 
 import { create } from "zustand";
 

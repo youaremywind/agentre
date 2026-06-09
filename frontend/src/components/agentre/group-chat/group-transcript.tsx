@@ -1,9 +1,7 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 
-import { cn } from "@/lib/utils";
-
-import { AgentAvatar } from "../primitives";
+import { MessageRow, MessageCopyButton } from "../message-row";
 import type { AgentColor } from "../types";
 
 import type { app } from "../../../../wailsjs/go/models";
@@ -33,8 +31,7 @@ function agentColorForMember(memberId: number): AgentColor {
 
 export type RenderBody = (content: string) => React.ReactNode;
 
-// 默认 body 渲染：纯文本。E5 会替换成 <MentionText> 把 @mention 渲染成可点击 chip；
-// 这里留出 renderBody prop 作为接缝，E5 只需在父层传入新的渲染器，无需改动本组件结构。
+// 默认 body 渲染：纯文本。父层可通过 renderBody 注入 mention chip 等富文本渲染。
 const defaultRenderBody: RenderBody = (content) => content;
 
 export type GroupTranscriptProps = {
@@ -42,7 +39,7 @@ export type GroupTranscriptProps = {
   roster: GroupMemberItem[];
   /** roster member id → 显示名（成员名是动态内容，由父层解析后传入，绝不进 t()）。 */
   memberName: (memberId: number) => string;
-  /** message body 渲染接缝；E5 传入 <MentionText> 渲染器，默认纯文本。 */
+  /** message body 渲染接缝，默认纯文本。 */
   renderBody?: RenderBody;
 };
 
@@ -92,34 +89,24 @@ function GroupTranscript({
             : "";
 
         return (
-          <div key={msg.id} className="flex gap-3">
-            <AgentAvatar
-              name={displayName}
-              color={color}
-              size="sm"
-              className="mt-0.5"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2">
-                <span
-                  className={cn(
-                    "text-sm font-semibold",
-                    isUser ? "text-foreground" : "text-foreground",
-                  )}
-                >
-                  {displayName}
+          <MessageRow
+            key={msg.id}
+            avatarName={displayName}
+            avatarColor={color}
+            name={displayName}
+            headerExtra={
+              directed ? (
+                <span className="text-2xs text-muted-foreground">
+                  {t("group.onlyXReceived", { name: firstRecipientName })}
                 </span>
-                {directed ? (
-                  <span className="text-2xs text-muted-foreground">
-                    {t("group.onlyXReceived", { name: firstRecipientName })}
-                  </span>
-                ) : null}
-              </div>
-              <div className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-                {renderBody(msg.content)}
-              </div>
+              ) : null
+            }
+            footer={<MessageCopyButton text={msg.content} />}
+          >
+            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
+              {renderBody(msg.content)}
             </div>
-          </div>
+          </MessageRow>
         );
       })}
     </div>

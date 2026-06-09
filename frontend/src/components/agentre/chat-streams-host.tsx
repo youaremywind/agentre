@@ -285,6 +285,7 @@ export function ChatStreamsHost(): React.ReactElement | null {
       patchLiveUsage,
       patchLiveContextWindow,
       appendLiveCompactBoundary,
+      setLiveCompacting,
     ],
   );
 

@@ -125,10 +125,6 @@ func TextInput(text string) UserInput {
 	return UserInput{Type: "text", Text: text, TextElements: []any{}}
 }
 
-func ImageURLInput(url string, detail ImageDetail) UserInput {
-	return UserInput{Type: "image", URL: url, Detail: detail}
-}
-
 func LocalImageInput(path string, detail ImageDetail) UserInput {
 	return UserInput{Type: "localImage", Path: path, Detail: detail}
 }

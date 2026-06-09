@@ -29,6 +29,7 @@
     "expand": "Expand {{name}}",
     "newSession": "New {{name}} session",
     "openRecent": "Open {{name}} recent session",
+    "groupSession": "Group",
     "pinned": "Pinned",
     "running": "Running",
     "runningAria": "{{name}} has running sessions"
@@ -328,7 +329,8 @@
         "params": "Parameters",
         "result": "Result"
       },
-      "waitingResult": "Waiting for result"
+      "waitingResult": "Waiting for result",
+      "backgroundRunning": "Background"
     },
     "toolPermission": {
       "allowOnce": "Allow Once",
@@ -356,6 +358,9 @@
   "chat": {
     "actions": {
       "approve": "Approve",
+      "copyOutput": "Copy AI output",
+      "copyOutputDone": "AI output copied",
+      "copyOutputFailed": "Failed to copy AI output",
       "regenerate": "Regenerate"
     },
     "composer": {
@@ -509,6 +514,9 @@
     "notice": {
       "close": "Close notice"
     },
+    "scroll": {
+      "backToBottom": "Back to bottom"
+    },
     "regenerateDialog": {
       "confirm": "Regenerate",
       "description": "This reply and every message after it will be discarded. The agent will generate a new response from the previous user message.",
@@ -521,14 +529,15 @@
     },
     "backgroundTasks": {
       "chip": "{{count}} running",
+      "completedChip": "{{count}} done",
       "title": "Background tasks",
       "running": "Running",
       "completed": "Done",
       "failed": "Failed",
       "empty": "No background tasks",
       "bash": "bash",
-      "subagent": "subagent",
-      "aria": "Background tasks"
+      "aria": "Background tasks",
+      "clearCompleted": "Clear completed"
     },
     "toolbar": {
       "aria": "Session toolbar",
@@ -634,7 +643,7 @@
     "section": "Group Chats",
     "tabs": { "members": "Members", "settings": "Settings", "group": "Group" },
     "roster": {
-      "coordinator": "Coordinator",
+      "host": "Host",
       "members": "Members",
       "invite": "Invite member",
       "backToGroup": "← Back to group",
@@ -660,13 +669,13 @@
       "title": "New group",
       "groupTitle": "Group title",
       "groupTitlePlaceholder": "Frontend refactor squad",
-      "coordinator": "Coordinator",
-      "coordinatorPlaceholder": "Select coordinator",
-      "coordinatorHint": "Only group_send-capable agents (claudecode) can coordinate",
+      "host": "Host",
+      "hostPlaceholder": "Select host",
+      "hostHint": "Only group_send-capable agents (claudecode) can host",
       "project": "Project",
       "projectNone": "(No project)",
       "members": "Initial members",
-      "membersHint": "The coordinator can invite more members anytime",
+      "membersHint": "The host can invite more members anytime",
       "addMember": "Add member",
       "removeMember": "Remove {{name}}",
       "noCandidates": "No agents available to add",

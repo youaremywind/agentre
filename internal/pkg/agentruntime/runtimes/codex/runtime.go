@@ -95,6 +95,7 @@ func (r *Runtime) Capabilities() capability.Capabilities {
 			capability.CapReportContextWindow: true,
 			capability.CapCompact:             true,
 			capability.CapGoal:                true,
+			capability.CapMCPTools:            true,
 		},
 		PermissionModeMeta: capability.PermissionModeMeta{
 			AllowedModes:         []string{"default", "plan"},
@@ -268,6 +269,7 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 
 	if strings.TrimSpace(req.ForkAnchor) != "" {
 		if _, err := sess.RewindTo(ctx, req.ForkAnchor); err != nil {
+			closeEphemeralSession(req, sess)
 			logger.Ctx(ctx).Error("codex runtime: RewindTo failed",
 				zap.Int64("sessionID", req.SessionID),
 				zap.String("forkAnchor", req.ForkAnchor), zap.Error(err))
@@ -282,6 +284,7 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 	} else if len(req.UserBlocks) > 0 {
 		inputs, cleanup, ierr := userInputsFromBlocks(req.UserBlocks)
 		if ierr != nil {
+			closeEphemeralSession(req, sess)
 			return nil, nil, ierr
 		}
 		cleanupInputs = cleanup
@@ -290,6 +293,7 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		stream, err = sess.Stream(ctx, req.UserText, req.CollaborationMode)
 	}
 	if err != nil {
+		closeEphemeralSession(req, sess)
 		logger.Ctx(ctx).Error("codex runtime: session run failed",
 			zap.Int64("sessionID", req.SessionID),
 			zap.Bool("compact", req.Compact),
@@ -301,7 +305,10 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		zap.String("providerSessionID", sess.ID()),
 		zap.String("collaborationMode", req.CollaborationMode))
 
-	key := sessionKey(req.SessionID)
+	key := ""
+	if req.SessionID > 0 && len(req.MCPServers) == 0 {
+		key = sessionKey(req.SessionID)
+	}
 	active := &codexActive{
 		stream:      sess.ActiveStream(),
 		interrupter: sess.ActiveInterruptor(),
@@ -336,6 +343,9 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 
 	go func() {
 		defer close(out)
+		if key == "" {
+			defer func() { _ = sess.Close(context.Background()) }()
+		}
 		if cleanupInputs != nil {
 			defer cleanupInputs()
 		}
@@ -345,7 +355,7 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		if sid := stream.SessionID(); sid != "" {
 			result.ProviderSessionID = sid
 		}
-		if req.SessionID > 0 {
+		if key != "" {
 			r.pool.MarkIdle(key)
 		}
 	}()
@@ -353,6 +363,9 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 }
 
 func (r *Runtime) acquireSession(req agentruntime.RunRequest, env map[string]string, cwd string) (cxSessionHandle, error) {
+	if len(req.MCPServers) > 0 {
+		return cxSessionFactory(req, env, cwd)
+	}
 	if req.SessionID > 0 {
 		key := sessionKey(req.SessionID)
 		if v, ok := r.pool.Get(key); ok {
@@ -370,6 +383,13 @@ func (r *Runtime) acquireSession(req agentruntime.RunRequest, env map[string]str
 		r.pool.MarkActive(key)
 	}
 	return sess, nil
+}
+
+func closeEphemeralSession(req agentruntime.RunRequest, sess cxSessionHandle) {
+	if len(req.MCPServers) == 0 || sess == nil {
+		return
+	}
+	_ = sess.Close(context.Background())
 }
 
 func (r *Runtime) CloseSession(_ context.Context, sessionID int64) {

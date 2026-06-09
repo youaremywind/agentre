@@ -16,10 +16,10 @@ import (
 	"agentre/internal/repository/group_repo/mock_group_repo"
 )
 
-// 退役 @mention 自动招募回归:协调者 @ 一个未进群的部门同事,resolveMentionNames
+// 退役 @mention 自动招募回归:主持人 @ 一个未进群的部门同事,resolveMentionNames
 // 不再把 ta 招进群,因此返回的收件 ids 为空(改用 group_invite 显式邀请)。
 func TestResolveMentionNames_NoAutoRecruit(t *testing.T) {
-	Convey("协调者 @ 未进群同事 → 不招募, 返回空 ids", t, func() {
+	Convey("主持人 @ 未进群同事 → 不招募, 返回空 ids", t, func() {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
@@ -29,7 +29,7 @@ func TestResolveMentionNames_NoAutoRecruit(t *testing.T) {
 		group_repo.RegisterMessage(msgRepo)
 		agent_repo.RegisterAgent(agentRepo)
 
-		// s.names(成员列表)走 Find;协调者 agent 1 → "Coord"。
+		// s.names(成员列表)走 Find;主持人 agent 1 → "Coord"。
 		agentRepo.EXPECT().Find(gomock.Any(), gomock.Any()).Return(
 			&agent_entity.Agent{Name: "Coord", Status: consts.ACTIVE}, nil).AnyTimes()
 		// 招募(若仍在)会查部门池找到 Stranger,并建 member(Create 赋 ID=999)。
@@ -44,7 +44,7 @@ func TestResolveMentionNames_NoAutoRecruit(t *testing.T) {
 
 		s := newGroupSvc(fakeRosterGW{}, nil)
 		g := &group_entity.Group{ID: 5, DepartmentID: 42}
-		sender := &group_entity.GroupMember{ID: 100, AgentID: 1, Role: group_entity.RoleCoordinator, Status: group_entity.MemberActive}
+		sender := &group_entity.GroupMember{ID: 100, AgentID: 1, Role: group_entity.RoleHost, Status: group_entity.MemberActive}
 		ids, toUser := s.resolveMentionNames(context.Background(), g, []*group_entity.GroupMember{sender}, sender, []string{"Stranger"})
 		So(ids, ShouldBeEmpty)
 		So(toUser, ShouldBeFalse)

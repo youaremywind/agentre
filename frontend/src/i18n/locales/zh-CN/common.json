@@ -29,6 +29,7 @@
     "expand": "展开 {{name}}",
     "newSession": "新建 {{name}} 会话",
     "openRecent": "打开 {{name}} 最近会话",
+    "groupSession": "群聊",
     "pinned": "置顶",
     "running": "运行中",
     "runningAria": "{{name}} 有运行中的会话"
@@ -328,7 +329,8 @@
         "params": "参数",
         "result": "结果"
       },
-      "waitingResult": "等待返回"
+      "waitingResult": "等待返回",
+      "backgroundRunning": "后台运行"
     },
     "toolPermission": {
       "allowOnce": "仅本次允许",
@@ -356,6 +358,9 @@
   "chat": {
     "actions": {
       "approve": "批准",
+      "copyOutput": "复制 AI 输出原文",
+      "copyOutputDone": "已复制 AI 输出原文",
+      "copyOutputFailed": "复制 AI 输出原文失败",
       "regenerate": "重新生成"
     },
     "composer": {
@@ -509,6 +514,9 @@
     "notice": {
       "close": "关闭提示"
     },
+    "scroll": {
+      "backToBottom": "回到底部"
+    },
     "regenerateDialog": {
       "confirm": "确认重新生成",
       "description": "这条回复及它之后的所有消息会被丢弃，agent 会基于上一条 user 消息重新生成新的回复。",
@@ -521,14 +529,15 @@
     },
     "backgroundTasks": {
       "chip": "{{count}} 运行中",
+      "completedChip": "{{count}} 已完成",
       "title": "后台任务",
       "running": "运行中",
       "completed": "已完成",
       "failed": "失败",
       "empty": "暂无后台任务",
       "bash": "bash",
-      "subagent": "subagent",
-      "aria": "后台任务"
+      "aria": "后台任务",
+      "clearCompleted": "清理已完成"
     },
     "toolbar": {
       "aria": "会话工具栏",
@@ -634,7 +643,7 @@
     "section": "群聊",
     "tabs": { "members": "成员", "settings": "设置", "group": "群聊" },
     "roster": {
-      "coordinator": "协调者",
+      "host": "主持人",
       "members": "成员",
       "invite": "邀请成员",
       "backToGroup": "← 返回群聊",
@@ -660,13 +669,13 @@
       "title": "新建群聊",
       "groupTitle": "群标题",
       "groupTitlePlaceholder": "前端重构攻坚组",
-      "coordinator": "协调者",
-      "coordinatorPlaceholder": "选择协调者",
-      "coordinatorHint": "仅支持 group_send 的 Agent（claudecode）可作为协调者",
+      "host": "主持人",
+      "hostPlaceholder": "选择主持人",
+      "hostHint": "仅支持 group_send 的 Agent（claudecode）可作为主持人",
       "project": "项目",
       "projectNone": "（不绑定项目）",
       "members": "初始成员",
-      "membersHint": "协调者可在群里随时邀请更多成员加入",
+      "membersHint": "主持人可在群里随时邀请更多成员加入",
       "addMember": "添加成员",
       "removeMember": "移除 {{name}}",
       "noCandidates": "没有可加入的 Agent",

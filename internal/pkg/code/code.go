@@ -205,15 +205,15 @@ const (
 
 // Group 群聊编排 19000~19999
 const (
-	GroupNotFound            = iota + 19000 // 群不存在
-	GroupTitleRequired                      // 群名不能为空
-	GroupCoordinatorRequired                // 协调者不能为空
-	GroupMemberNotFound                     // 群成员不存在
-	GroupMemberExists                       // 该 agent 已在群中
-	GroupMemberLimit                        // 群成员数已达上限
-	GroupNotRecruitable                     // 该 agent 不在可招募名单
-	GroupBackendUnsupported                 // 该 agent 的后端不支持群聊(缺 CapMCPTools)
-	GroupInviteForbidden                    // 非协调者调用 group_invite / 被邀请人不在招募池
+	GroupNotFound           = iota + 19000 // 群不存在
+	GroupTitleRequired                     // 群名不能为空
+	GroupHostRequired                      // 主持人不能为空
+	GroupMemberNotFound                    // 群成员不存在
+	GroupMemberExists                      // 该 agent 已在群中
+	GroupMemberLimit                       // 群成员数已达上限
+	GroupNotRecruitable                    // 该 agent 不在可招募名单
+	GroupBackendUnsupported                // 该 agent 的后端不支持群聊(缺 CapMCPTools)
+	GroupInviteForbidden                   // 非主持人调用 group_invite / 被邀请人不在招募池
 )
 
 // Server 接入 20300~20399

@@ -275,7 +275,7 @@ function ProjectsPage() {
         useNewChatContextStore.getState().setNewSelectionHandler(null);
       }
     };
-  }, []);
+  }, [selectOnTab]);
 
   const openCreateDialog = (parentID = 0) => {
     setNewDialogParent(parentID);

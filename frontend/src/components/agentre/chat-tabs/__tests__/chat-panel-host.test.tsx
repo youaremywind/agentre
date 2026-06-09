@@ -36,12 +36,14 @@ type ChatPanelStub = {
   sessionId: number;
   newSessionAgent?: { id: number; name: string } | null;
   onSidebarShouldReload?: () => void;
+  scrollStateKey?: string;
 };
 vi.mock("../../chat-panel", () => ({
   ChatPanel: ({
     sessionId,
     newSessionAgent,
     onSidebarShouldReload,
+    scrollStateKey,
   }: ChatPanelStub) => {
     chatPanelRenderCounts.set(
       sessionId,
@@ -51,6 +53,7 @@ vi.mock("../../chat-panel", () => ({
       <div
         data-testid={`chat-panel-${sessionId}`}
         data-agent-id={newSessionAgent?.id ?? ""}
+        data-scroll-state-key={scrollStateKey ?? ""}
       >
         <button
           type="button"
@@ -75,6 +78,7 @@ vi.mock("../../chat-panel", () => ({
       </div>
     );
   },
+  pruneChatPanelScrollState: vi.fn(),
 }));
 
 describe("ChatPanelHost", () => {
@@ -99,6 +103,18 @@ describe("ChatPanelHost", () => {
     render(<ChatPanelHost />);
     expect(screen.getByTestId("chat-panel-1")).toBeInTheDocument();
     expect(screen.getByTestId("chat-panel-2")).toBeInTheDocument();
+  });
+
+  it("passes the tab id as ChatPanel scrollStateKey", () => {
+    useChatTabsStore.getState().openSessionInNewTab(1);
+    const tabId = useChatTabsStore.getState().tabs[0].id;
+
+    render(<ChatPanelHost />);
+
+    expect(screen.getByTestId("chat-panel-1")).toHaveAttribute(
+      "data-scroll-state-key",
+      tabId,
+    );
   });
 
   it("Given three mounted session tabs, When active tab changes, Then unrelated hidden panels do not rerender", () => {

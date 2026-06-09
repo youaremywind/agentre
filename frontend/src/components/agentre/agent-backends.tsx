@@ -504,7 +504,6 @@ export function AgentBackendsPanel({
             setFlash({ kind: "ok", text: message });
             await reload();
           }}
-          onError={(text) => setFlash({ kind: "err", text })}
           onOpenProxySettings={onOpenProxySettings}
         />
       ) : null}
@@ -711,14 +710,12 @@ function BackendEditor({
   providers,
   onClose,
   onSaved,
-  onError,
   onOpenProxySettings,
 }: {
   state: EditorState;
   providers: Provider[];
   onClose: () => void;
   onSaved: (message: string) => Promise<void> | void;
-  onError: (text: string) => void;
   onOpenProxySettings?: () => void;
 }) {
   const { t } = useTranslation();
@@ -778,6 +775,7 @@ function BackendEditor({
   >(null);
   const [syncingProvider, setSyncingProvider] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
+  const [saveResult, setSaveResult] = React.useState<FlashState>(null);
   const [testResult, setTestResult] = React.useState<FlashState>(null);
   const [gatewayStatus, setGatewayStatus] =
     React.useState<httpgateway.GatewayStatus | null>(null);
@@ -817,6 +815,7 @@ function BackendEditor({
   }
 
   function handleTypeChange(nextType: BackendType) {
+    setSaveResult(null);
     setType(nextType);
     setLlmProviderKey("");
     setRoutes(emptyRoutes());
@@ -1031,12 +1030,14 @@ function BackendEditor({
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (submitting) return;
+    setSaveResult(null);
     if (reservedOffenders.length > 0) {
-      onError(
-        t("agentBackends.env.reservedDisabled", {
+      setSaveResult({
+        kind: "err",
+        text: t("agentBackends.env.reservedDisabled", {
           keys: reservedOffenders.join(", "),
         }),
-      );
+      });
       setAdvancedOpen(true);
       return;
     }
@@ -1055,7 +1056,7 @@ function BackendEditor({
       }
       await saveDraft(draft);
     } catch (err) {
-      onError(messageFromError(err));
+      setSaveResult({ kind: "err", text: messageFromError(err) });
     } finally {
       setSubmitting(false);
     }
@@ -1140,6 +1141,7 @@ function BackendEditor({
         footerClassName="flex-col items-stretch gap-2"
         footer={
           <>
+            {saveResult ? <TestResultPill state={saveResult} /> : null}
             {testResult ? <TestResultPill state={testResult} /> : null}
             <div className="flex w-full items-center gap-2">
               {testing ? (

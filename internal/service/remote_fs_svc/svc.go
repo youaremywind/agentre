@@ -49,8 +49,7 @@ type MkdirView struct {
 
 var defaultSvc RemoteFsSvc = &remoteFsImpl{}
 
-func Default() RemoteFsSvc     { return defaultSvc }
-func SetDefault(s RemoteFsSvc) { defaultSvc = s }
+func Default() RemoteFsSvc { return defaultSvc }
 
 type remoteFsImpl struct {
 	// rdSvc 默认走 remote_device_svc.Default();单测注入 mock。

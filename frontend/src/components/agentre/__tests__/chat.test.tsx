@@ -1,15 +1,27 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import * as React from "react";
 import { describe, expect, it, vi } from "vitest";
+
+const sonnerMocks = vi.hoisted(() => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}));
+
+vi.mock("sonner", () => sonnerMocks);
 
 import {
   ChatComposer,
   ChatTranscript,
+  type ChatTranscriptHandle,
   formatResetIn,
 } from "@/components/agentre/chat";
 import type { ChatBlockData } from "@/stores/chat-streams-store";
@@ -85,6 +97,68 @@ function chatMessage(blocks: ChatBlockData[]): chat_svc.ChatMessage {
     seq: 1,
     sessionId: 1,
   } as chat_svc.ChatMessage;
+}
+
+function textMessage(
+  id: number,
+  role: "user" | "assistant",
+  text: string,
+): chat_svc.ChatMessage {
+  return {
+    blocks: [{ type: "text", text } as ChatBlockData],
+    cachedTokens: 0,
+    cacheCreationTokens: 0,
+    completionTokens: 0,
+    createtime: new Date("2026-05-17T10:30:00Z").getTime(),
+    durationMs: 0,
+    errorText: "",
+    id,
+    model: "",
+    promptTokens: 0,
+    reasoningTokens: 0,
+    role,
+    seq: id,
+    sessionId: 1,
+    totalInputTokens: 0,
+  } as unknown as chat_svc.ChatMessage;
+}
+
+function sizedScrollElement(): HTMLDivElement {
+  const el = document.createElement("div");
+  let clientHeight = 480;
+  Object.defineProperty(el, "clientHeight", {
+    configurable: true,
+    get: () => clientHeight,
+  });
+  Object.defineProperty(el, "__setClientHeightForTest", {
+    configurable: true,
+    value: (next: number) => {
+      clientHeight = next;
+    },
+  });
+  Object.defineProperty(el, "scrollHeight", {
+    configurable: true,
+    get: () => 10_000,
+  });
+  el.getBoundingClientRect = () =>
+    ({
+      bottom: 480,
+      height: 480,
+      left: 0,
+      right: 800,
+      top: 0,
+      width: 800,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  return el;
+}
+
+function setScrollElementHeightForTest(el: HTMLElement, height: number) {
+  (
+    el as HTMLElement & { __setClientHeightForTest: (next: number) => void }
+  ).__setClientHeightForTest(height);
 }
 
 function mockTextSelectionWithin(node: Node) {
@@ -345,6 +419,327 @@ describe("ChatTranscript autonomous turn banner", () => {
       />,
     );
     expect(screen.queryAllByRole("separator")).toHaveLength(0);
+  });
+});
+
+describe("ChatTranscript virtualization", () => {
+  it("Given many messages, When rendered in a scroll container, Then it mounts only the visible window", async () => {
+    const scrollElement = sizedScrollElement();
+    const messages = Array.from({ length: 240 }, (_, idx) =>
+      textMessage(
+        idx + 1,
+        idx % 2 === 0 ? "user" : "assistant",
+        `message-${idx + 1}`,
+      ),
+    );
+
+    render(
+      <ChatTranscript
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+      />,
+    );
+
+    expect(await screen.findByText("message-1")).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-message-id]").length).toBeLessThan(
+      80,
+    );
+    expect(screen.queryByText("message-240")).toBeNull();
+  });
+
+  it("Given a target message is outside the mounted window, When scrollToMessage is called, Then it asks the virtual list to reveal it", async () => {
+    const scrollElement = sizedScrollElement();
+    const scrollTo = vi.fn();
+    scrollElement.scrollTo = scrollTo;
+    const ref = React.createRef<ChatTranscriptHandle>();
+    const messages = Array.from({ length: 240 }, (_, idx) =>
+      textMessage(
+        idx + 1,
+        idx % 2 === 0 ? "user" : "assistant",
+        `jump-message-${idx + 1}`,
+      ),
+    );
+
+    render(
+      <ChatTranscript
+        ref={ref}
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+      />,
+    );
+
+    act(() => {
+      ref.current?.scrollToMessage(220);
+    });
+
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenCalled();
+    });
+  });
+
+  it("Given an anchor message id, When scrollToAnchor is called, Then it returns true and scrolls toward that message; an unknown id returns false and does not scroll", async () => {
+    const scrollElement = sizedScrollElement();
+    const ref = React.createRef<ChatTranscriptHandle>();
+    const messages = Array.from({ length: 120 }, (_, idx) =>
+      textMessage(
+        idx + 1,
+        idx % 2 === 0 ? "user" : "assistant",
+        `anchor-msg-${idx + 1}`,
+      ),
+    );
+
+    render(
+      <ChatTranscript
+        ref={ref}
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+    await screen.findByText("anchor-msg-1");
+
+    // 已加载的锚点消息:scrollToAnchor 返回 true 并把滚动钉向该消息(深处 → scrollTop>0)。
+    let movedOk: boolean | undefined;
+    act(() => {
+      movedOk = ref.current?.scrollToAnchor(80, 0);
+    });
+    expect(movedOk).toBe(true);
+    expect(scrollElement.scrollTop).toBeGreaterThan(0);
+
+    // 不在 displayMessages 的 id:返回 false 且不滚动(调用方据此回退像素恢复)。
+    scrollElement.scrollTop = 0;
+    let missingOk: boolean | undefined;
+    act(() => {
+      missingOk = ref.current?.scrollToAnchor(999_999, 0);
+    });
+    expect(missingOk).toBe(false);
+    expect(scrollElement.scrollTop).toBe(0);
+  });
+
+  it("Given a virtualized transcript is hidden, When its tab becomes active again, Then the visible window is measured again", async () => {
+    const scrollElement = sizedScrollElement();
+    const messages = Array.from({ length: 120 }, (_, idx) =>
+      textMessage(
+        idx + 1,
+        idx % 2 === 0 ? "user" : "assistant",
+        `active-message-${idx + 1}`,
+      ),
+    );
+
+    const { rerender } = render(
+      <ChatTranscript
+        active={false}
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+
+    rerender(
+      <ChatTranscript
+        active
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+
+    expect(await screen.findByText("active-message-1")).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-message-id]").length).toBeLessThan(
+      80,
+    );
+  });
+
+  it("Given a virtualized transcript has a visible window, When the tab is hidden with zero height, Then the current window stays mounted", async () => {
+    const scrollElement = sizedScrollElement();
+    const messages = Array.from({ length: 120 }, (_, idx) =>
+      textMessage(
+        idx + 1,
+        idx % 2 === 0 ? "user" : "assistant",
+        `hidden-message-${idx + 1}`,
+      ),
+    );
+
+    const { rerender } = render(
+      <ChatTranscript
+        active
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+
+    expect(await screen.findByText("hidden-message-1")).toBeInTheDocument();
+    setScrollElementHeightForTest(scrollElement, 0);
+    rerender(
+      <ChatTranscript
+        active={false}
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+
+    expect(screen.getByText("hidden-message-1")).toBeInTheDocument();
+    expect(
+      document.querySelectorAll("[data-message-id]").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("Given a virtualized transcript was scrolled away from the top, When its tab is hidden and restored, Then it keeps the same scroll window", async () => {
+    const scrollElement = sizedScrollElement();
+    const messages = Array.from({ length: 160 }, (_, idx) =>
+      textMessage(
+        idx + 1,
+        idx % 2 === 0 ? "user" : "assistant",
+        `restore-message-${idx + 1}`,
+      ),
+    );
+
+    const { rerender } = render(
+      <ChatTranscript
+        active
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+
+    await screen.findByText("restore-message-1");
+    act(() => {
+      scrollElement.scrollTop = 4_200;
+      fireEvent.scroll(scrollElement);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("restore-message-1")).toBeNull();
+    });
+    const visibleBeforeHide = Array.from(
+      document.querySelectorAll("[data-message-id]"),
+    ).map((node) => node.getAttribute("data-message-id"));
+
+    setScrollElementHeightForTest(scrollElement, 0);
+    act(() => {
+      scrollElement.scrollTop = 0;
+    });
+    rerender(
+      <ChatTranscript
+        active={false}
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+
+    setScrollElementHeightForTest(scrollElement, 480);
+    rerender(
+      <ChatTranscript
+        active
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("restore-message-1")).toBeNull();
+      expect(scrollElement.scrollTop).toBe(4_200);
+    });
+    expect(
+      Array.from(document.querySelectorAll("[data-message-id]")).map((node) =>
+        node.getAttribute("data-message-id"),
+      ),
+    ).toEqual(visibleBeforeHide);
+  });
+
+  it("Given a tool card is expanded, When its row unmounts and returns, Then the expanded state is preserved", async () => {
+    const scrollElement = sizedScrollElement();
+    const messages = Array.from({ length: 160 }, (_, idx) => {
+      const id = idx + 1;
+      if (id === 2) {
+        return {
+          ...textMessage(id, "assistant", ""),
+          blocks: [
+            {
+              toolInput: { command: "echo persistent-state" },
+              toolName: "Bash",
+              toolUseId: "toolu-persist",
+              type: "tool_use",
+            } as ChatBlockData,
+            {
+              text: "persistent-state",
+              toolUseId: "toolu-persist",
+              type: "tool_result",
+            } as ChatBlockData,
+          ],
+        } as chat_svc.ChatMessage;
+      }
+      return textMessage(
+        id,
+        id % 2 === 0 ? "assistant" : "user",
+        `state-message-${id}`,
+      );
+    });
+
+    const { rerender } = render(
+      <ChatTranscript
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+
+    const card = await screen.findByTestId("raw-tool-card");
+    fireEvent.click(within(card).getByRole("button", { expanded: false }));
+    expect(screen.getByText("persistent-state")).toBeInTheDocument();
+
+    rerender(
+      <ChatTranscript
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages.filter((m) => m.id !== 2)}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+    expect(screen.queryByTestId("raw-tool-card")).toBeNull();
+
+    rerender(
+      <ChatTranscript
+        agentColor="agent-1"
+        agentName="A"
+        messages={messages}
+        scrollElement={scrollElement}
+        virtualize
+      />,
+    );
+    const remountedCard = await screen.findByTestId("raw-tool-card");
+
+    expect(
+      within(remountedCard).getByRole("button", { expanded: true }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("persistent-state")).toBeInTheDocument();
   });
 });
 
@@ -663,6 +1058,65 @@ describe("ChatTranscript message meta", () => {
     expect(trigger).not.toHaveTextContent("claude-sonnet-4-6");
     // 第一个 token chip 应该紧贴左边、不带 leading 「·」 分隔符
     expect(trigger.textContent ?? "").not.toMatch(/^\s*·/);
+  });
+
+  it("Given an assistant message with markdown text, When copying AI output, Then the raw text blocks are written to clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const assistant = {
+      ...assistantWithUsage(),
+      blocks: [
+        { type: "text", text: "## Plan\n\n- keep **markdown**" },
+        { type: "thinking", text: "private chain" },
+        { type: "text", text: "\n\n```ts\nconst ok = true;\n```" },
+      ] as ChatBlockData[],
+    } as chat_svc.ChatMessage;
+
+    render(
+      <ChatTranscript
+        agentColor="agent-1"
+        agentName="CEO 助手"
+        messages={[assistant]}
+        onRerun={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy AI output" }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(
+        "## Plan\n\n- keep **markdown**\n\n```ts\nconst ok = true;\n```",
+      );
+    });
+    expect(sonnerMocks.toast.success).toHaveBeenCalledWith(
+      "AI output copied",
+      expect.any(Object),
+    );
+  });
+
+  it("Given an assistant message without text output, When rendered, Then no copy AI output button is shown", () => {
+    const assistant = {
+      ...assistantWithUsage(),
+      blocks: [
+        { type: "thinking", text: "still reasoning" },
+      ] as ChatBlockData[],
+    } as chat_svc.ChatMessage;
+
+    render(
+      <ChatTranscript
+        agentColor="agent-1"
+        agentName="CEO 助手"
+        messages={[assistant]}
+        onRerun={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Copy AI output" }),
+    ).not.toBeInTheDocument();
   });
 });
 

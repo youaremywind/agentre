@@ -33,8 +33,7 @@ func TestCodexCapabilities(t *testing.T) {
 		So(caps.Has(capability.CapForkSession), ShouldBeTrue)
 		So(caps.Has(capability.CapReportContextWindow), ShouldBeTrue)
 		So(caps.Has(capability.CapCompact), ShouldBeTrue)
-		// CapMCPTools=false:codex 不支持 RunRequest.MCPServers 注入。
-		So(caps.Has(capability.CapMCPTools), ShouldBeFalse)
+		So(caps.Has(capability.CapMCPTools), ShouldBeTrue)
 	})
 
 	Convey("codex PermissionModeMeta", t, func() {
@@ -283,6 +282,65 @@ func TestRun_ReusesCachedSessionAcrossTurns(t *testing.T) {
 		So(cached.closed, ShouldBeFalse)
 		So(pool.Len(), ShouldEqual, 1)
 		So(pool.IdleLen(), ShouldEqual, 1)
+	})
+}
+
+func TestRun_MCPServersBypassCachedSession(t *testing.T) {
+	Convey("Given a Codex chat session has an idle app-server without MCP, when a group turn injects MCPServers, then runtime starts a fresh app-server with MCP config", t, func() {
+		pool := agentruntime.NewCLISessionPool(8)
+		first := &countingRuntimeSession{
+			sid:     "thread-cached",
+			streams: []cxStream{&emptyRuntimeStream{}},
+		}
+		second := &countingRuntimeSession{
+			sid:      "thread-cached",
+			streams:  []cxStream{&emptyRuntimeStream{}},
+			closedCh: make(chan struct{}),
+		}
+		factoryCalls := 0
+		var secondReq agentruntime.RunRequest
+		restore := SetSessionFactoryForTest(func(req agentruntime.RunRequest, _ map[string]string, _ string) (cxSessionHandle, error) {
+			factoryCalls++
+			if factoryCalls == 1 {
+				return first, nil
+			}
+			secondReq = req
+			return second, nil
+		})
+		defer restore()
+
+		r := NewWithPool(pool)
+		req := agentruntime.RunRequest{
+			Backend: &agent_backend_entity.AgentBackend{
+				Type:    string(agent_backend_entity.TypeCodex),
+				EnvJSON: "{}",
+			},
+			SessionID: 77,
+			Cwd:       t.TempDir(),
+		}
+
+		events, _, err := r.Run(context.Background(), req)
+		So(err, ShouldBeNil)
+		for range events {
+		}
+
+		req.MCPServers = []agentruntime.MCPServerSpec{{
+			Name:  "group",
+			URL:   "http://127.0.0.1:9000/mcp/group/",
+			Tools: []string{"group_send"},
+		}}
+		events, _, err = r.Run(context.Background(), req)
+		So(err, ShouldBeNil)
+		for range events {
+		}
+
+		So(factoryCalls, ShouldEqual, 2)
+		So(first.streamCalls, ShouldEqual, 1)
+		So(second.streamCalls, ShouldEqual, 1)
+		So(secondReq.MCPServers, ShouldHaveLength, 1)
+		So(pool.Len(), ShouldEqual, 1)
+		second.waitClosed(t)
+		So(second.closed, ShouldBeTrue)
 	})
 }
 

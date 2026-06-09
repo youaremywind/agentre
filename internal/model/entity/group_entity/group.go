@@ -21,17 +21,17 @@ const (
 
 // Group 一个群聊房间。
 type Group struct {
-	ID                 int64  `gorm:"column:id;primaryKey;autoIncrement"`
-	Title              string `gorm:"column:title;type:text;not null;default:''"`
-	CoordinatorAgentID int64  `gorm:"column:coordinator_agent_id;type:bigint;not null;default:0"`
-	DepartmentID       int64  `gorm:"column:department_id;type:bigint;not null;default:0"`
-	ProjectID          int64  `gorm:"column:project_id;type:bigint;not null;default:0"`
-	RunStatus          string `gorm:"column:run_status;type:text;not null;default:'idle'"`
-	RoundCount         int    `gorm:"column:round_count;type:int;not null;default:0"`
-	Status             int    `gorm:"column:status;type:int;not null;default:1"`
-	Pinned             bool   `gorm:"column:pinned;type:boolean;not null;default:0"`
-	Createtime         int64  `gorm:"column:createtime;type:bigint;not null;default:0"`
-	Updatetime         int64  `gorm:"column:updatetime;type:bigint;not null;default:0"`
+	ID           int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	Title        string `gorm:"column:title;type:text;not null;default:''"`
+	HostAgentID  int64  `gorm:"column:host_agent_id;type:bigint;not null;default:0"`
+	DepartmentID int64  `gorm:"column:department_id;type:bigint;not null;default:0"`
+	ProjectID    int64  `gorm:"column:project_id;type:bigint;not null;default:0"`
+	RunStatus    string `gorm:"column:run_status;type:text;not null;default:'idle'"`
+	RoundCount   int    `gorm:"column:round_count;type:int;not null;default:0"`
+	Status       int    `gorm:"column:status;type:int;not null;default:1"`
+	Pinned       bool   `gorm:"column:pinned;type:boolean;not null;default:0"`
+	Createtime   int64  `gorm:"column:createtime;type:bigint;not null;default:0"`
+	Updatetime   int64  `gorm:"column:updatetime;type:bigint;not null;default:0"`
 }
 
 func (*Group) TableName() string { return "groups" }
@@ -59,8 +59,8 @@ func (g *Group) Check(ctx context.Context) error {
 	if strings.TrimSpace(g.Title) == "" {
 		return i18n.NewError(ctx, code.GroupTitleRequired)
 	}
-	if g.CoordinatorAgentID <= 0 {
-		return i18n.NewError(ctx, code.GroupCoordinatorRequired)
+	if g.HostAgentID <= 0 {
+		return i18n.NewError(ctx, code.GroupHostRequired)
 	}
 	return nil
 }

@@ -50,7 +50,7 @@ type GroupSvc interface {
 	RemoveGroupMember(ctx context.Context, memberID int64) error
 	SendGroupMessage(ctx context.Context, req *SendGroupMessageRequest) error
 	IngestAgentMessage(ctx context.Context, memberID int64, body string, mentions []string) error
-	// HandleInvite 是 group_invite MCP tool 的服务端入口:协调者把部门池内 agent 拉进群。
+	// HandleInvite 是 group_invite MCP tool 的服务端入口:主持人把部门池内 agent 拉进群。
 	HandleInvite(ctx context.Context, callerMemberID int64, names []string, ids []int64, reason string) ([]InviteResult, error)
 	StopGroup(ctx context.Context, id int64) error
 	PauseGroup(ctx context.Context, id int64) error
@@ -58,7 +58,7 @@ type GroupSvc interface {
 	RenameGroup(ctx context.Context, id int64, title string) error
 	SetGroupPinned(ctx context.Context, id int64, pinned bool) error
 	ArchiveGroup(ctx context.Context, id int64) error
-	// MCPHandler 返回 group_send MCP handler，供 bootstrap(D2) 注册到 gateway /mcp/group/。
+	// MCPHandler 返回 group_send MCP handler，供 bootstrap 注册到 gateway /mcp/group/。
 	MCPHandler() http.Handler
 	// SetGatewayBaseURL 注入本机 gateway base(如 http://127.0.0.1:<port>)，供拼装 agent 子进程的 MCP 配置。
 	SetGatewayBaseURL(u string)
@@ -70,10 +70,10 @@ type groupSvc struct {
 	now            func() int64
 	names          func(ctx context.Context, agentID int64) string // agent id -> 展示名
 	mu             sync.Mutex                                      // 保护 schedulers
-	schedulers     map[int64]*scheduler                            // groupID -> 运行态(Task C5)
+	schedulers     map[int64]*scheduler                            // groupID -> 运行态调度器
 	ingestLocks    *sync.Map                                       // groupID -> *sync.Mutex(串行化 IngestAgentMessage 临界区)
-	mcp            *groupMCP                                       // group_send MCP server(D2 注册到 gateway)
-	gatewayBaseURL string                                          // 本机 gateway base(D2 注入)
+	mcp            *groupMCP                                       // group_send MCP server，注册到 gateway
+	gatewayBaseURL string                                          // 本机 gateway base，由 bootstrap 注入
 }
 
 var defaultGroup GroupSvc = newGroupSvc(chatSvcGateway{}, NoopEmitter{})
@@ -100,12 +100,32 @@ func newGroupSvc(gw ChatGateway, e Emitter) *groupSvc {
 	// 绑定 MCP ingest 回调(仅取方法值, 不调用) → group_send tool 路由到 IngestAgentMessage。
 	s.mcp.ingest = s.IngestAgentMessage
 	s.mcp.invite = s.HandleInvite
+	// group_send 鉴权:无状态 token 验签通过后, 再按 DB 成员资格判定是否仍可发言。
+	s.mcp.authz = s.memberCanPost
 	return s
+}
+
+// memberCanPost 判定某成员当前是否仍可向群发言(group_send 鉴权):成员存在且 active、
+// 属于该群、且群仍 active。成员离群(status=left)/ 群归档(status!=ACTIVE)即自动失权 ——
+// 取代旧的内存 token 吊销表(无状态 token 无法 delete,改为按 DB 现状实时鉴权,且跨重启仍生效)。
+// 停止(StopGroup)只改 RunStatus、不动 Status,故停止后成员仍有发言权 —— 恢复即用,
+// 不会再让复用的常驻子进程拿 401 被误报"需要重新授权"。
+func (s *groupSvc) memberCanPost(ctx context.Context, groupID, memberID int64) bool {
+	m, err := group_repo.Member().Find(ctx, memberID)
+	if err != nil || m == nil || !m.IsActive() || m.GroupID != groupID {
+		return false
+	}
+	g, err := group_repo.Group().Find(ctx, groupID)
+	return err == nil && g != nil && g.IsActive()
 }
 
 // defaultNameResolver 把 agent id 解析成展示名(找不到/出错返回空串)。
 func defaultNameResolver(ctx context.Context, agentID int64) string {
-	a, err := agent_repo.Agent().Find(ctx, agentID)
+	repo := agent_repo.Agent()
+	if repo == nil {
+		return ""
+	}
+	a, err := repo.Find(ctx, agentID)
 	if err != nil || a == nil {
 		return ""
 	}
@@ -128,40 +148,40 @@ func (s *groupSvc) ListGroups(ctx context.Context) ([]*group_entity.Group, error
 
 func (s *groupSvc) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*GroupDetail, error) {
 	g := &group_entity.Group{
-		Title:              req.Title,
-		CoordinatorAgentID: req.CoordinatorAgentID,
-		DepartmentID:       req.DepartmentID,
-		ProjectID:          req.ProjectID,
-		RunStatus:          group_entity.RunIdle,
-		Status:             consts.ACTIVE,
+		Title:        req.Title,
+		HostAgentID:  req.HostAgentID,
+		DepartmentID: req.DepartmentID,
+		ProjectID:    req.ProjectID,
+		RunStatus:    group_entity.RunIdle,
+		Status:       consts.ACTIVE,
 	}
 	if err := g.Check(ctx); err != nil {
 		return nil, err
 	}
-	if !s.backendSupportsGroup(ctx, req.CoordinatorAgentID) {
+	if !s.backendSupportsGroup(ctx, req.HostAgentID) {
 		return nil, i18n.NewError(ctx, code.GroupBackendUnsupported)
 	}
 	if g.DepartmentID == 0 {
-		// 从协调者 agent 派生部门:决定 group_invite 的可招募池(部门内 agent)。
-		coordinator, err := agent_repo.Agent().Find(ctx, req.CoordinatorAgentID)
+		// 从主持人 agent 派生部门:决定 group_invite 的可招募池(部门内 agent)。
+		host, err := agent_repo.Agent().Find(ctx, req.HostAgentID)
 		if err != nil {
 			return nil, err
 		}
-		if coordinator != nil {
-			g.DepartmentID = coordinator.DepartmentID
+		if host != nil {
+			g.DepartmentID = host.DepartmentID
 		}
 	}
 	if err := group_repo.Group().Create(ctx, g); err != nil {
 		return nil, err
 	}
-	if _, err := s.ensureMember(ctx, g, req.CoordinatorAgentID, group_entity.RoleCoordinator); err != nil {
+	if _, err := s.ensureMember(ctx, g, req.HostAgentID, group_entity.RoleHost); err != nil {
 		return nil, err
 	}
-	// memberCount 含协调者(已入群);逐个初始成员入群前先卡 maxMembers,与
+	// memberCount 含主持人(已入群);逐个初始成员入群前先卡 maxMembers,与
 	// AddGroupMember 同一上限语义,避免建群一次性绕过 8 人上限。
 	memberCount := 1
 	for _, agentID := range req.MemberAgentIDs {
-		if agentID == req.CoordinatorAgentID {
+		if agentID == req.HostAgentID {
 			continue
 		}
 		if memberCount >= maxMembers {
@@ -176,19 +196,19 @@ func (s *groupSvc) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*G
 		memberCount++
 	}
 	logger.Ctx(ctx).Info("group_svc.CreateGroup: created",
-		zap.Int64("groupID", g.ID), zap.Int64("coordinatorAgentID", req.CoordinatorAgentID))
+		zap.Int64("groupID", g.ID), zap.Int64("hostAgentID", req.HostAgentID))
 	return s.LoadGroup(ctx, g.ID)
 }
 
-// HandleInvite 是 group_invite MCP tool 的服务端入口:协调者把部门招募池内的 agent 拉进群。
-// callerMemberID=调用成员(必须是协调者); names/ids 二选一指定被邀请 agent; reason 仅日志。
+// HandleInvite 是 group_invite MCP tool 的服务端入口:主持人把部门招募池内的 agent 拉进群。
+// callerMemberID=调用成员(必须是主持人); names/ids 二选一指定被邀请 agent; reason 仅日志。
 // 逐个经 backendSupportsGroup + maxMembers 门控,幂等 ensureMember,落 system "X 加入了群聊"。
 func (s *groupSvc) HandleInvite(ctx context.Context, callerMemberID int64, names []string, ids []int64, reason string) ([]InviteResult, error) {
 	caller, err := group_repo.Member().Find(ctx, callerMemberID)
 	if err != nil || caller == nil {
 		return nil, i18n.NewError(ctx, code.GroupMemberNotFound)
 	}
-	if !caller.IsCoordinator() {
+	if !caller.IsHost() {
 		return nil, i18n.NewError(ctx, code.GroupInviteForbidden)
 	}
 	// per-group 串行化,与 IngestAgentMessage 共用,避免并发入群重号。
@@ -232,7 +252,7 @@ func (s *groupSvc) HandleInvite(ctx context.Context, callerMemberID int64, names
 	memberCount := len(members)
 	results := []InviteResult{}
 	for _, a := range targets {
-		if a.ID == g.CoordinatorAgentID {
+		if a.ID == g.HostAgentID {
 			continue
 		}
 		if memberCount >= maxMembers {
@@ -261,7 +281,7 @@ func (s *groupSvc) HandleInvite(ctx context.Context, callerMemberID int64, names
 	return results, nil
 }
 
-// ensureMember 幂等地把 agent 加入群(建 member + backing session)。
+// ensureMember 幂等地把 agent 加入群。backing session 由 scheduler 首次投递时懒创建。
 // 已存在且 active → 直接返回; 已存在但 left → 复活(Update); 不存在 → 新建(Create)。
 func (s *groupSvc) ensureMember(ctx context.Context, g *group_entity.Group, agentID int64, role string) (*group_entity.GroupMember, error) {
 	existing, err := group_repo.Member().FindByGroupAndAgent(ctx, g.ID, agentID)
@@ -271,18 +291,13 @@ func (s *groupSvc) ensureMember(ctx context.Context, g *group_entity.Group, agen
 	if existing != nil && existing.IsActive() {
 		return existing, nil
 	}
-	sessID, err := s.gw.EnsureGroupMemberSession(ctx, agentID, g.ProjectID, g.ID)
-	if err != nil {
-		return nil, err
-	}
 	if existing == nil {
 		m := &group_entity.GroupMember{
-			GroupID:          g.ID,
-			AgentID:          agentID,
-			BackingSessionID: sessID,
-			Role:             role,
-			Status:           group_entity.MemberActive,
-			JoinedAt:         s.now(),
+			GroupID:  g.ID,
+			AgentID:  agentID,
+			Role:     role,
+			Status:   group_entity.MemberActive,
+			JoinedAt: s.now(),
 		}
 		if err := group_repo.Member().Create(ctx, m); err != nil {
 			return nil, err
@@ -291,7 +306,6 @@ func (s *groupSvc) ensureMember(ctx context.Context, g *group_entity.Group, agen
 	}
 	// existing != nil && !existing.IsActive(): 之前离开过的成员复活。
 	// group_members 有 UNIQUE(group_id, agent_id), 必须 Update 而非 Create。
-	existing.BackingSessionID = sessID
 	existing.Role = role
 	existing.Status = group_entity.MemberActive
 	existing.JoinedAt = s.now()
@@ -299,6 +313,21 @@ func (s *groupSvc) ensureMember(ctx context.Context, g *group_entity.Group, agen
 		return nil, err
 	}
 	return existing, nil
+}
+
+func (s *groupSvc) memberSessionTitle(ctx context.Context, g *group_entity.Group, agentID int64) string {
+	groupTitle := ""
+	if g != nil {
+		groupTitle = strings.TrimSpace(g.Title)
+	}
+	agentName := strings.TrimSpace(s.names(ctx, agentID))
+	if agentName == "" {
+		agentName = "Agent #" + strconv.FormatInt(agentID, 10)
+	}
+	if groupTitle == "" {
+		return agentName
+	}
+	return groupTitle + " / " + agentName
 }
 
 func (s *groupSvc) LoadGroup(ctx context.Context, id int64) (*GroupDetail, error) {
@@ -317,7 +346,12 @@ func (s *groupSvc) LoadGroup(ctx context.Context, id int64) (*GroupDetail, error
 	if err != nil {
 		return nil, err
 	}
-	return &GroupDetail{Group: g, Members: members, Messages: msgs}, nil
+	return &GroupDetail{
+		Group:           g,
+		Members:         members,
+		Messages:        msgs,
+		MemberRunStates: s.memberRunStates(id, members),
+	}, nil
 }
 
 func (s *groupSvc) AddGroupMember(ctx context.Context, groupID, agentID int64) (*group_entity.GroupMember, error) {
@@ -364,7 +398,15 @@ func (s *groupSvc) RemoveGroupMember(ctx context.Context, memberID int64) error 
 	if err := group_repo.Member().Update(ctx, m); err != nil {
 		return err
 	}
-	s.mcp.RevokeMember(memberID) // 离群即吊销其 group_send token(spec §17)
+	// 无需显式吊销 token:status=left 后 memberCanPost 即拒绝其 group_send(按 DB 现状实时鉴权)。
+	// 软删该成员的 backing session, 否则它以 group_id>0 的 ACTIVE 会话残留, 经 ListAgents 的
+	// IncludingGroups 变体继续出现在该 agent 侧栏。best-effort: 删除失败不回滚离群(主效果已生效)。
+	if m.BackingSessionID > 0 {
+		if err := s.gw.DeleteSession(ctx, m.BackingSessionID); err != nil {
+			logger.Ctx(ctx).Warn("group_svc.RemoveGroupMember: delete backing session failed",
+				zap.Int64("memberId", memberID), zap.Int64("sessionId", m.BackingSessionID), zap.Error(err))
+		}
+	}
 	return nil
 }
 
@@ -388,9 +430,9 @@ func (s *groupSvc) SendGroupMessage(ctx context.Context, req *SendGroupMessageRe
 		return err
 	}
 	recipientIDs, toUser := s.resolveRecipientsFromRequest(req)
-	if len(recipientIDs) == 0 && !toUser { // 用户没选收件人 → 默认投协调者(spec §17)
+	if len(recipientIDs) == 0 && !toUser { // 用户没选收件人 → 默认投主持人(spec §17)
 		for _, m := range members {
-			if m.IsCoordinator() {
+			if m.IsHost() {
 				recipientIDs = []int64{m.ID}
 				break
 			}
@@ -404,7 +446,7 @@ func (s *groupSvc) SendGroupMessage(ctx context.Context, req *SendGroupMessageRe
 	_ = group_repo.Group().Update(ctx, g)
 	logger.Ctx(ctx).Info("group_svc.SendGroupMessage: sent",
 		zap.Int64("groupID", g.ID), zap.Int64s("recipientMemberIDs", recipientIDs), zap.Bool("toUser", toUser))
-	// 把 agent 收件人入队 + 踢调度器(C5 实现真逻辑; 本 Task 占位)
+	// 把 agent 收件人入队 + 踢调度器。
 	s.enqueueDeliveries(g.ID, recipientIDs, req.Text, "你")
 	s.kick(ctx, g.ID)
 	return nil
@@ -440,24 +482,33 @@ func (s *groupSvc) persistMessage(ctx context.Context, g *group_entity.Group, ki
 
 func groupEventName(groupID int64) string { return "group:event:" + strconv.FormatInt(groupID, 10) }
 
-// MCPHandler 供 bootstrap(D2) 注册到 gateway /mcp/group/。
+// MCPHandler 供 bootstrap 注册到 gateway /mcp/group/。
 func (s *groupSvc) MCPHandler() http.Handler { return s.mcp }
 
-// SetGatewayBaseURL bootstrap(D2) 注入本机 gateway base(如 http://127.0.0.1:<port>)。
+// SetGatewayBaseURL 由 bootstrap 注入本机 gateway base(如 http://127.0.0.1:<port>)。
 func (s *groupSvc) SetGatewayBaseURL(u string) { s.gatewayBaseURL = u }
 
-// NewGroupMCPForTest 仅测试用 —— 直接构造 handler 注入 ingest 回调。
+// NewGroupMCPForTest 仅测试用 —— 直接构造 handler 注入 ingest 回调(authz 留空=放行)。
 func NewGroupMCPForTest(ingest func(context.Context, int64, string, []string) error) *groupMCP {
 	return newGroupMCP(ingest)
 }
 
+// NewGroupMCPForTestWithAuthz 仅测试用 —— 在 ingest 之外再注入发言权判定, 验证 group_send 鉴权门控。
+func NewGroupMCPForTestWithAuthz(
+	ingest func(context.Context, int64, string, []string) error,
+	authz func(context.Context, int64, int64) bool,
+) *groupMCP {
+	h := newGroupMCP(ingest)
+	h.authz = authz
+	return h
+}
+
 // buildGroupMCP 为某成员投递签发一次性 token, 返回注入到 RunRequest.MCPServers 的 group MCP server。
-// (C5 launchDelivery 调用; 本任务后暂未被引用是预期的。)
 func (s *groupSvc) buildGroupMCP(g *group_entity.Group, m *group_entity.GroupMember) []agentruntime.MCPServerSpec {
 	tok := s.mcp.MintToken(g.ID, m.ID)
-	// 所有成员可 group_send; 仅协调者 turn 额外注入 group_invite(招募部门同事)。
+	// 所有成员可 group_send; 仅主持人 turn 额外注入 group_invite(招募部门同事)。
 	tools := []string{"group_send"}
-	if m.IsCoordinator() {
+	if m.IsHost() {
 		tools = append(tools, "group_invite")
 	}
 	return []agentruntime.MCPServerSpec{{
@@ -472,8 +523,8 @@ func (s *groupSvc) buildGroupMCP(g *group_entity.Group, m *group_entity.GroupMem
 func (s *groupSvc) buildGroupSystemPrompt(g *group_entity.Group, members []*group_entity.GroupMember, me *group_entity.GroupMember) string {
 	var b strings.Builder
 	role := "成员"
-	if me.IsCoordinator() {
-		role = "协调者(部门 leader)"
+	if me.IsHost() {
+		role = "主持人(部门负责人)"
 	}
 	fmt.Fprintf(&b, "\n\n## 群聊「%s」\n你是本群的%s。", g.Title, role)
 	b.WriteString("\n当前成员：")
@@ -481,8 +532,8 @@ func (s *groupSvc) buildGroupSystemPrompt(g *group_entity.Group, members []*grou
 		fmt.Fprintf(&b, "\n- %s（%s）", s.names(context.Background(), m.AgentID), m.Role)
 	}
 	b.WriteString("\n\n你只会收到 @ 到你的消息。要发言请调用 `group_send` 工具：body=正文，mentions=收件成员显示名数组（@用户 = 回复人类）。一个回合可多次调用、可分别对不同人发不同内容。**不调用 group_send 的内容不会进群**。")
-	if me.IsCoordinator() {
-		b.WriteString("\n作为协调者，调用 `group_invite` 工具邀请本部门同事进群：agentNames 填显示名数组（或 agentIds 填 id），reason 可选。")
+	if me.IsHost() {
+		b.WriteString("\n作为主持人，调用 `group_invite` 工具邀请本部门同事进群：agentNames 填显示名数组（或 agentIds 填 id），reason 可选。")
 		if roster := s.recruitableRoster(context.Background(), g, members); roster != "" {
 			b.WriteString("\n可招募同事：" + roster)
 		}
@@ -492,7 +543,7 @@ func (s *groupSvc) buildGroupSystemPrompt(g *group_entity.Group, members []*grou
 }
 
 // recruitableRoster 列出部门内、尚未进群、且后端支持 CapMCPTools 的 agent(名字·id),
-// 供协调者 system prompt 提示可 group_invite 的对象。空字符串=没有可招募对象。
+// 供主持人 system prompt 提示可 group_invite 的对象。空字符串=没有可招募对象。
 func (s *groupSvc) recruitableRoster(ctx context.Context, g *group_entity.Group, members []*group_entity.GroupMember) string {
 	if g.DepartmentID == 0 {
 		return ""
@@ -525,7 +576,8 @@ func (s *groupSvc) StopGroup(ctx context.Context, id int64) error {
 		return i18n.NewError(ctx, code.GroupNotFound)
 	}
 	s.stopAll(ctx, id)
-	s.mcp.RevokeGroup(id) // 停止即吊销全群 group_send token(spec §17)
+	// 停止不吊销 token:仅暂停 turn(只改 RunStatus)。成员 / 群仍有效 → 恢复发言即用,
+	// 不会让复用的常驻子进程拿 401。失权只发生在离群 / 归档(memberCanPost 判定)。
 	g.RunStatus = group_entity.RunIdle
 	if err := group_repo.Group().Update(ctx, g); err != nil {
 		return err
@@ -597,7 +649,20 @@ func (s *groupSvc) ArchiveGroup(ctx context.Context, id int64) error {
 		return i18n.NewError(ctx, code.GroupNotFound)
 	}
 	s.stopAll(ctx, id)
-	s.mcp.RevokeGroup(id) // 归档即吊销全群 group_send token(spec §17)
+	// 归档无需显式吊销 token:status=DELETE 后 memberCanPost(群已非 active)即拒绝全群 group_send。
+	// 软删全群成员的 backing session, 否则归档后它们仍以 group_id>0 的 ACTIVE 会话残留在各
+	// agent 侧栏。best-effort: 单条删除失败不阻断归档。
+	if members, err := group_repo.Member().ListByGroup(ctx, id); err == nil {
+		for _, m := range members {
+			if m.BackingSessionID <= 0 {
+				continue
+			}
+			if derr := s.gw.DeleteSession(ctx, m.BackingSessionID); derr != nil {
+				logger.Ctx(ctx).Warn("group_svc.ArchiveGroup: delete backing session failed",
+					zap.Int64("groupId", id), zap.Int64("sessionId", m.BackingSessionID), zap.Error(derr))
+			}
+		}
+	}
 	g.Status = consts.DELETE
 	logger.Ctx(ctx).Info("group_svc.ArchiveGroup: archived", zap.Int64("groupId", id))
 	return group_repo.Group().Update(ctx, g)

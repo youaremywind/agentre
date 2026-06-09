@@ -125,6 +125,11 @@ func (s *Stream) drain(ctx context.Context) {
 			continue
 		}
 		s.handleRPCEvent(ev)
+		if err := finalAgentEndError(ev); err != nil {
+			s.setErr(err)
+			s.emit(Event{Kind: EventError, Err: err})
+			return
+		}
 		if isTerminalEvent(ev) {
 			s.finish(ctx)
 			return
@@ -279,6 +284,21 @@ func (s *Stream) recordAssistantMessage(msg *assistantMessage) {
 	if u.PromptTokens > 0 || u.CompletionTokens > 0 {
 		s.emit(Event{Kind: EventUsage, Usage: u, Model: msg.Model})
 	}
+}
+
+func finalAgentEndError(ev rpcEvent) error {
+	if ev.Type != "agent_end" {
+		return nil
+	}
+	msg := lastAssistantFromAgentEnd(ev.Messages)
+	if msg == nil || strings.TrimSpace(msg.StopReason) != "error" {
+		return nil
+	}
+	errMsg := strings.TrimSpace(msg.ErrorMessage)
+	if errMsg == "" {
+		errMsg = "unknown error"
+	}
+	return fmt.Errorf("piagent: %s", errMsg)
 }
 
 func (s *Stream) emit(ev Event) {

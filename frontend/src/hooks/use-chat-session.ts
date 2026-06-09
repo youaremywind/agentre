@@ -53,6 +53,8 @@ export function useChatSession(sessionId: number) {
         agentName: resp.session.agentName,
         agentColor: resp.session.agentColor,
         projectId: resp.session.projectId ?? 0,
+        groupId: resp.session.groupId ?? 0,
+        groupTitle: resp.session.groupTitle ?? "",
         title: resp.session.title,
         lastMessageAt: resp.session.lastMessageAt ?? 0,
         lastReadAt: resp.session.lastReadAt ?? 0,
@@ -90,6 +92,32 @@ export function useChatSession(sessionId: number) {
         needsAttention: resp.session.needsAttention,
         permissionMode: resp.session.permissionMode,
       });
+      // 重挂活跃 turn 的实时流。群聊成员轮 / 自主轮等"非前端发起"的 turn 没有 Send
+      // 响应入口给出 per-turn 流名,中途打开会话就看不到"生成中"和流式内容 ——
+      // LoadSession 在有活跃 turn 时回传 activeStream,这里据此 openStream 续看。
+      // 已有活跃 LiveStream 时不覆盖(避免打断正常 Send 已开的流);流名指向在跑的
+      // (末条)assistant 消息,StreamDone 经既有路径收口并 reload 回填最终内容。
+      if (resp.session.activeStream) {
+        const streamsStore = useChatStreamsStore.getState();
+        if (!streamsStore.streams.get(sessionId)) {
+          const loaded = resp.messages ?? [];
+          let assistantMessageId = 0;
+          for (let i = loaded.length - 1; i >= 0; i--) {
+            if (loaded[i].role === "assistant") {
+              assistantMessageId = loaded[i].id;
+              break;
+            }
+          }
+          if (assistantMessageId > 0) {
+            streamsStore.openStream({
+              name: resp.session.activeStream,
+              sessionId,
+              assistantMessageId,
+              streamStartedAt: Date.now(),
+            });
+          }
+        }
+      }
       // 注:不在这里 MarkRead。语义上"用户已读到 lastMessageAt"只能由
       // ChatPanel 根据 active prop 判断 —— 隐藏 tab 也会 mount useChatSession,
       // 在这里无条件 MarkRead 会把用户没看过的 session 标记成已读。

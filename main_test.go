@@ -45,6 +45,26 @@ func TestNewWailsOptionsWiresOnBeforeClose(t *testing.T) {
 	}
 }
 
+func TestNewWailsOptionsTitleMarksDevMode(t *testing.T) {
+	var assets fs.FS = fstest.MapFS{}
+
+	t.Run("Given not in dev mode Then the title is plain Agentre", func(t *testing.T) {
+		t.Setenv("devserver", "")
+		opts := newWailsOptionsForDataDir(app.NewApp(), assets, "darwin", "/tmp/agentre-test")
+		if opts.Title != "Agentre" {
+			t.Fatalf("Title = %q, want %q", opts.Title, "Agentre")
+		}
+	})
+
+	t.Run("Given Wails dev sets devserver Then the title is marked (Dev)", func(t *testing.T) {
+		t.Setenv("devserver", "localhost:34115")
+		opts := newWailsOptionsForDataDir(app.NewApp(), assets, "darwin", "/tmp/agentre-test")
+		if opts.Title != "Agentre (Dev)" {
+			t.Fatalf("Title = %q, want %q", opts.Title, "Agentre (Dev)")
+		}
+	})
+}
+
 func TestNewWailsOptionsOmitsSingleInstanceLockInWailsDev(t *testing.T) {
 	t.Run("Given Wails dev sets devserver When options are built Then single instance lock is disabled", func(t *testing.T) {
 		t.Setenv("devserver", "localhost:34115")

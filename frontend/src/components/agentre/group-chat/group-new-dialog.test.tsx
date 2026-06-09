@@ -63,28 +63,28 @@ describe("GroupNewDialog", () => {
     openGroup.mockReset();
   });
 
-  it("不支持群聊的 agent 不在协调者候选里", async () => {
+  it("不支持群聊的 agent 不在 Host 候选里", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     render(<GroupNewDialog open onOpenChange={() => {}} />);
-    // 测试 harness 跑 en：触发器 aria-label = "Coordinator"。
-    await user.click(screen.getByRole("combobox", { name: "Coordinator" }));
+    // 测试 harness 跑 en：触发器 aria-label = "Host"。
+    await user.click(screen.getByRole("combobox", { name: "Host" }));
     expect(screen.queryByRole("option", { name: "Codex君" })).toBeNull();
     expect(screen.getByRole("option", { name: "云溪" })).toBeTruthy();
   });
 
-  it("填标题 + 选协调者 → 提交调 GroupCreate 并打开群 tab", async () => {
+  it("填标题 + 选 Host → 提交调 GroupCreate 并打开群 tab", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     render(<GroupNewDialog open onOpenChange={() => {}} />);
     fireEvent.change(screen.getByRole("textbox", { name: "Group title" }), {
       target: { value: "支付小队" },
     });
-    await user.click(screen.getByRole("combobox", { name: "Coordinator" }));
+    await user.click(screen.getByRole("combobox", { name: "Host" }));
     await user.click(screen.getByRole("option", { name: "云溪" }));
     await user.click(screen.getByRole("button", { name: "Create group" }));
     await waitFor(() => expect(groupCreate).toHaveBeenCalled());
     expect(groupCreate.mock.calls[0][0]).toMatchObject({
       title: "支付小队",
-      coordinatorAgentID: 1,
+      hostAgentID: 1,
     });
     await waitFor(() => expect(openGroup).toHaveBeenCalledWith(5, "新群"));
     expect(groupListReload).toHaveBeenCalled();

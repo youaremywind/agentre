@@ -38,7 +38,7 @@ import { useSessionStatusStore } from "@/stores/session-status-store";
 
 import { AgentGroup, AgentPanelSection } from "./agent-list";
 import type { AgentSession } from "./agent-list";
-import { StatusDot } from "./primitives";
+import { GroupAvatar, StatusDot } from "./primitives";
 import { GroupNewDialog } from "./group-chat/group-new-dialog";
 import { ResizableSidebar } from "./resizable-sidebar";
 import { SessionsPopover } from "./sessions-popover";
@@ -77,6 +77,8 @@ function agentSessionFromMeta(
   reason: AttentionReason | null,
   t: TFunction,
   attentionRank?: AttentionReason | "selected",
+  groupId?: number,
+  groupTitle?: string,
 ): AgentSession {
   const status = reasonToDisplayStatus(
     reason,
@@ -95,6 +97,8 @@ function agentSessionFromMeta(
     status,
     title: title || t("chatPage.untitledSession"),
     trailingLabel,
+    groupId,
+    groupTitle,
     ...(attentionRank !== undefined ? { attentionRank } : {}),
   };
 }
@@ -134,6 +138,8 @@ function useBuildAttentionSessions(
           reason,
           t,
           reason,
+          meta.groupId,
+          meta.groupTitle,
         ),
       );
     }
@@ -156,6 +162,8 @@ function useBuildAttentionSessions(
             null,
             t,
             "selected",
+            meta.groupId,
+            meta.groupTitle,
           ),
         );
       }
@@ -201,6 +209,9 @@ function useBuildSessions(agent: ChatAgentItem): AgentSession[] {
         status?.agentStatus ?? s.status,
         reason,
         t,
+        undefined,
+        meta?.groupId ?? s.groupId,
+        meta?.groupTitle ?? s.groupTitle,
       );
     });
   }, [agent.sessions, metas, statuses, attentionMap, t]);
@@ -327,6 +338,19 @@ type GroupRowProps = {
 function GroupRow({ group, selected, onOpen, onTogglePin }: GroupRowProps) {
   const { t } = useTranslation();
   const dotStatus = groupRunStatusToDotStatus(group.runStatus);
+  const isWaiting = dotStatus === "waiting";
+  // 群尾部标签:等待你 > 轮次(已 N 轮) > 无。颜色与 SessionRow 的 trailingLabel 对齐 ——
+  // 等待走 status-waiting 琥珀,其余 muted,选中态统一 primary-text。
+  const tag = isWaiting
+    ? t("group.runStatus.waitingUser")
+    : group.roundCount > 0
+      ? t("group.rounds", { count: group.roundCount })
+      : null;
+  const tagColorClass = selected
+    ? "text-primary-text"
+    : isWaiting
+      ? "text-status-waiting"
+      : "text-muted-foreground";
   const pinLabel = group.pinned
     ? t("chatPage.pin.unpinAria", { name: group.title })
     : t("chatPage.pin.pinAria", { name: group.title });
@@ -346,7 +370,7 @@ function GroupRow({ group, selected, onOpen, onTogglePin }: GroupRowProps) {
           selected && "text-primary-text",
         )}
       >
-        <StatusDot status={dotStatus} size="xs" />
+        <GroupAvatar data-testid="group-avatar" />
         <span
           className={cn(
             "min-w-0 flex-1 truncate",
@@ -360,6 +384,12 @@ function GroupRow({ group, selected, onOpen, onTogglePin }: GroupRowProps) {
             className="size-3 -rotate-[30deg] text-primary-text"
             aria-label={t("agentList.pinned")}
           />
+        ) : null}
+        <StatusDot status={dotStatus} size="xs" />
+        {tag ? (
+          <span className={cn("shrink-0 font-mono text-2xs", tagColorClass)}>
+            {tag}
+          </span>
         ) : null}
       </button>
       <Button
@@ -465,19 +495,28 @@ function ChatPage() {
   const { groups } = useGroupList();
   const metas = useSessionMetaStore((s) => s.metas);
   // 选中态完全派生自 chat-tabs-store(single source of truth):
-  // - kind:"session" → selectedSessionId = meta.sessionId,selectedAgentId 反查 agents
-  //   找到拥有该 session 的 agent(用于 sidebar 高亮 + attention bubble 钉选中行)。
+  // - kind:"session" / "groupSession" → selectedSessionId = meta.sessionId,
+  //   selectedAgentId 反查 agents 找到拥有该 session 的 agent(用于 sidebar 高亮 +
+  //   attention bubble 钉选中行)。群成员 backing session 也是普通 chat_session,
+  //   选中态行为必须与普通会话一致。
   // - kind:"new"     → selectedSessionId = 0,selectedAgentId = meta.agentId。
   // - 无 active tab  → 全 0,sidebar 不高亮任何 agent。
   const activeTab = useChatTabsStore((s) =>
     s.activeTabId ? (s.tabs.find((t) => t.id === s.activeTabId) ?? null) : null,
   );
   const selectedSessionId =
-    activeTab?.meta.kind === "session" ? activeTab.meta.sessionId : 0;
+    activeTab?.meta.kind === "session" ||
+    activeTab?.meta.kind === "groupSession"
+      ? activeTab.meta.sessionId
+      : 0;
   const selectedAgentId = React.useMemo(() => {
     if (!activeTab) return 0;
     if (activeTab.meta.kind === "new") return activeTab.meta.agentId;
-    if (activeTab.meta.kind !== "session") return 0;
+    if (
+      activeTab.meta.kind !== "session" &&
+      activeTab.meta.kind !== "groupSession"
+    )
+      return 0;
     const sid = activeTab.meta.sessionId;
     for (const a of agents) {
       if (a.sessions.some((s) => s.id === sid)) return a.id;
@@ -796,6 +835,7 @@ function ChatPage() {
               <DropdownMenuTrigger asChild>
                 <Button
                   type="button"
+                  data-testid="new-chat-button"
                   variant="secondary"
                   size="icon-sm"
                   aria-label={t("chatPage.add.aria")}
@@ -807,6 +847,7 @@ function ChatPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
+                  data-testid="new-agent-chat-item"
                   onSelect={() => openCommandPalette(NEW_CHAT_INITIAL_QUERY)}
                 >
                   {t("chatPage.add.newAgentChat")}

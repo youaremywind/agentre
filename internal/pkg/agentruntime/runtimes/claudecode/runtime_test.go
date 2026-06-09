@@ -104,6 +104,87 @@ func TestRun_ForwardsUserBlockImages(t *testing.T) {
 	})
 }
 
+// TestRun_BlockedSpawnDoesNotWedgeOtherSessions 回归「单个 session 卡死 → 整个
+// claudecode runtime 宕掉」。
+//
+// 现场(2026-06-05 sess-453/458):群聊成员轮带 --mcp-config 启动 claude CLI,CLI
+// 卡在 MCP 初始化;acquireSession 旧实现持**单把全局 r.mu** 串行化所有 session 的
+// get-or-spawn,并在锁内做阻塞子进程操作(spawn / 同步 SetPermissionMode)。卡住的
+// 那一轮一直占着全局锁 → 之后**每一个**单聊 turn 都堵在 acquireSession 的锁上,既不
+// 输出也停不掉,再发消息报 ChatSendInFlight。codex 走独立 runtime 不受影响。
+//
+// 不变量:一个 session 的 spawn 阻塞,绝不能拖垮其它 session 的 Run。锁必须按
+// session key 分桶,只串行化同一 session 的并发首轮,而非全局互斥。
+func TestRun_BlockedSpawnDoesNotWedgeOtherSessions(t *testing.T) {
+	Convey("一个 session 的 spawn 阻塞不得拖垮其它 session 的 Run", t, func() {
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		restore := SetSessionFactoryForTest(func(spec ccLaunchSpec) (ccSessionHandle, error) {
+			if spec.Req.SessionID == 1 {
+				close(entered)
+				<-release // 模拟 CLI 启动期(MCP 初始化)永久挂起
+			}
+			return &fakeCCHandle{
+				id:     "sid",
+				stream: &eventCCStream{events: []claudecode.Event{{Kind: claudecode.EventDone}}},
+			}, nil
+		})
+		defer restore()
+
+		r := New()
+		ctx := context.Background()
+		cwd1, cwd2 := t.TempDir(), t.TempDir()
+
+		type res struct {
+			events <-chan agentruntime.Event
+			err    error
+		}
+		run := func(sessionID int64, cwd, text string) <-chan res {
+			ch := make(chan res, 1)
+			go func() {
+				events, _, err := r.Run(ctx, agentruntime.RunRequest{
+					Backend:   &agent_backend_entity.AgentBackend{Type: string(agent_backend_entity.TypeClaudeCode)},
+					SessionID: sessionID,
+					Cwd:       cwd,
+					UserText:  text,
+				})
+				ch <- res{events: events, err: err}
+			}()
+			return ch
+		}
+
+		// session 1:卡在 factory(模拟群聊成员轮 CLI 挂起);Run 同步段会一直阻塞。
+		done1 := run(1, cwd1, "hang")
+		<-entered // 确保 session 1 已进入 factory(bug 下此刻全局锁被它独占)
+
+		// session 2:不同 session,必须能在 3s 内正常起 turn,不被 session 1 拖死。
+		done2 := run(2, cwd2, "go")
+		wedged := false
+		var got2 res
+		select {
+		case got2 = <-done2:
+		case <-time.After(3 * time.Second):
+			wedged = true
+		}
+
+		// 无论是否 wedge,都放行 session 1 并 join 两个 Run —— 让所有读全局 factory
+		// 的 goroutine 在 defer restore() 之前退出,失败路径下也不留竞态/泄漏。
+		close(release)
+		if wedged {
+			got2 = <-done2
+		}
+		got1 := <-done1
+		for range got1.events { // drain
+		}
+		for range got2.events { // drain
+		}
+		r.CloseAllSessions(ctx)
+
+		So(wedged, ShouldBeFalse) // 全局锁被卡住的 session 1 独占 → session 2 超时 wedge
+		So(got2.err, ShouldBeNil)
+	})
+}
+
 // fakeCCHandle 是 ccSessionHandle 的最简 stub:Stream 返回一个立即 close 的
 // 空事件流;其他控制方法 no-op。仅供 Run() 路径不需要真实 CLI 子进程的单测。
 //

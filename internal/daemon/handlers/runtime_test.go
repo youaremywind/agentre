@@ -739,6 +739,67 @@ func TestRuntime_Steer_BackendUnsupported_ErrUnsupported(t *testing.T) {
 	require.ErrorIs(t, err, agentruntime.ErrUnsupported)
 }
 
+func TestRuntime_ControlRPCs_BackendUnsupported_ErrUnsupported(t *testing.T) {
+	rt := &fullRT{}
+	ctx, _, h, live := runtimeWithLiveSession(t, rt, 5)
+	defer close(live)
+
+	h.SwapRuntimeFor(func(_ agent_backend_entity.BackendType) agentruntime.Runtime { return bareRT{} })
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "cancel steer",
+			call: func() error {
+				_, err := h.CancelSteer(ctx, wire.CancelSteerParams{SessionID: 5, QueuedID: "q-1"})
+				return err
+			},
+		},
+		{
+			name: "drain pending",
+			call: func() error {
+				_, err := h.DrainPending(ctx, wire.DrainParams{SessionID: 5})
+				return err
+			},
+		},
+		{
+			name: "abort",
+			call: func() error {
+				_, err := h.Abort(ctx, wire.AbortParams{SessionID: 5})
+				return err
+			},
+		},
+		{
+			name: "set permission mode",
+			call: func() error {
+				_, err := h.SetPermissionMode(ctx, wire.SetPermissionModeParams{SessionID: 5, Mode: "plan"})
+				return err
+			},
+		},
+		{
+			name: "submit answer",
+			call: func() error {
+				_, err := h.SubmitAnswer(ctx, wire.SubmitAnswerParams{SessionID: 5, RequestID: "r-1"})
+				return err
+			},
+		},
+		{
+			name: "submit tool permission",
+			call: func() error {
+				_, err := h.SubmitToolPermission(ctx, wire.SubmitToolPermissionParams{SessionID: 5, RequestID: "p-1"})
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.ErrorIs(t, tt.call(), agentruntime.ErrUnsupported)
+		})
+	}
+}
+
 func TestRuntime_CancelSteer_ReturnsRemoved(t *testing.T) {
 	rt := &fullRT{
 		cancelSteerFn: func(_ int64, _ string) ([]string, error) {

@@ -49,6 +49,23 @@ func newSvcWithRemote(remote remoteCLIPort) *agentBackendSvc {
 	return &agentBackendSvc{remoteCLI: remote}
 }
 
+func assertRemoteProbeSoftFail(
+	t *testing.T,
+	probeErr error,
+	backendID int64,
+	messageContains string,
+) {
+	t.Helper()
+	fake := &fakeRemoteCLI{probeErr: probeErr}
+	svc := setupSvcWithRemoteAndBackend(t, fake, remoteTestBackend(backendID, "42"))
+	resp, err := svc.Test(context.Background(), &TestBackendRequest{ID: backendID})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.False(t, resp.OK)
+	assert.Contains(t, resp.Message, messageContains)
+	assert.Equal(t, 1, fake.probeCalls)
+}
+
 func TestResolveCLIPath_RemoteDispatch(t *testing.T) {
 	convey.Convey("ResolveCLIPath 远端分支（DeviceID 非空）", t, func() {
 		ctx := context.Background()
@@ -181,27 +198,13 @@ func TestTest_LocalPath_DoesNotCallRemoteProbe(t *testing.T) {
 
 func TestTest_RemoteDeviceNotFound_ReturnsSoftFailWithI18n(t *testing.T) {
 	convey.Convey("远端 device 不存在 → OK:false + RemoteDeviceNotFound 文案", t, func() {
-		fake := &fakeRemoteCLI{probeErr: ErrRemoteDeviceNotFound}
-		svc := setupSvcWithRemoteAndBackend(t, fake, remoteTestBackend(3, "42"))
-		resp, err := svc.Test(context.Background(), &TestBackendRequest{ID: 3})
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-		assert.False(t, resp.OK)
-		assert.Contains(t, resp.Message, "远端设备")
-		assert.Equal(t, 1, fake.probeCalls)
+		assertRemoteProbeSoftFail(t, ErrRemoteDeviceNotFound, 3, "远端设备")
 	})
 }
 
 func TestTest_RemoteDialFailed_ReturnsSoftFailWithI18n(t *testing.T) {
 	convey.Convey("远端拨号失败 → OK:false + RemoteDeviceDialFailed 文案", t, func() {
-		fake := &fakeRemoteCLI{probeErr: ErrRemoteDialFailed}
-		svc := setupSvcWithRemoteAndBackend(t, fake, remoteTestBackend(4, "42"))
-		resp, err := svc.Test(context.Background(), &TestBackendRequest{ID: 4})
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-		assert.False(t, resp.OK)
-		assert.Contains(t, resp.Message, "agentred")
-		assert.Equal(t, 1, fake.probeCalls)
+		assertRemoteProbeSoftFail(t, ErrRemoteDialFailed, 4, "agentred")
 	})
 }
 

@@ -1,8 +1,8 @@
 package group_entity
 
 const (
-	RoleCoordinator = "coordinator"
-	RoleMember      = "member"
+	RoleHost   = "host"
+	RoleMember = "member"
 
 	MemberActive = "active"
 	MemberLeft   = "left"
@@ -21,5 +21,5 @@ type GroupMember struct {
 
 func (*GroupMember) TableName() string { return "group_members" }
 
-func (m *GroupMember) IsCoordinator() bool { return m != nil && m.Role == RoleCoordinator }
-func (m *GroupMember) IsActive() bool      { return m != nil && m.Status == MemberActive }
+func (m *GroupMember) IsHost() bool   { return m != nil && m.Role == RoleHost }
+func (m *GroupMember) IsActive() bool { return m != nil && m.Status == MemberActive }

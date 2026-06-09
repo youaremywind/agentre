@@ -21,7 +21,7 @@ func (a *App) LoadChatSession(req *chat_svc.LoadSessionRequest) (*chat_svc.LoadS
 }
 
 // GetChatLaunchCommand 把当前 session 的 CLI 后端配置拼成可在终端粘贴运行的命令。
-// 仅 claudecode / codex 有效；builtin 返回 ChatLaunchCommandNotAvailable。
+// 仅 claudecode / codex / piagent 有效；builtin 返回 ChatLaunchCommandNotAvailable。
 // 命令中的 gateway token 故意写成占位符 <TOKEN>，不发放实际 token，用户自行替换。
 func (a *App) GetChatLaunchCommand(req *chat_svc.LaunchCommandRequest) (*chat_svc.LaunchCommandResponse, error) {
 	return chat_svc.Chat().GetLaunchCommand(a.ctx, req)

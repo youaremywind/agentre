@@ -26,7 +26,7 @@ describe("useGroup", () => {
         {
           id: 1,
           agentID: 2,
-          role: "coordinator",
+          role: "host",
           status: "active",
           backingSessionID: 11,
         },
@@ -80,5 +80,46 @@ describe("useGroup", () => {
       expect(result.current.detail?.messages).toHaveLength(2),
     );
     expect(result.current.detail?.messages[1].content).toBe("done");
+  });
+
+  it("patches a member's runState on a member_run_state event", async () => {
+    let handler: ((p: unknown) => void) | undefined;
+    (EventsOn as ReturnType<typeof vi.fn>).mockImplementation(
+      (_e: string, h: (p: unknown) => void) => {
+        handler = h;
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => useGroup(5));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    handler?.({ kind: "member_run_state", memberID: 1, runState: "running" });
+    await waitFor(() =>
+      expect(result.current.detail?.members[0].runState).toBe("running"),
+    );
+  });
+
+  it("patches a member when the backend lazy-creates its backing session", async () => {
+    let handler: ((p: unknown) => void) | undefined;
+    (EventsOn as ReturnType<typeof vi.fn>).mockImplementation(
+      (_e: string, h: (p: unknown) => void) => {
+        handler = h;
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => useGroup(5));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    handler?.({
+      kind: "member_updated",
+      member: {
+        id: 1,
+        agentID: 2,
+        role: "host",
+        status: "active",
+        backingSessionID: 77,
+      },
+    });
+    await waitFor(() =>
+      expect(result.current.detail?.members[0].backingSessionID).toBe(77),
+    );
   });
 });

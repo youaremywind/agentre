@@ -2,67 +2,76 @@ package group_svc
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
-	"encoding/hex"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
-	"sync"
 )
 
 type memberRef struct{ groupID, memberID int64 }
 
 // groupMCP 是 group_send tool 的 MCP-over-HTTP server(挂在 gateway /mcp/group/)。
-// 身份: per-member token(投递时塞进 mcp-config 的 Authorization header)。
+//
+// 身份: 无状态签名 token —— `b64url(group:member).b64url(HMAC(secret, group:member))`,
+// 投递时塞进 mcp-config 的 Authorization header。token 只在 CLI spawn 时随 --mcp-config
+// 注入、复用轮不会重发,因此必须与子进程同寿命:确定性(同成员每次同值)+ 跨重启/恢复稳定。
+// 旧实现用内存 map 存随机 token + 停止/归档/离群时 delete,但被复用的常驻子进程仍持旧 token,
+// 一旦 map 里没了(停止吊销 / 进程重启)group_send 就拿 401,被 CLI 误报"需要重新授权"。
+// 现改为:lookup 只验签(无状态),发言权由 authorized 按 DB 成员资格实时判定(见 memberCanPost)。
 type groupMCP struct {
-	mu     sync.Mutex
-	tokens map[string]memberRef
+	secret []byte // per-process HMAC 签名密钥(群聊为本机回投,进程内即可;重启随子进程池一并重建)
 	ingest func(ctx context.Context, memberID int64, body string, mentions []string) error
 	invite func(ctx context.Context, memberID int64, names []string, ids []int64, reason string) ([]InviteResult, error)
-	newTok func() string
+	authz  func(ctx context.Context, groupID, memberID int64) bool // 发言权判定;nil=放行(测试默认)
 }
 
 func newGroupMCP(ingest func(context.Context, int64, string, []string) error) *groupMCP {
-	return &groupMCP{tokens: map[string]memberRef{}, ingest: ingest, newTok: randToken}
+	return &groupMCP{secret: randSecret(), ingest: ingest}
 }
 
-// MintToken 为某成员会话签一个绑定 (group, member) 的 token。
+// MintToken 为某成员签一个绑定 (group, member) 的无状态签名 token。同一 (group, member)
+// 每次返回相同值(确定性),保证被复用/恢复的子进程持有的 token 始终验签通过。
 func (h *groupMCP) MintToken(groupID, memberID int64) string {
-	tok := h.newTok()
-	h.mu.Lock()
-	h.tokens[tok] = memberRef{groupID, memberID}
-	h.mu.Unlock()
-	return tok
+	payload := strconv.FormatInt(groupID, 10) + ":" + strconv.FormatInt(memberID, 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + h.sign(payload)
 }
 
+func (h *groupMCP) sign(payload string) string {
+	mac := hmac.New(sha256.New, h.secret)
+	mac.Write([]byte(payload))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// lookup 验签并解出 token 绑定的 (group, member)。仅做密码学校验(无状态),不查成员资格 ——
+// 是否仍有发言权(离群 / 归档)由 authorized 按 DB 现状判定。验签失败 / 格式非法 → !ok。
 func (h *groupMCP) lookup(tok string) (memberRef, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	r, ok := h.tokens[tok]
-	return r, ok
+	payloadB64, sig, ok := strings.Cut(tok, ".")
+	if !ok {
+		return memberRef{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(payloadB64)
+	if err != nil || !hmac.Equal([]byte(h.sign(string(payload))), []byte(sig)) {
+		return memberRef{}, false
+	}
+	gStr, mStr, ok := strings.Cut(string(payload), ":")
+	if !ok {
+		return memberRef{}, false
+	}
+	groupID, err1 := strconv.ParseInt(gStr, 10, 64)
+	memberID, err2 := strconv.ParseInt(mStr, 10, 64)
+	if err1 != nil || err2 != nil {
+		return memberRef{}, false
+	}
+	return memberRef{groupID, memberID}, true
 }
 
-// RevokeMember 吊销某成员的全部 token(成员离群时调用), 立即让其在途/缓存子进程的
-// group_send 失效。spec §17: token 生命周期。
-func (h *groupMCP) RevokeMember(memberID int64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for tok, ref := range h.tokens {
-		if ref.memberID == memberID {
-			delete(h.tokens, tok)
-		}
-	}
-}
-
-// RevokeGroup 吊销某群下全部成员的 token(群 stop / 归档时调用)。
-func (h *groupMCP) RevokeGroup(groupID int64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for tok, ref := range h.tokens {
-		if ref.groupID == groupID {
-			delete(h.tokens, tok)
-		}
-	}
+// authorized 报告 (group, member) 当前是否仍可发言。authz 未装配(测试默认)→ 放行。
+func (h *groupMCP) authorized(ctx context.Context, groupID, memberID int64) bool {
+	return h.authz == nil || h.authz(ctx, groupID, memberID)
 }
 
 func (h *groupMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -110,9 +119,13 @@ func (h *groupMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if !h.authorized(r.Context(), ref.groupID, ref.memberID) { // 离群 / 群归档即失权(按 DB 现状)
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		switch rpc.Params.Name {
 		case "group_send":
-			if h.ingest == nil { // 防御: 未装配 ingest(理论上 D2 后必非 nil)
+			if h.ingest == nil { // 防御: 生产装配后应始终非 nil
 				writeRPCError(w, rpc.ID, -32000, "ingest not wired")
 				return
 			}
@@ -166,7 +179,7 @@ func groupSendToolSchema() map[string]any {
 func groupInviteToolSchema() map[string]any {
 	return map[string]any{
 		"name":        "group_invite",
-		"description": "把本部门的 Agent 拉进当前群聊。只有协调者可调用。agentNames 或 agentIds 二选一。",
+		"description": "把本部门的 Agent 拉进当前群聊。只有主持人可调用。agentNames 或 agentIds 二选一。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -188,11 +201,12 @@ func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg stri
 	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": code, "message": msg}})
 }
 
-func randToken() string {
-	b := make([]byte, 24)
+// randSecret 生成本进程的 HMAC 签名密钥(32 字节)。crypto/rand 失败是不可恢复的灾难;
+// 签名密钥绝不能退化为可预测值, 必须 fail loud。
+func randSecret() []byte {
+	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		// crypto/rand 失败是不可恢复的灾难; auth token 绝不能退化为可预测值, 必须 fail loud。
 		panic("group_svc: crypto/rand failed: " + err.Error())
 	}
-	return hex.EncodeToString(b)
+	return b
 }

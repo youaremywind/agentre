@@ -36,10 +36,27 @@ const sessionCacheCap = 8
 
 // Runtime claudecode runtime 实现。
 type Runtime struct {
-	// mu 仅用于 acquireSession 的 get-or-spawn 串行化兜底。
-	mu    sync.Mutex
-	cache *agentruntime.CLISessionPool
-	steer *httpgateway.SteerInbox
+	// spawnLocks 按 session key 分桶串行化 acquireSession 的 get-or-spawn,只防同一
+	// session 并发首轮 double-spawn。
+	//
+	// **绝不能退回单把全局锁**:acquireSession 在锁内做阻塞子进程操作(spawn + 同步
+	// SetPermissionMode);某个 session 的 CLI 启动期挂起(实测:群聊成员轮带
+	// --mcp-config 卡在 MCP 初始化)会一直占着全局锁 → 其它**所有** session 的 turn 全
+	// 堵在 acquireSession 的锁上,整个 claudecode runtime 宕掉(单聊不输出/停不掉/再发
+	// 报 in-flight)。回归见 TestRun_BlockedSpawnDoesNotWedgeOtherSessions。
+	//
+	// 锁条目按 key 惰性创建后不回收:每个 session key 一把 *sync.Mutex(指针大小),
+	// 数量随会话量有界增长,内存可忽略;删除会与并发 LoadOrStore 产生「同一 key 两把锁」
+	// 的 double-spawn 竞态,故不做。
+	spawnLocks sync.Map // key(string) → *sync.Mutex
+	cache      *agentruntime.CLISessionPool
+	steer      *httpgateway.SteerInbox
+}
+
+// spawnLockFor 返回某 session key 专属的 get-or-spawn 锁(惰性创建)。
+func (r *Runtime) spawnLockFor(key string) *sync.Mutex {
+	v, _ := r.spawnLocks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 // New 默认 8 上限 LRU。
@@ -394,10 +411,14 @@ func consumedSteersFromInbox(items []httpgateway.SteerItem) []agentruntime.Consu
 // 历史:旧实现直接调 chat_repo.Session().UpdatePermissionModeAtLaunch 写库,
 // 在 agentred daemon 进程(不 bootstrap cago/chat_repo)里会 nil panic。
 func (r *Runtime) acquireSession(ctx context.Context, req agentruntime.RunRequest) (*claudeActive, string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	// 按 session key 加锁(非全局):同一 session 的并发首轮串行化避免 double-spawn,
+	// 不同 session 互不阻塞 —— 一个 session 卡在 spawn / SetPermissionMode 不会拖垮
+	// 其它 session。CLISessionPool 自身按 key 线程安全,无需额外全局互斥。
 	key := sessionKey(req.SessionID)
+	lk := r.spawnLockFor(key)
+	lk.Lock()
+	defer lk.Unlock()
+
 	var cur *claudeActive
 	if req.SessionID > 0 {
 		if v, ok := r.cache.Get(key); ok {

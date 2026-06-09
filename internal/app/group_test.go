@@ -40,11 +40,12 @@ func TestApp_GroupLoad_MapsDetail(t *testing.T) {
 		defer group_svc.SetDefault(prev)
 		group_svc.SetDefault(&fakeGroupSvc{detail: &group_svc.GroupDetail{
 			Group:   &group_entity.Group{ID: 5, Title: "队", RunStatus: "running", RoundCount: 3, Createtime: 11, Updatetime: 22},
-			Members: []*group_entity.GroupMember{{ID: 1, AgentID: 2, BackingSessionID: 9, Role: "coordinator", Status: "active"}},
+			Members: []*group_entity.GroupMember{{ID: 1, AgentID: 2, BackingSessionID: 9, Role: "host", Status: "active"}},
 			Messages: []*group_entity.GroupMessage{{
 				ID: 7, Seq: 1, SenderKind: "agent", SenderMemberID: 1,
 				RecipientMemberIDs: "[2,3]", ToUser: true, Content: "hi", Createtime: 33,
 			}},
+			MemberRunStates: map[int64]string{1: "running"},
 		}})
 		a := &App{ctx: context.Background()}
 		resp, err := a.GroupLoad(5)
@@ -55,9 +56,10 @@ func TestApp_GroupLoad_MapsDetail(t *testing.T) {
 		So(resp.Group.RoundCount, ShouldEqual, 3)
 		So(resp.Group.Createtime, ShouldEqual, 11)
 		So(resp.Group.Updatetime, ShouldEqual, 22)
-		So(resp.Members[0].Role, ShouldEqual, "coordinator")
+		So(resp.Members[0].Role, ShouldEqual, "host")
 		So(resp.Members[0].AgentID, ShouldEqual, 2)
 		So(resp.Members[0].BackingSessionID, ShouldEqual, 9)
+		So(resp.Members[0].RunState, ShouldEqual, "running")
 		So(resp.Messages[0].RecipientMemberIDs, ShouldResemble, []int64{2, 3})
 		So(resp.Messages[0].ToUser, ShouldBeTrue)
 		So(resp.Messages[0].Content, ShouldEqual, "hi")

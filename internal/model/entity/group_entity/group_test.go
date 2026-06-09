@@ -11,17 +11,17 @@ import (
 
 func TestGroup_Check(t *testing.T) {
 	ctx := context.Background()
-	Convey("Check 校验 nil / 空标题 / 缺协调者 / 合法", t, func() {
+	Convey("Check 校验 nil / 空标题 / 缺主持人 / 合法", t, func() {
 		cases := []struct {
 			name string
 			g    *group_entity.Group
 			ok   bool
 		}{
 			{"nil receiver", nil, false},
-			{"blank title", &group_entity.Group{Title: "   ", CoordinatorAgentID: 1}, false},
-			{"missing coordinator", &group_entity.Group{Title: "x", CoordinatorAgentID: 0}, false},
-			{"negative coordinator", &group_entity.Group{Title: "x", CoordinatorAgentID: -1}, false},
-			{"valid", &group_entity.Group{Title: "x", CoordinatorAgentID: 1}, true},
+			{"blank title", &group_entity.Group{Title: "   ", HostAgentID: 1}, false},
+			{"missing host", &group_entity.Group{Title: "x", HostAgentID: 0}, false},
+			{"negative host", &group_entity.Group{Title: "x", HostAgentID: -1}, false},
+			{"valid", &group_entity.Group{Title: "x", HostAgentID: 1}, true},
 		}
 		for _, tc := range cases {
 			Convey(tc.name, func() {
@@ -57,10 +57,10 @@ func TestGroupMessageRecipientsRoundTrip(t *testing.T) {
 	})
 }
 
-func TestGroupMemberIsCoordinator(t *testing.T) {
-	Convey("IsCoordinator 看 role", t, func() {
-		So((&group_entity.GroupMember{Role: group_entity.RoleCoordinator}).IsCoordinator(), ShouldBeTrue)
-		So((&group_entity.GroupMember{Role: group_entity.RoleMember}).IsCoordinator(), ShouldBeFalse)
+func TestGroupMemberIsHost(t *testing.T) {
+	Convey("IsHost 看 role", t, func() {
+		So((&group_entity.GroupMember{Role: group_entity.RoleHost}).IsHost(), ShouldBeTrue)
+		So((&group_entity.GroupMember{Role: group_entity.RoleMember}).IsHost(), ShouldBeFalse)
 	})
 }
 

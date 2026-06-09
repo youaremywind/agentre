@@ -58,6 +58,17 @@ func newPoolFixture(t *testing.T, opts ...remote_device_svc.Option) *poolFixture
 // 调 Call/Close —— 这些行为应由集成测验。单测里 Pool 只持有指针。
 func stubClient() *client.Client { return &client.Client{} }
 
+func expectBorrowDialError(
+	f *poolFixture,
+	dialErr error,
+	wantErr error,
+) {
+	f.repo.EXPECT().Get(gomock.Any(), int64(42)).Return(f.device, nil)
+	f.dial.EXPECT().Open(gomock.Any(), gomock.Any()).Return(nil, dialErr)
+	_, err := f.pool.Borrow(context.Background(), 42)
+	So(errors.Is(err, wantErr), ShouldBeTrue)
+}
+
 func TestPool_Borrow_DeviceNotFound(t *testing.T) {
 	Convey("repo returns nil row → ErrDeviceNotFound", t, func() {
 		f := newPoolFixture(t)
@@ -80,22 +91,14 @@ func TestPool_Borrow_KeychainMissingToken(t *testing.T) {
 func TestPool_Borrow_DialUnauthorizedMapped(t *testing.T) {
 	Convey("dial returns ErrUnauthorized → ErrDeviceUnauthorized", t, func() {
 		f := newPoolFixture(t)
-		f.repo.EXPECT().Get(gomock.Any(), int64(42)).Return(f.device, nil)
-		f.dial.EXPECT().Open(gomock.Any(), gomock.Any()).
-			Return(nil, remote_device_svc.ErrUnauthorized)
-		_, err := f.pool.Borrow(context.Background(), 42)
-		So(errors.Is(err, remote_device_svc.ErrDeviceUnauthorized), ShouldBeTrue)
+		expectBorrowDialError(f, remote_device_svc.ErrUnauthorized, remote_device_svc.ErrDeviceUnauthorized)
 	})
 }
 
 func TestPool_Borrow_DialTOFUMismatchPassthrough(t *testing.T) {
 	Convey("dial returns ErrTOFUMismatch → propagated", t, func() {
 		f := newPoolFixture(t)
-		f.repo.EXPECT().Get(gomock.Any(), int64(42)).Return(f.device, nil)
-		f.dial.EXPECT().Open(gomock.Any(), gomock.Any()).
-			Return(nil, remote_device_svc.ErrTOFUMismatch)
-		_, err := f.pool.Borrow(context.Background(), 42)
-		So(errors.Is(err, remote_device_svc.ErrTOFUMismatch), ShouldBeTrue)
+		expectBorrowDialError(f, remote_device_svc.ErrTOFUMismatch, remote_device_svc.ErrTOFUMismatch)
 	})
 }
 

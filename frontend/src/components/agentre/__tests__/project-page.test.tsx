@@ -1171,7 +1171,7 @@ function buildSession({
   };
 }
 
-// NewTerminalSubMenu 组件级测试（Task 10）
+// NewTerminalSubMenu 组件级测试。
 // 策略：将组件包在 DropdownMenu(open) + DropdownMenuContent 里以满足 Radix 上下文要求，
 // hover DropdownMenuSubTrigger 展开子内容（Radix sub 在 hover 时 open）；
 // 用 pointerEventsCheck:0 绕开 jsdom 的 pointer-events:none 检查。

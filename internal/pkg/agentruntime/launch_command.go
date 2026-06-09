@@ -37,7 +37,7 @@ type LaunchCommandSpec struct {
 //
 //	cd '<cwd>' && KEY='val' KEY2='val2' <binary> --flag 'value' ...
 //
-// 仅支持 claudecode / codex；builtin 没有对应 CLI，直接返回 error。
+// 仅支持 claudecode / codex / piagent；builtin 没有对应 CLI，直接返回 error。
 func BuildLaunchCommand(spec LaunchCommandSpec) (string, error) {
 	if spec.Backend == nil {
 		return "", fmt.Errorf("agentruntime: nil backend")

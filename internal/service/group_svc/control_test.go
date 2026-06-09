@@ -207,9 +207,14 @@ func TestArchiveGroup_StopsAllAndSoftDeletes(t *testing.T) {
 	})
 }
 
-// TestStopGroup_RevokesGroupTokens 锁住停止 → 吊销全群 token 的接线(spec §17)。
-func TestStopGroup_RevokesGroupTokens(t *testing.T) {
-	Convey("StopGroup 吊销该群所有 group_send token", t, func() {
+// TestStopGroup_TokenSurvivesStop 回归(报障 mcp__group__group_send 报
+// "MCP server group requires re-authorization (token expired)"):停止只暂停 turn,
+// 绝不能吊销活跃成员的 token —— 否则用户恢复发言时,被复用的常驻 CLI 子进程仍持停止前签发
+// 的 token(--mcp-config 只在 spawn 时注入、复用轮不会重发),group_send 拿到 401 被 CLI
+// 误报为"需要重新授权"。token 现为无状态签名 + 按 DB 成员资格鉴权:群仍 ACTIVE、成员仍 active
+// → 停止后仍可发言。
+func TestStopGroup_TokenSurvivesStop(t *testing.T) {
+	Convey("StopGroup 后,活跃群的活跃成员 token 仍可发 group_send(停止不吊销)", t, func() {
 		ctx := context.Background()
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
@@ -223,35 +228,118 @@ func TestStopGroup_RevokesGroupTokens(t *testing.T) {
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
 		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
+		memberRepo.EXPECT().Find(gomock.Any(), int64(2)).Return(
+			&group_entity.GroupMember{ID: 2, GroupID: 5, Status: group_entity.MemberActive}, nil).AnyTimes()
 
 		svc := group_svc.NewForTest(gw)
 		tok := group_svc.MintTokenForTest(svc, 5, 2)
 		So(group_svc.TokenValidForTest(svc, tok), ShouldBeTrue)
 
 		So(svc.StopGroup(ctx, 5), ShouldBeNil)
-		So(group_svc.TokenValidForTest(svc, tok), ShouldBeFalse) // 停止后失效
+		So(group_svc.TokenValidForTest(svc, tok), ShouldBeTrue) // 停止不吊销 → 恢复后仍可发言
 	})
 }
 
-// TestRemoveGroupMember_RevokesMemberToken 锁住离群 → 吊销该成员 token 的接线(spec §17)。
-func TestRemoveGroupMember_RevokesMemberToken(t *testing.T) {
-	Convey("RemoveGroupMember 吊销该成员的 group_send token", t, func() {
+// TestRemoveGroupMember_RevokesViaAuthz 锁住离群失权:RemoveGroupMember 把成员置 left 后,
+// memberCanPost(按 DB 现状)即拒绝其 group_send —— 取代旧的内存 token 吊销, 且跨重启仍生效。
+func TestRemoveGroupMember_RevokesViaAuthz(t *testing.T) {
+	Convey("RemoveGroupMember 后该成员 token 失权(经 authz, 非删 token)", t, func() {
 		ctx := context.Background()
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
 		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
 		group_repo.RegisterMember(memberRepo)
 
-		memberRepo.EXPECT().Find(gomock.Any(), int64(42)).Return(
-			&group_entity.GroupMember{ID: 42, Status: group_entity.MemberActive}, nil)
+		// 同一成员指针: RemoveGroupMember 把它置 left, 之后的鉴权 Find 取到的就是 left。
+		m := &group_entity.GroupMember{ID: 42, GroupID: 7, Status: group_entity.MemberActive}
+		memberRepo.EXPECT().Find(gomock.Any(), int64(42)).Return(m, nil).AnyTimes()
 		memberRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+		groupRepo.EXPECT().Find(gomock.Any(), int64(7)).Return(
+			&group_entity.Group{ID: 7, Status: consts.ACTIVE}, nil).AnyTimes()
 
 		svc := group_svc.NewForTest(gw)
 		tok := group_svc.MintTokenForTest(svc, 7, 42)
-		So(group_svc.TokenValidForTest(svc, tok), ShouldBeTrue)
+		So(group_svc.TokenValidForTest(svc, tok), ShouldBeTrue) // 离群前: active 成员有发言权
 
 		So(svc.RemoveGroupMember(ctx, 42), ShouldBeNil)
-		So(group_svc.TokenValidForTest(svc, tok), ShouldBeFalse) // 离群后失效
+		So(group_svc.TokenValidForTest(svc, tok), ShouldBeFalse) // 离群后(status=left): authz 拒绝
+	})
+}
+
+// TestRemoveGroupMember_DeletesBackingSession 锁住离群清理: 成员有 backing session 时,
+// RemoveGroupMember 必须软删它 —— 否则它以 group_id>0 的 ACTIVE 会话残留, 经 ListAgents
+// 的 IncludingGroups 变体继续出现在该 agent 侧栏 recent/attention/计数里。
+func TestRemoveGroupMember_DeletesBackingSession(t *testing.T) {
+	Convey("成员有 backing session → RemoveGroupMember 软删它", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+
+		m := &group_entity.GroupMember{ID: 42, GroupID: 7, AgentID: 9, BackingSessionID: 88, Status: group_entity.MemberActive}
+		memberRepo.EXPECT().Find(gomock.Any(), int64(42)).Return(m, nil).AnyTimes()
+		memberRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+		gw.EXPECT().DeleteSession(gomock.Any(), int64(88)).Return(nil)
+
+		svc := group_svc.NewForTest(gw)
+		So(svc.RemoveGroupMember(ctx, 42), ShouldBeNil)
+	})
+
+	Convey("成员无 backing session(=0)→ 不调 DeleteSession", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+
+		m := &group_entity.GroupMember{ID: 42, GroupID: 7, AgentID: 9, BackingSessionID: 0, Status: group_entity.MemberActive}
+		memberRepo.EXPECT().Find(gomock.Any(), int64(42)).Return(m, nil).AnyTimes()
+		memberRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+		// gw.DeleteSession 不应被调用(BackingSessionID=0)。
+
+		svc := group_svc.NewForTest(gw)
+		So(svc.RemoveGroupMember(ctx, 42), ShouldBeNil)
+	})
+}
+
+// TestArchiveGroup_DeletesMemberBackingSessions 锁住归档清理: 归档群时删除全群成员的
+// backing session, 只删有 BackingSessionID 的, 跳过尚未起轮(=0)的成员。
+func TestArchiveGroup_DeletesMemberBackingSessions(t *testing.T) {
+	Convey("ArchiveGroup 删除全群成员的 backing session(跳过 BackingSessionID=0)", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+
+		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunRunning, Status: consts.ACTIVE}
+		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil)
+		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+		members := []*group_entity.GroupMember{
+			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Status: group_entity.MemberActive},
+			{ID: 2, GroupID: 5, AgentID: 2, BackingSessionID: 12, Status: group_entity.MemberActive},
+			{ID: 3, GroupID: 5, AgentID: 3, BackingSessionID: 0, Status: group_entity.MemberActive},
+		}
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(members, nil).AnyTimes()
+		gw.EXPECT().DeleteSession(gomock.Any(), int64(11)).Return(nil)
+		gw.EXPECT().DeleteSession(gomock.Any(), int64(12)).Return(nil)
+		// member 3 BackingSessionID=0 → 不应调 DeleteSession。
+
+		svc := group_svc.NewForTest(gw)
+		So(svc.ArchiveGroup(ctx, 5), ShouldBeNil)
+		So(g.Status, ShouldEqual, consts.DELETE)
 	})
 }

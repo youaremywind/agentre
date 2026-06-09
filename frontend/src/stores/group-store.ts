@@ -25,6 +25,15 @@ type GroupActions = {
   appendMessage: (groupId: number, message: app.GroupMessageItem) => void;
   // patchRunStatus 只改 group.runStatus,保留其余字段不动。
   patchRunStatus: (groupId: number, runStatus: string) => void;
+  // patchMember 用于 backing session 懒创建后回填成员信息。
+  patchMember: (groupId: number, member: app.GroupMemberItem) => void;
+  // patchMemberRunState 只改某成员的 runState(运行态: running/idle),与 patchMember
+  // 的成员身份回填分开,避免彼此覆盖字段。后端 member_run_state 事件驱动。
+  patchMemberRunState: (
+    groupId: number,
+    memberId: number,
+    runState: string,
+  ) => void;
 };
 
 export const useGroupStore = create<GroupState & GroupActions>((set) => ({
@@ -54,6 +63,34 @@ export const useGroupStore = create<GroupState & GroupActions>((set) => ({
       if (!cur || !cur.group) return state;
       const next = new Map(state.details);
       next.set(groupId, { ...cur, group: { ...cur.group, runStatus } });
+      return { details: next };
+    }),
+
+  patchMember: (groupId, member) =>
+    set((state) => {
+      const cur = state.details.get(groupId);
+      if (!cur) return state;
+      const idx = cur.members.findIndex((m) => m.id === member.id);
+      if (idx < 0) return state;
+      const members = cur.members.slice();
+      members[idx] = { ...members[idx], ...member };
+      const next = new Map(state.details);
+      next.set(groupId, { ...cur, members });
+      return { details: next };
+    }),
+
+  patchMemberRunState: (groupId, memberId, runState) =>
+    set((state) => {
+      const cur = state.details.get(groupId);
+      if (!cur) return state;
+      const idx = cur.members.findIndex((m) => m.id === memberId);
+      if (idx < 0) return state;
+      // 同值短路:避免无意义重建 Map 触发额外重渲染。
+      if (cur.members[idx].runState === runState) return state;
+      const members = cur.members.slice();
+      members[idx] = { ...members[idx], runState };
+      const next = new Map(state.details);
+      next.set(groupId, { ...cur, members });
       return { details: next };
     }),
 }));

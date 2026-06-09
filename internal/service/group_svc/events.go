@@ -15,6 +15,15 @@ type groupMessageEvent struct {
 	Createtime         int64   `json:"createtime"`
 }
 
+// GroupMemberEvent 是推给前端的成员事件载荷; json 形状必须与 app.GroupMemberItem 一致。
+type GroupMemberEvent struct {
+	ID               int64  `json:"id"`
+	AgentID          int64  `json:"agentID"`
+	BackingSessionID int64  `json:"backingSessionID"`
+	Role             string `json:"role"`
+	Status           string `json:"status"`
+}
+
 func toGroupMessageEvent(m *group_entity.GroupMessage) groupMessageEvent {
 	return groupMessageEvent{
 		ID:                 m.ID,
@@ -25,5 +34,15 @@ func toGroupMessageEvent(m *group_entity.GroupMessage) groupMessageEvent {
 		ToUser:             m.ToUser,
 		Content:            m.Content,
 		Createtime:         m.Createtime,
+	}
+}
+
+func toGroupMemberEvent(m *group_entity.GroupMember) GroupMemberEvent {
+	return GroupMemberEvent{
+		ID:               m.ID,
+		AgentID:          m.AgentID,
+		BackingSessionID: m.BackingSessionID,
+		Role:             m.Role,
+		Status:           m.Status,
 	}
 }

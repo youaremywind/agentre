@@ -352,6 +352,8 @@ type ChatSessionLite struct {
 	Status         string `json:"status"`
 	NeedsAttention bool   `json:"needsAttention"`
 	LastMessageAt  int64  `json:"lastMessageAt"`
+	GroupID        int64  `json:"groupId,omitempty"`
+	GroupTitle     string `json:"groupTitle,omitempty"`
 	// LastReadAt 由 chat_svc.MarkSessionRead 推进；前端 sidebar 折叠态 attention bubble 用
 	// LastMessageAt > LastReadAt 判定「未读」。
 	LastReadAt int64 `json:"lastReadAt"`
@@ -374,6 +376,11 @@ type ChatSessionDetail struct {
 	LLMProviderType string `json:"llmProviderType"`
 	Title           string `json:"title"`
 	AgentStatus     string `json:"agentStatus"`
+	// ActiveStream 仅在 LoadSession 时填:该会话有正在跑的 turn 时,给出其 per-turn
+	// wails 事件名("chat:event:<sessionID>:<assistantMessageID>"),让中途打开本会话的
+	// 前端 openStream 重挂到实时流。群聊成员轮 / 自主轮等"非前端发起"的 turn 没有 Send
+	// 响应入口,只能靠这个字段重挂。无活跃 turn 时为空(omitempty),前端不重挂。
+	ActiveStream string `json:"activeStream,omitempty"`
 	// NeedsAttention 是由 AgentStatus=="waiting" 派生的兼容字段，不单独持久化。
 	// 前端 toolbar 同时叠 displayStatus 兜底：即便 session_status stream 事件丢失，
 	// LoadSession 拉到这个字段为 true 也能把状态翻成橙色 WAITING。
@@ -405,6 +412,9 @@ type ChatSessionDetail struct {
 	// ProjectID = 0 表示自由会话；> 0 时受 project_svc 管控。
 	// 前端 ChatPanel 用它派生 breadcrumb 路径。
 	ProjectID int64 `json:"projectId,omitempty"`
+	GroupID   int64 `json:"groupId,omitempty"`
+	// GroupTitle 是群聊 backing session 的来源群名。普通会话为空。
+	GroupTitle string `json:"groupTitle,omitempty"`
 }
 
 type ChatAgentItem struct {
@@ -421,7 +431,7 @@ type ChatAgentItem struct {
 	DefaultPermissionMode string `json:"defaultPermissionMode"`
 	Chattable             bool   `json:"chattable"`
 	Pinned                bool   `json:"pinned"`
-	// SupportsGroup 报告该 agent 的后端是否声明 CapMCPTools（可作为群聊协调者/成员）。
+	// SupportsGroup 报告该 agent 的后端是否声明 CapMCPTools（可作为群聊主持人/成员）。
 	// MVP 仅 claudecode 为 true。前端「新建群聊」picker 用它过滤候选（OCP，不写 backendType 字面量）。
 	SupportsGroup     bool              `json:"supportsGroup"`
 	ChattableHint     string            `json:"chattableHint"`
@@ -489,6 +499,25 @@ type ListAgentSessionsResponse struct {
 	HasMore  bool              `json:"hasMore"`
 }
 
+type SessionPurpose string
+
+const (
+	SessionPurposeGroupMember SessionPurpose = "group_member"
+)
+
+type EnsureSessionRequest struct {
+	Purpose   SessionPurpose
+	AgentID   int64
+	ProjectID int64
+	GroupID   int64
+	Title     string
+}
+
+type EnsureSessionResponse struct {
+	SessionID int64
+	Created   bool
+}
+
 type SendRequest struct {
 	SessionID int64       `json:"sessionId"` // 0 = 新建
 	AgentID   int64       `json:"agentId"`
@@ -506,6 +535,11 @@ type SendRequest struct {
 	MCPServers []agentruntime.MCPServerSpec `json:"-"`
 	// SystemPromptSuffix 追加到 RunRequest.SystemPrompt 之后(群上下文/角色/roster)。群聊用; 单聊空。
 	SystemPromptSuffix string `json:"-"`
+	// EmitTurnStartedBypass 表示本轮由"非查看者"发起(群成员轮经 scheduler dispatch),
+	// 需经会话级旁路 chat:autonomous:<sessionId> 把 per-turn 流名推给该会话已打开(可能在后台)
+	// 的 ChatPanel, 让它翻 running + openStream —— 否则只有发起者(前端 Send 响应)能拿到流名。
+	// 前端 Send 默认 false: 发起者自己已从响应拿到流名, 重复推会双开流。群聊用; 单聊空。
+	EmitTurnStartedBypass bool `json:"-"`
 }
 type SendImage struct {
 	Name    string `json:"name,omitempty"`

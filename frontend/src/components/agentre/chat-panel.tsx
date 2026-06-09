@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  ArrowDown,
   Folder,
   MoreHorizontal,
   PanelRight,
@@ -41,10 +42,11 @@ import { useVisibleMessageId } from "@/hooks/use-visible-message-id";
 import i18n from "@/i18n";
 import { reasonToDisplayStatus } from "@/lib/attention-display";
 import { copyTextWithToast } from "@/lib/clipboard-toast";
-import { projectChain } from "@/lib/project-chain";
+import { findProjectColorToken, projectChain } from "@/lib/project-chain";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { useSessionAttention } from "@/stores/attention-store";
+import { useClearedBackgroundTasksStore } from "@/stores/cleared-background-tasks-store";
 import { useChatStreamsStore } from "@/stores/chat-streams-store";
 import { useQueuedMessagesStore } from "@/stores/queued-messages-store";
 import { useSessionReadStore } from "@/stores/session-read-store";
@@ -57,6 +59,7 @@ import {
   ChatComposer,
   ChatTranscript,
   type ChatComposerSubmit,
+  type ChatTranscriptHandle,
   type ChatImageAttachment,
 } from "./chat";
 import { ChatContextSidebar } from "./chat-context-sidebar";
@@ -66,11 +69,15 @@ import { useChatSidebarStore } from "@/stores/chat-sidebar-store";
 import { AgentAvatar, DeviceTag, StatusDot } from "./primitives";
 import { QueuedMessagesBar } from "./queued-messages-bar";
 import { BackgroundTasksChip } from "./background-tasks/background-tasks-chip";
+import {
+  loadTranscriptScrollState,
+  saveTranscriptScrollState,
+} from "./chat-panel-scroll-state";
 import { deriveBackgroundTasks } from "./background-tasks/derive";
 import { deriveTaskProgress } from "./task-progress/derive";
 import { TaskProgressBar } from "./task-progress/task-progress-bar";
 import type { AgentColor, AgentStatus } from "./types";
-import { statusConfig } from "./types";
+import { agentTextColorClassName, statusConfig } from "./types";
 
 import {
   CancelQueuedChatMessage,
@@ -93,6 +100,77 @@ import { chat_svc } from "../../../wailsjs/go/models";
 
 type SvcChatMessage = chat_svc.ChatMessage;
 type ChatAgentItem = chat_svc.ChatAgentItem;
+
+type TranscriptScrollSnapshot = {
+  atBottom: boolean;
+  scrollTop: number;
+  // 非贴底时记的锚点:视口顶部那条消息的 id + 其顶边在视口顶上方的 px。
+  // 见 computeTopVisibleAnchor / ChatTranscriptHandle.scrollToAnchor。
+  anchorId?: number;
+  anchorOffset?: number;
+};
+
+type ScrollMetrics = {
+  clientHeight: number;
+  maxScrollTop: number;
+  scrollHeight: number;
+  scrollTop: number;
+};
+
+type CollapsedScrollRestoreGuard = TranscriptScrollSnapshot & {
+  key: string;
+  minMaxScrollTop: number;
+  until: number;
+};
+
+const TRANSCRIPT_BOTTOM_THRESHOLD = 32;
+const COLLAPSED_RESTORE_GUARD_MS = 3_000;
+
+function readScrollMetrics(el: HTMLElement): ScrollMetrics {
+  const { clientHeight, scrollHeight, scrollTop } = el;
+  return {
+    clientHeight,
+    maxScrollTop: Math.max(0, scrollHeight - clientHeight),
+    scrollHeight,
+    scrollTop,
+  };
+}
+
+function isTranscriptAtBottom(metrics: ScrollMetrics): boolean {
+  return (
+    metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <=
+    TRANSCRIPT_BOTTOM_THRESHOLD
+  );
+}
+
+function isCollapsedBelowGuard(
+  metrics: ScrollMetrics,
+  guard: CollapsedScrollRestoreGuard,
+): boolean {
+  return (
+    Date.now() <= guard.until && metrics.maxScrollTop < guard.minMaxScrollTop
+  );
+}
+
+// computeTopVisibleAnchor 找滚动容器内"视口顶部那条消息"——即第一条底边已越过视口顶
+// 的 [data-message-id] 行(虚拟列表里 DOM 顺序≈消息顺序,故首条命中即视口顶那条),
+// 返回其 id 与顶边在视口顶上方的 px。非贴底保存时记下它,路由重挂后据此 scrollToAnchor
+// 钉回该消息,避免仅凭像素 scrollTop 在"整列还是 estimate 高度"时落到错消息的漂移。
+// 找不到(无消息行 / 容器未布局)返回 null,调用方退回纯像素快照。
+export function computeTopVisibleAnchor(
+  el: HTMLElement,
+): { anchorId: number; anchorOffset: number } | null {
+  const containerTop = el.getBoundingClientRect().top;
+  const rows = el.querySelectorAll<HTMLElement>("[data-message-id]");
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom <= containerTop) continue; // 完全在视口上方,跳过
+    const id = Number(row.getAttribute("data-message-id"));
+    if (!Number.isFinite(id)) continue;
+    return { anchorId: id, anchorOffset: Math.max(0, containerTop - rect.top) };
+  }
+  return null;
+}
 
 // ─── Optimistic message helpers ─────────────────────────────────────────────
 
@@ -157,6 +235,8 @@ function parseGoalCommand(text: string): GoalCommand | null {
       return { kind: "set", objective: arg };
   }
 }
+
+const EMPTY_CLEARED: string[] = [];
 
 function optimisticUser(
   id: number,
@@ -312,6 +392,8 @@ type ChatPanelProps = {
   emptyState?: React.ReactNode;
   /** 该 ChatPanel 当前是否是可见的 tab；用于在切回时补一次"跟随到底"。默认 true。*/
   active?: boolean;
+  /** 当前 mounted tab 的稳定 id。用于跨路由 remount 恢复滚动；关闭 tab 后新 id 不复用。*/
+  scrollStateKey?: string;
 };
 
 function ChatPanel({
@@ -324,6 +406,7 @@ function ChatPanel({
   headerTopline,
   emptyState,
   active = true,
+  scrollStateKey,
 }: ChatPanelProps) {
   const { t } = useTranslation();
   // 流式状态(streams / queuedBySession / liveBlocks ...)全部托管在跨路由长存的
@@ -446,10 +529,16 @@ function ChatPanel({
     if (sessionProjectId <= 0) return sessionIDNode;
     const chain = projectChain(tree, sessionProjectId);
     if (chain.length === 0) return sessionIDNode;
+    const projectTextColorClass = agentTextColorClassName(
+      findProjectColorToken(tree, sessionProjectId),
+    );
     return (
       <span className="inline-flex items-center gap-1.5">
-        <Folder className="size-3" aria-hidden="true" />
-        <span>{chain.join(" / ")}</span>
+        <Folder
+          className={cn("size-3", projectTextColorClass)}
+          aria-hidden="true"
+        />
+        <span className={projectTextColorClass}>{chain.join(" / ")}</span>
         <span className="text-muted-foreground">·</span>
         {sessionIDNode}
       </span>
@@ -467,17 +556,180 @@ function ChatPanel({
   // atBottomRef = 用户上次滚动后是否停在底部附近（32px 容差）。
   // 新内容到达时只有"在底部"才自动跟随，否则保持当前位置不打扰用户阅读。
   const transcriptRef = React.useRef<HTMLElement>(null);
+  const transcriptHandleRef = React.useRef<ChatTranscriptHandle>(null);
+  const [transcriptElement, setTranscriptElement] =
+    React.useState<HTMLElement | null>(null);
   const atBottomRef = React.useRef(true);
+  const [showBackToBottom, setShowBackToBottom] = React.useState(() => {
+    const saved = loadTranscriptScrollState(scrollStateKey);
+    return Boolean(saved && !saved.atBottom);
+  });
+  const restoredScrollStateKeyRef = React.useRef<string | null>(null);
+  const pendingScrollRestoreRef = React.useRef<{
+    key: string;
+    scrollTop: number;
+  } | null>(null);
+  const collapsedScrollSaveGuardRef =
+    React.useRef<CollapsedScrollRestoreGuard | null>(null);
+  const collapsedRestoreFrameRef = React.useRef<number | null>(null);
   const sidebarOpen = useChatSidebarStore((s) => s.open);
   const setSidebarOpen = useChatSidebarStore((s) => s.setOpen);
   // 右侧 outline 高亮联动：跟踪 transcript 当前视野焦点对应的 message id。
   const activeMessageId = useVisibleMessageId(transcriptRef);
 
+  const cancelCollapsedRestoreFrame = React.useCallback(() => {
+    if (collapsedRestoreFrameRef.current == null) return;
+    window.cancelAnimationFrame(collapsedRestoreFrameRef.current);
+    collapsedRestoreFrameRef.current = null;
+  }, []);
+
+  const setTranscriptPaintSuppressed = React.useCallback(
+    (suppressed: boolean) => {
+      const el = transcriptRef.current;
+      if (!el) return;
+      el.style.visibility = suppressed ? "hidden" : "";
+    },
+    [],
+  );
+
+  const saveScrollSnapshot = React.useCallback(
+    (snapshot: TranscriptScrollSnapshot) => {
+      atBottomRef.current = snapshot.atBottom;
+      setShowBackToBottom(!snapshot.atBottom);
+      saveTranscriptScrollState(scrollStateKey, snapshot);
+    },
+    [scrollStateKey],
+  );
+
+  const restoreCollapsedScrollPosition = React.useCallback(() => {
+    const guard = collapsedScrollSaveGuardRef.current;
+    if (!guard || guard.key !== scrollStateKey) return false;
+    const el = transcriptRef.current;
+    if (!el) return false;
+    const metrics = readScrollMetrics(el);
+    if (metrics.maxScrollTop >= guard.minMaxScrollTop) {
+      const nextScrollTop = guard.atBottom
+        ? metrics.maxScrollTop
+        : guard.scrollTop;
+      el.scrollTop = nextScrollTop;
+      saveScrollSnapshot({
+        atBottom: guard.atBottom,
+        scrollTop: nextScrollTop,
+      });
+      collapsedScrollSaveGuardRef.current = null;
+      setTranscriptPaintSuppressed(false);
+      cancelCollapsedRestoreFrame();
+      return true;
+    }
+    if (Date.now() <= guard.until) return false;
+    collapsedScrollSaveGuardRef.current = null;
+    setTranscriptPaintSuppressed(false);
+    cancelCollapsedRestoreFrame();
+    return false;
+  }, [
+    cancelCollapsedRestoreFrame,
+    scrollStateKey,
+    saveScrollSnapshot,
+    setTranscriptPaintSuppressed,
+  ]);
+
+  const startCollapsedRestoreLoop = React.useCallback(() => {
+    cancelCollapsedRestoreFrame();
+    const tick = () => {
+      collapsedRestoreFrameRef.current = null;
+      const guard = collapsedScrollSaveGuardRef.current;
+      if (!guard || guard.key !== scrollStateKey) return;
+      if (restoreCollapsedScrollPosition()) return;
+      if (collapsedScrollSaveGuardRef.current?.key !== scrollStateKey) return;
+      collapsedRestoreFrameRef.current = window.requestAnimationFrame(tick);
+    };
+    collapsedRestoreFrameRef.current = window.requestAnimationFrame(tick);
+  }, [
+    cancelCollapsedRestoreFrame,
+    scrollStateKey,
+    restoreCollapsedScrollPosition,
+  ]);
+
+  React.useEffect(
+    () => () => {
+      cancelCollapsedRestoreFrame();
+    },
+    [cancelCollapsedRestoreFrame],
+  );
+
+  const saveBottomScrollPosition = React.useCallback(
+    (metrics: ScrollMetrics) => {
+      const el = transcriptRef.current;
+      if (!el) return;
+      el.scrollTop = metrics.maxScrollTop;
+      saveScrollSnapshot({ atBottom: true, scrollTop: el.scrollTop });
+    },
+    [saveScrollSnapshot],
+  );
+
+  const skipWhileCollapsedHeight = React.useCallback(
+    (metrics: ScrollMetrics) => {
+      const guard = collapsedScrollSaveGuardRef.current;
+      if (!guard || guard.key !== scrollStateKey) return false;
+      return isCollapsedBelowGuard(metrics, guard);
+    },
+    [scrollStateKey],
+  );
+
+  const armCollapsedScrollRestore = React.useCallback(
+    (saved: TranscriptScrollSnapshot) => {
+      collapsedScrollSaveGuardRef.current = {
+        atBottom: saved.atBottom,
+        key: scrollStateKey ?? "",
+        minMaxScrollTop: Math.max(
+          0,
+          saved.scrollTop - TRANSCRIPT_BOTTOM_THRESHOLD,
+        ),
+        scrollTop: saved.scrollTop,
+        until: Date.now() + COLLAPSED_RESTORE_GUARD_MS,
+      };
+      setTranscriptPaintSuppressed(true);
+      startCollapsedRestoreLoop();
+    },
+    [scrollStateKey, setTranscriptPaintSuppressed, startCollapsedRestoreLoop],
+  );
+
   const handleTranscriptScroll = React.useCallback(() => {
     const el = transcriptRef.current;
     if (!el) return;
-    atBottomRef.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight <= 32;
+    const metrics = readScrollMetrics(el);
+    const guard = collapsedScrollSaveGuardRef.current;
+    if (guard && guard.key === scrollStateKey) {
+      if (restoreCollapsedScrollPosition()) return;
+      if (skipWhileCollapsedHeight(metrics)) return;
+    }
+    const saved = loadTranscriptScrollState(scrollStateKey);
+    if (
+      saved?.atBottom &&
+      metrics.maxScrollTop > saved.scrollTop + TRANSCRIPT_BOTTOM_THRESHOLD &&
+      metrics.scrollTop <= saved.scrollTop + TRANSCRIPT_BOTTOM_THRESHOLD
+    ) {
+      el.scrollTop = metrics.maxScrollTop;
+      saveScrollSnapshot({ atBottom: true, scrollTop: metrics.maxScrollTop });
+      return;
+    }
+    const atBottom = isTranscriptAtBottom(metrics);
+    // 非贴底才记锚点(贴底走 followOnAppend / 结构性 follow 还原,不需要)。
+    const anchor = atBottom ? null : computeTopVisibleAnchor(el);
+    saveScrollSnapshot({
+      atBottom,
+      scrollTop: metrics.scrollTop,
+      ...(anchor ?? {}),
+    });
+  }, [
+    restoreCollapsedScrollPosition,
+    saveScrollSnapshot,
+    scrollStateKey,
+    skipWhileCollapsedHeight,
+  ]);
+  const setTranscriptNode = React.useCallback((node: HTMLElement | null) => {
+    transcriptRef.current = node;
+    setTranscriptElement(node);
   }, []);
 
   // ── 当前选中会话的派生视图 ──
@@ -549,10 +801,29 @@ function ChatPanel({
     () => deriveTaskProgress(messages, currentStream?.liveBlocks ?? []),
     [messages, currentStream?.liveBlocks],
   );
-  const backgroundTasks = React.useMemo(
-    () => deriveBackgroundTasks(messages, currentStream?.liveBlocks ?? []),
-    [messages, currentStream?.liveBlocks],
+  const clearedList = useClearedBackgroundTasksStore((s) =>
+    sessionId > 0 ? (s.cleared[sessionId] ?? EMPTY_CLEARED) : EMPTY_CLEARED,
   );
+  const clearedSet = React.useMemo(() => new Set(clearedList), [clearedList]);
+  const backgroundTasks = React.useMemo(
+    () =>
+      deriveBackgroundTasks(
+        messages,
+        currentStream?.liveBlocks ?? [],
+        clearedSet,
+      ),
+    [messages, currentStream?.liveBlocks, clearedSet],
+  );
+  const clearCompletedTasks = useClearedBackgroundTasksStore(
+    (s) => s.clearCompleted,
+  );
+  const handleClearCompleted = React.useCallback(() => {
+    if (sessionId <= 0) return;
+    const doneIds = backgroundTasks
+      .filter((tk) => tk.status === "completed" || tk.status === "failed")
+      .map((tk) => tk.toolUseId);
+    clearCompletedTasks(sessionId, doneIds);
+  }, [sessionId, backgroundTasks, clearCompletedTasks]);
   // PermissionMode pill 数据从 caps.permissionModeMeta 拉;caps 未到位时
   // 用空 meta 做 placeholder(pill 整体被 isModeSwitchable 守护)。
   const permissionModeMeta = caps?.permissionModeMeta ?? {
@@ -584,38 +855,141 @@ function ChatPanel({
   const effectiveTopline = headerTopline ?? derivedTopline;
 
   React.useLayoutEffect(() => {
-    if (!atBottomRef.current) return;
     const el = transcriptRef.current;
-    if (!el) return;
+    if (!el || !scrollStateKey) {
+      return;
+    }
+    if (
+      restoredScrollStateKeyRef.current === scrollStateKey &&
+      pendingScrollRestoreRef.current?.key !== scrollStateKey
+    ) {
+      return;
+    }
+    const saved = loadTranscriptScrollState(scrollStateKey);
+    if (!saved || saved.atBottom) {
+      pendingScrollRestoreRef.current = null;
+      restoredScrollStateKeyRef.current = scrollStateKey;
+      return;
+    }
+    atBottomRef.current = false;
+    // 优先锚点恢复:让虚拟器把保存时视口顶那条消息钉回原处,并随逐行复测收敛——
+    // 不受"路由重挂时整列还是 estimate 高度→像素 scrollTop 落到错消息"的冷启动漂移。
+    if (saved.anchorId != null) {
+      if (
+        transcriptHandleRef.current?.scrollToAnchor(
+          saved.anchorId,
+          saved.anchorOffset ?? 0,
+        )
+      ) {
+        pendingScrollRestoreRef.current = null;
+        restoredScrollStateKeyRef.current = scrollStateKey;
+        return;
+      }
+      // 锚点消息尚未加载进 displayMessages:先用 scrollTop 占位(避免顶部闪一下),
+      // 留 pending 等下次 messages 变化(消息到位)再由 scrollToAnchor 精确钉回。
+      pendingScrollRestoreRef.current = {
+        key: scrollStateKey,
+        scrollTop: saved.scrollTop,
+      };
+      el.scrollTop = saved.scrollTop;
+      return;
+    }
+    // 回退:旧快照无锚点(贴底时存的 / 保存时无消息行)时,沿用像素恢复 + 逐渲染重试。
+    pendingScrollRestoreRef.current = {
+      key: scrollStateKey,
+      scrollTop: saved.scrollTop,
+    };
+    el.scrollTop = saved.scrollTop;
+    const metrics = readScrollMetrics(el);
+    if (metrics.maxScrollTop < saved.scrollTop) {
+      return;
+    }
+    pendingScrollRestoreRef.current = null;
+    restoredScrollStateKeyRef.current = scrollStateKey;
+  }, [
+    messages,
+    liveDelta,
+    liveThinking,
+    liveBlocks,
+    liveRetry,
+    scrollStateKey,
+    sessionId,
+    transcriptElement,
+  ]);
+
+  React.useLayoutEffect(() => {
+    if (pendingScrollRestoreRef.current?.key === scrollStateKey) {
+      return;
+    }
+    if (!atBottomRef.current) {
+      return;
+    }
+    const el = transcriptRef.current;
+    if (!el) {
+      return;
+    }
     // tab 被 display:none 隐藏时 clientHeight=0，scrollHeight 也是 0；
     // 此时设 scrollTop=0 会让切回来时停在顶部。跳过，等切回 tab 后
-    // 的 ResizeObserver 兜底滚到底部。
-    if (el.clientHeight === 0) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages, liveDelta, liveThinking, liveBlocks, liveRetry]);
+    // 由 active 切换恢复逻辑兜底滚到底部。
+    if (el.clientHeight === 0) {
+      return;
+    }
+    saveBottomScrollPosition(readScrollMetrics(el));
+    // 依赖里只留 messages(结构性变化:首屏加载 / 发送乐观追加 / turn 落定 reload),
+    // 不再挂 liveDelta/liveThinking/liveBlocks/liveRetry —— 流式逐 chunk 的贴底已交给
+    // 虚拟器的 anchorTo:"end"(见 chat.tsx)。这条手动 scrollTop=maxScrollTop 读的是
+    // 异步复测前的旧高度,每 chunk 跟随会慢一帧并和虚拟器抢滚动,故只在结构性变化时兜底。
+  }, [messages, scrollStateKey, saveBottomScrollPosition]);
 
   // tab 从隐藏(display:none)切回可见时，上面的 useLayoutEffect 在隐藏期间
-  // 全部被 clientHeight===0 跳过，scrollTop 也被流式新增的内容挤离底部。
-  // 这里由父层 HostedPanel 传入的 active 信号驱动：false → true 那一帧，
-  // 若用户切走前停在底部 (atBottomRef.current)，补一次 scrollTop=scrollHeight。
-  // 不用 ResizeObserver 是因为它依赖 WebKit 对祖先 display 切换触发回调，
-  // 在新建会话型 tab 上 transcriptRef 首次 mount 时还为 null，effect 早返回后
-  // 永远不再装上 observer。
+  // 会被 clientHeight===0 跳过。这里由父层 HostedPanel 传入的 active 信号
+  // 驱动恢复：若用户切走前停在底部，就补一次 scrollTop=scrollHeight。
   const prevActiveRef = React.useRef(active);
   React.useLayoutEffect(() => {
     const prev = prevActiveRef.current;
     prevActiveRef.current = active;
     if (!active || prev) return;
-    if (!atBottomRef.current) return;
+    const saved = loadTranscriptScrollState(scrollStateKey);
+    if (saved && saved.scrollTop > 0) {
+      armCollapsedScrollRestore(saved);
+    }
+    if (!atBottomRef.current) {
+      return;
+    }
     const el = transcriptRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [active]);
+    if (!el) {
+      return;
+    }
+    const metrics = readScrollMetrics(el);
+    if (skipWhileCollapsedHeight(metrics)) {
+      return;
+    }
+    saveBottomScrollPosition(metrics);
+  }, [
+    active,
+    armCollapsedScrollRestore,
+    saveBottomScrollPosition,
+    scrollStateKey,
+    skipWhileCollapsedHeight,
+  ]);
 
   // 切换会话时回到底部
   React.useEffect(() => {
+    const saved = loadTranscriptScrollState(scrollStateKey);
+    if (saved && !saved.atBottom) {
+      atBottomRef.current = false;
+      return;
+    }
     atBottomRef.current = true;
-  }, [sessionId]);
+    restoredScrollStateKeyRef.current = null;
+    pendingScrollRestoreRef.current = null;
+  }, [scrollStateKey, sessionId]);
+
+  const handleBackToBottom = React.useCallback(() => {
+    const el = transcriptRef.current;
+    if (!el) return;
+    saveBottomScrollPosition(readScrollMetrics(el));
+  }, [saveBottomScrollPosition]);
 
   // ── 跨路由 turn 落定后的善后 ──
   // store 在 done/error/closed 时给该 sessionId 自增 doneTick。我们只关心「当前正在
@@ -698,6 +1072,7 @@ function ChatPanel({
     const images = message.images ?? [];
     // 发送消息时强制跟随到底部，无论用户当前在哪里
     atBottomRef.current = true;
+    setShowBackToBottom(false);
     // 调用点都是 void doSend(...) fire-and-forget；这里必须自吞错误成 notice，
     // 否则 RPC 失败时 UI 完全无声（用户在 composer 干瞪眼）。doEnqueue 的 fallback
     // 也走这里，set notice 后不 rethrow，正好顶替 doEnqueue 原本的 setNotice。
@@ -756,6 +1131,7 @@ function ChatPanel({
     if (!sid) return;
     try {
       atBottomRef.current = true;
+      setShowBackToBottom(false);
       const resp = await CompactChatSession({ sessionId: sid });
       setMessages((prev) => {
         if (prev.some((m) => m.id === resp.assistantMessageId)) return prev;
@@ -880,6 +1256,7 @@ function ChatPanel({
     (resp: PlanActionStream, userText: string) => {
       if (!resp.stream || !resp.sessionId || !resp.assistantMessageId) return;
       atBottomRef.current = true;
+      setShowBackToBottom(false);
       setMessages((prev) => {
         const next = [...prev];
         if (!next.some((m) => m.id === resp.userMessageId)) {
@@ -906,7 +1283,7 @@ function ChatPanel({
       });
       onSidebarShouldReload?.();
     },
-    [onSidebarShouldReload, openStream],
+    [onSidebarShouldReload, openStream, setMessages],
   );
 
   // doEnqueue：streaming 中按回车走这里。把新消息推到当前 turn 的排队队列，
@@ -996,6 +1373,7 @@ function ChatPanel({
 
     try {
       atBottomRef.current = true;
+      setShowBackToBottom(false);
       const resp = await RegenerateChatMessage({
         sessionId,
         messageId,
@@ -1107,6 +1485,7 @@ function ChatPanel({
 
     try {
       atBottomRef.current = true;
+      setShowBackToBottom(false);
       const resp = await EditChatMessage({
         sessionId,
         messageId: pending.messageId,
@@ -1244,7 +1623,10 @@ function ChatPanel({
                           </div>
                         </div>
                         {/* 后台任务胶囊：有运行中任务时显示，点击展开只读弹层 */}
-                        <BackgroundTasksChip tasks={backgroundTasks} />
+                        <BackgroundTasksChip
+                          tasks={backgroundTasks}
+                          onClearCompleted={handleClearCompleted}
+                        />
                         {(() => {
                           // canStop 双源：
                           //   1. currentStream !== null —— 本客户端刚起的 turn，
@@ -1378,17 +1760,21 @@ function ChatPanel({
                 </div>
               ) : (
                 <section
-                  ref={transcriptRef}
+                  ref={setTranscriptNode}
                   onScroll={handleTranscriptScroll}
                   className="min-h-0 flex-1 overflow-auto px-7 py-5"
                 >
                   <ChatTranscript
+                    ref={transcriptHandleRef}
                     agentName={session?.agentName ?? "Agent"}
                     agentColor={
                       (session?.agentColor as AgentColor) || "agent-1"
                     }
                     cwd={session?.cwd}
                     sessionId={session?.id ?? 0}
+                    scrollElement={transcriptElement}
+                    virtualize
+                    active={active}
                     messages={messages}
                     liveDelta={liveDelta}
                     liveThinking={liveThinking}
@@ -1401,7 +1787,21 @@ function ChatPanel({
                     onRerun={(messageId) => void handleRegenerate(messageId)}
                     onEdit={(messageId) => handleEdit(messageId)}
                     onPlanActionStarted={handlePlanActionStarted}
+                    tabStateKey={scrollStateKey}
                   />
+                  {showBackToBottom ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon-sm"
+                      aria-label={t("chatPanel.scroll.backToBottom")}
+                      title={t("chatPanel.scroll.backToBottom")}
+                      onClick={handleBackToBottom}
+                      className="sticky bottom-4 z-20 ml-auto flex rounded-full bg-background shadow-md hover:shadow-lg dark:bg-background animate-in fade-in slide-in-from-bottom-1 duration-200 ease-out motion-reduce:animate-none"
+                    >
+                      <ArrowDown data-icon="only" aria-hidden="true" />
+                    </Button>
+                  ) : null}
                 </section>
               )}
 
@@ -1579,12 +1979,7 @@ function ChatPanel({
                 messages={messages}
                 activeMessageId={activeMessageId}
                 onJumpToMessage={(mid) => {
-                  const el = document.querySelector(
-                    `[data-message-id="${mid}"]`,
-                  );
-                  if (el && el instanceof HTMLElement) {
-                    el.scrollIntoView({ behavior: "smooth", block: "start" });
-                  }
+                  transcriptHandleRef.current?.scrollToMessage(mid);
                 }}
               />
             ) : null}

@@ -54,7 +54,7 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
   );
 
   const [title, setTitle] = React.useState("");
-  const [coordinatorID, setCoordinatorID] = React.useState(0);
+  const [hostID, setHostID] = React.useState(0);
   const [projectID, setProjectID] = React.useState(0);
   const [memberIDs, setMemberIDs] = React.useState<number[]>([]);
   const [submitting, setSubmitting] = React.useState(false);
@@ -64,14 +64,14 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
   React.useEffect(() => {
     if (open) {
       setTitle("");
-      setCoordinatorID(0);
+      setHostID(0);
       setProjectID(projectContext?.projectID ?? 0);
       setMemberIDs([]);
       setError(null);
     }
   }, [open, projectContext]);
 
-  const canSubmit = title.trim().length > 0 && coordinatorID > 0 && !submitting;
+  const canSubmit = title.trim().length > 0 && hostID > 0 && !submitting;
 
   const submit = async () => {
     setError(null);
@@ -79,7 +79,7 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
     try {
       const detail = await GroupCreate({
         title: title.trim(),
-        coordinatorAgentID: coordinatorID,
+        hostAgentID: hostID,
         departmentID: 0,
         projectID,
         memberAgentIDs: memberIDs,
@@ -118,20 +118,18 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
 
           <label className="flex flex-col gap-1.5 text-xs">
             <span className="font-medium text-foreground">
-              {t("group.new.coordinator")}
+              {t("group.new.host")}
               <span className="ml-0.5 text-destructive">*</span>
             </span>
             <Select
-              value={coordinatorID ? String(coordinatorID) : ""}
-              onValueChange={(v) => setCoordinatorID(Number(v))}
+              value={hostID ? String(hostID) : ""}
+              onValueChange={(v) => setHostID(Number(v))}
             >
               <SelectTrigger
-                aria-label={t("group.new.coordinator")}
+                aria-label={t("group.new.host")}
                 className="h-9 text-xs"
               >
-                <SelectValue
-                  placeholder={t("group.new.coordinatorPlaceholder")}
-                />
+                <SelectValue placeholder={t("group.new.hostPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
                 {eligible.map((a) => (
@@ -142,7 +140,7 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
               </SelectContent>
             </Select>
             <span className="text-2xs text-muted-foreground">
-              {t("group.new.coordinatorHint")}
+              {t("group.new.hostHint")}
             </span>
           </label>
 
@@ -179,7 +177,7 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
               agents={eligible}
               value={memberIDs}
               onChange={setMemberIDs}
-              exclude={coordinatorID ? [coordinatorID] : []}
+              exclude={hostID ? [hostID] : []}
             />
             <span className="text-2xs text-muted-foreground">
               {t("group.new.membersHint")}

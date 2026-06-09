@@ -20,7 +20,6 @@ func TestBuildRPCArgsIncludesSystemPromptAndThinking(t *testing.T) {
 		"--append-system-prompt", "be concise",
 		"--model", "gpt-5.5",
 		"--thinking", "high",
-		"--no-context-files",
 	}, args)
 }
 
@@ -37,16 +36,15 @@ func TestBuildRPCArgsResumesSession(t *testing.T) {
 		"--mode", "rpc",
 		"--session-dir", "/data/pi-sessions",
 		"--session", "/data/pi-sessions/agentre-7.jsonl",
-		"--no-context-files",
 	}, args)
 }
 
 func TestBuildRPCArgsClampsUnsupportedMaxThinking(t *testing.T) {
 	args := buildRPCArgs(&Client{thinking: "max"})
-	assert.Equal(t, []string{"--mode", "rpc", "--thinking", "xhigh", "--no-context-files"}, args)
+	assert.Equal(t, []string{"--mode", "rpc", "--thinking", "xhigh"}, args)
 }
 
 func TestBuildRPCArgsOmitsInvalidThinking(t *testing.T) {
 	args := buildRPCArgs(&Client{thinking: "ultra"})
-	assert.Equal(t, []string{"--mode", "rpc", "--no-context-files"}, args)
+	assert.Equal(t, []string{"--mode", "rpc"}, args)
 }

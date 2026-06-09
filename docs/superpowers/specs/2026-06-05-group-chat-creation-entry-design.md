@@ -15,9 +15,9 @@
 
 评审中需求扩展为三块（同一设计、分阶段实现）：
 
-1. **创建能力 + 入口**（#12 核心）：后端建群带初始成员 + 资格门控；前端 **New Group 弹窗**（标题 + 协调者 + 项目 + 初始成员）；入口 = 会话侧栏头部 **`+` 菜单**（新建 Agent 会话 / 新建群聊）。
+1. **创建能力 + 入口**（#12 核心）：后端建群带初始成员 + 资格门控；前端 **New Group 弹窗**（标题 + 主持人 + 项目 + 初始成员）；入口 = 会话侧栏头部 **`+` 菜单**（新建 Agent 会话 / 新建群聊）。
 2. **侧栏 IA 重构**：把 agent 与群聊合并成**一个按活跃度排序的混排列表**；搜索行前置一个**筛选图标下拉**（类型 全部/群聊/Agent + 状态 运行中/未读）；**agent 与群都可由用户置顶**。
-3. **`group_invite` MCP tool**：协调者显式调用工具把 agent 拉进群，**退役**现有 `@mention` 文本自动招募（`ingest.go:maybeRecruit`），与 `group_send` 同一结构化哲学。
+3. **`group_invite` MCP tool**：主持人显式调用工具把 agent 拉进群，**退役**现有 `@mention` 文本自动招募（`ingest.go:maybeRecruit`），与 `group_send` 同一结构化哲学。
 
 ### 1.1 已锁定的决策（brainstorming + mockup 评审）
 
@@ -27,11 +27,11 @@
 | 置顶 | **agent 与群都可用户置顶**（不再只靠 `IsSystem()`）。需新增 `pinned` 字段 + 切换 |
 | 创建入口 | 会话侧栏**搜索行**最右 **`+` 按钮 → 菜单**：`新建 Agent 会话`（复用既有新会话流）/ `新建群聊`（开弹窗） |
 | 筛选 | 搜索行**最前**一个**图标按钮**（sliders 图标，有激活红点）→ **竖向下拉菜单**（无分区）：`全部 / 群聊 / Agent`（类型，单选）+ `运行中 / 未读`（状态，多选切换）。`未读` 含审批/等待等待处理状态 |
-| 弹窗字段 | 群标题（必填）+ 协调者（必填）+ 项目（可选，预填当前项目上下文）+ 初始成员（可选·多选） |
-| 协调者/成员候选 | 仅 `CapMCPTools` 且 `chattable` 的 agent（MVP=claudecode）。门控由**后端**派生（新 `SupportsGroup` 字段），前端不写 `backendType==="claudecode"`（OCP） |
-| department | 后端从协调者 agent **自动派生**（不暴露 UI）；定义 `group_invite` 可招募池 |
+| 弹窗字段 | 群标题（必填）+ 主持人（必填）+ 项目（可选，预填当前项目上下文）+ 初始成员（可选·多选） |
+| 主持人/成员候选 | 仅 `CapMCPTools` 且 `chattable` 的 agent（MVP=claudecode）。门控由**后端**派生（新 `SupportsGroup` 字段），前端不写 `backendType==="claudecode"`（OCP） |
+| department | 后端从主持人 agent **自动派生**（不暴露 UI）；定义 `group_invite` 可招募池 |
 | 建群带成员 | `CreateGroup` 接受 `MemberAgentIDs[]`，一次 service 调用内原子加入（幂等 `ensureMember` + 逐个能力门控 + `maxMembers`） |
-| 运行时招募 | 协调者调 `group_invite` MCP tool（结构化），退役 `@mention` 文本招募 |
+| 运行时招募 | 主持人调 `group_invite` MCP tool（结构化），退役 `@mention` 文本招募 |
 
 ## 2. 交互模型 / UI-UX（mockup 已锁定）
 
@@ -53,9 +53,9 @@
 
 ### 2.2 新建群聊弹窗（mockup ②）
 
-复用 `newIssueDialog` 的 shadcn `Dialog` 结构。字段：群标题（必填，`Input`）→ 协调者（必填，单选 agent，候选 `supportsGroup && chattable`，hint「仅支持 group_send 的 Agent(claudecode)可作为协调者」）→ 项目（可选 `Select`，打开时预选 `projectContext`）→ 初始成员（可选·多选 `AgentMultiPicker`，avatar chip + 添加，hint「协调者可在群里随时邀请更多成员加入（group_invite）」）→ footer（`⌘+Enter 创建` · 取消 · 创建群聊）。
+复用 `newIssueDialog` 的 shadcn `Dialog` 结构。字段：群标题（必填，`Input`）→ 主持人（必填，单选 agent，候选 `supportsGroup && chattable`，hint「仅支持 group_send 的 Agent(claudecode)可作为主持人」）→ 项目（可选 `Select`，打开时预选 `projectContext`）→ 初始成员（可选·多选 `AgentMultiPicker`，avatar chip + 添加，hint「主持人可在群里随时邀请更多成员加入（group_invite）」）→ footer（`⌘+Enter 创建` · 取消 · 创建群聊）。
 
-提交：校验（标题非空 + 协调者已选）→ `GroupCreate({title, coordinatorAgentID, projectID, memberAgentIDs})` → `useGroupListStore.reload()` → `openGroup(id,title)` 聚焦新 tab → 关闭。空候选态（无任何 `supportsGroup` agent）→ 弹窗空状态文案。`AgentMultiPicker` 设计为可复用，roster 的人工「邀请成员」后续可复用（本任务不接）。
+提交：校验（标题非空 + 主持人已选）→ `GroupCreate({title, hostAgentID, projectID, memberAgentIDs})` → `useGroupListStore.reload()` → `openGroup(id,title)` 聚焦新 tab → 关闭。空候选态（无任何 `supportsGroup` agent）→ 弹窗空状态文案。`AgentMultiPicker` 设计为可复用，roster 的人工「邀请成员」后续可复用（本任务不接）。
 
 ## 3. 架构与分层改动（seam 清单，按阶段）
 
@@ -82,9 +82,9 @@ frontend/.../group-chat/*  + agent-list.tsx    统一行样式 + 筛选下拉 + 
 
 —— 阶段 C：group_invite tool ——
 internal/service/group_svc/mcp.go              group_invite tool schema + ServeHTTP 分支 + invite 回调
-internal/service/group_svc/group.go            HandleInvite(协调者门控 + 池校验 + AddGroupMember)；buildGroupSystemPrompt 增说明 + 可招募 roster
+internal/service/group_svc/group.go            HandleInvite(主持人门控 + 池校验 + AddGroupMember)；buildGroupSystemPrompt 增说明 + 可招募 roster
 internal/service/group_svc/ingest.go           移除 maybeRecruit / recruitableAgentByName
-internal/pkg/agentruntime/runtimes/claudecode/session.go  仅协调者 turn 追加 mcp__<Name>__group_invite
+internal/pkg/agentruntime/runtimes/claudecode/session.go  仅主持人 turn 追加 mcp__<Name>__group_invite
 internal/model/code/*.go + i18n                + GroupInviteForbidden 等
 ```
 
@@ -106,12 +106,12 @@ item.SupportsGroup = be != nil &&
 
 ### 4.2 建群带成员 + department 派生（A）
 
-`CreateGroupRequest` 增 `MemberAgentIDs []int64`。`CreateGroup`：①`DepartmentID==0` → 取协调者 agent 部门；②`g.Check` + 协调者 `backendSupportsGroup`；③`Create` + `ensureMember(coordinator, RoleCoordinator)`；④遍历 `MemberAgentIDs`（去协调者自身）逐个 `backendSupportsGroup` + `maxMembers` → `ensureMember(RoleMember)`（幂等）。任一不支持 → `GroupBackendUnsupported`（前端已过滤，防御性）。`internal/app/group.go` 透传字段。
+`CreateGroupRequest` 增 `MemberAgentIDs []int64`。`CreateGroup`：①`DepartmentID==0` → 取主持人 agent 部门；②`g.Check` + 主持人 `backendSupportsGroup`；③`Create` + `ensureMember(host, RoleHost)`；④遍历 `MemberAgentIDs`（去主持人自身）逐个 `backendSupportsGroup` + `maxMembers` → `ensureMember(RoleMember)`（幂等）。任一不支持 → `GroupBackendUnsupported`（前端已过滤，防御性）。`internal/app/group.go` 透传字段。
 
 ### 4.3 New Group 弹窗 + `+` 菜单（A）
 
-- `group-new-dialog.tsx`：受控 `Dialog`，form state（title/coordinatorAgentID/projectID/memberAgentIDs），提交走 4.2，镜像 `project-new-dialog.tsx` 的 submit/loading/error。项目默认读 `new-chat-context-store.projectContext` 预选。
-- `agent-multi-picker.tsx`：`{agents, value, onChange, exclude?}`，avatar chip + 候选列表（`@/components/ui` popover + checkbox 或 cmdk），过滤 `supportsGroup && chattable`，排除已选协调者。
+- `group-new-dialog.tsx`：受控 `Dialog`，form state（title/hostAgentID/projectID/memberAgentIDs），提交走 4.2，镜像 `project-new-dialog.tsx` 的 submit/loading/error。项目默认读 `new-chat-context-store.projectContext` 预选。
+- `agent-multi-picker.tsx`：`{agents, value, onChange, exclude?}`，avatar chip + 候选列表（`@/components/ui` popover + checkbox 或 cmdk），过滤 `supportsGroup && chattable`，排除已选主持人。
 - 头部 `+` 菜单（`@/components/ui` dropdown-menu）：`新建 Agent 会话`（复用既有新会话入口 / 打开命令面板 new-chat）+ `新建群聊`（开弹窗）。阶段 A 先挂在**现有头部**（创建即刻可用）；阶段 B 由重构后的搜索行承载同一菜单。
 
 ### 4.4 侧栏混排 IA + 多维筛选 + 用户置顶（B）
@@ -132,26 +132,26 @@ item.SupportsGroup = be != nil &&
 
 复用 `group_send` 的 MCP-over-HTTP 管线（`mcp.go:groupMCP`，per-member bearer token；`buildGroupMCP` 注入 `RunRequest.MCPServers`）。
 
-- **schema**（`mcp.go` 增 `groupInviteToolSchema()`）：`name=group_invite`，input `{agentNames?:string[], agentIds?:integer[], reason?:string}`（`anyOf` 二选一）。描述：把部门内 Agent 拉进群，只有协调者可调用。
+- **schema**（`mcp.go` 增 `groupInviteToolSchema()`）：`name=group_invite`，input `{agentNames?:string[], agentIds?:integer[], reason?:string}`（`anyOf` 二选一）。描述：把部门内 Agent 拉进群，只有主持人可调用。
 - **ServeHTTP** 增分支：`lookup(bearer)` → `(group, member)` → `invite` 回调（与 `ingest` 并列方法值）。
-- **`HandleInvite(ctx, callerMemberID, names, ids, reason)`**：①协调者门控（非 `IsCoordinator()` → `GroupInviteForbidden`）；②在**可招募池**（`g.DepartmentID` 下 `IsActive()` agent）内按 id/名解析；③逐个 `backendSupportsGroup` + `maxMembers` → `ensureMember(RoleMember)` → 落 `sender_kind=system` 的「X 加入了群聊」消息（复用 `persistMessage` + 群事件流，前端已渲染 system 行）；④返回加入结果（id+name）。
-- **allowedTools**：`claudecode/session.go` 处 `group_send` 对所有成员追加；`mcp__<Name>__group_invite` **仅协调者成员 turn** 追加（随 `MCPServerSpec`/role 条件下传）；handler 协调者门控为第二道防线。
-- **系统提示**（`buildGroupSystemPrompt`）：协调者 suffix 增 `group_invite` 用法 + **可招募 roster**（部门内未进群、支持 `CapMCPTools` 的 agent 的 `名字·角色·id`）。
+- **`HandleInvite(ctx, callerMemberID, names, ids, reason)`**：①主持人门控（非 `IsHost()` → `GroupInviteForbidden`）；②在**可招募池**（`g.DepartmentID` 下 `IsActive()` agent）内按 id/名解析；③逐个 `backendSupportsGroup` + `maxMembers` → `ensureMember(RoleMember)` → 落 `sender_kind=system` 的「X 加入了群聊」消息（复用 `persistMessage` + 群事件流，前端已渲染 system 行）；④返回加入结果（id+name）。
+- **allowedTools**：`claudecode/session.go` 处 `group_send` 对所有成员追加；`mcp__<Name>__group_invite` **仅主持人成员 turn** 追加（随 `MCPServerSpec`/role 条件下传）；handler 主持人门控为第二道防线。
+- **系统提示**（`buildGroupSystemPrompt`）：主持人 suffix 增 `group_invite` 用法 + **可招募 roster**（部门内未进群、支持 `CapMCPTools` 的 agent 的 `名字·角色·id`）。
 - **退役 @mention 招募**：删 `ingest.go:maybeRecruit`/`recruitableAgentByName`；`resolveMentionNames` 对未进群名字仅记日志；`applyFallback`/`lastSenderMemberID` 保留。
 
 ## 5. 错误处理 / i18n / 能力门控
 
-- 错误码：复用 `GroupTitleRequired`/`GroupCoordinatorRequired`/`GroupBackendUnsupported`/`GroupMemberLimit`；新增 `GroupInviteForbidden`。经 `i18n.NewError(ctx, code)`，前端 toast/inline。
+- 错误码：复用 `GroupTitleRequired`/`GroupHostRequired`/`GroupBackendUnsupported`/`GroupMemberLimit`；新增 `GroupInviteForbidden`。经 `i18n.NewError(ctx, code)`，前端 toast/inline。
 - i18n：`group.new.*`（弹窗）+ `sidebar.add.*`（`+` 菜单）+ `sidebar.filter.*`（筛选项）+ `sidebar.pin.*`，zh-CN/en 双份；`i18n.test.ts` 校验。动态内容（agent/项目/群名、「X 加入了群聊」）不进 `t()`。
 - 日志：`logger.Ctx(ctx)`，`group_svc.CreateGroup`/`HandleInvite` 前缀 + `zap` 字段。
 
 ## 6. 测试计划（严格 TDD：Red → Green → Refactor）
 
-**A**：`chat_svc`（mockgen）`SupportsGroup` 派生（claudecode=true，其它/无后端=false）；`group_svc` `CreateGroup` 带 `MemberAgentIDs`（协调者+成员落库 / 不支持成员报错 / `DepartmentID==0` 派生 / 超 `maxMembers`）；前端 Vitest 弹窗（校验、提交→create→openGroup、空候选态、项目预填）、`AgentMultiPicker`、`+` 菜单。
+**A**：`chat_svc`（mockgen）`SupportsGroup` 派生（claudecode=true，其它/无后端=false）；`group_svc` `CreateGroup` 带 `MemberAgentIDs`（主持人+成员落库 / 不支持成员报错 / `DepartmentID==0` 派生 / 超 `maxMembers`）；前端 Vitest 弹窗（校验、提交→create→openGroup、空候选态、项目预填）、`AgentMultiPicker`、`+` 菜单。
 
 **B**：迁移 `*_test.go`（pinned 列）；`chat_svc`/`group_svc` 暴露 `Pinned` + 活跃度/attention；`SetPinned` 绑定（svc + repo sqlmock）；前端 Vitest 混排排序（活跃度 + pinned 浮顶）、筛选（类型/状态过滤）、置顶切换。
 
-**C**：`group_svc` `HandleInvite`（协调者成功 / 非协调者 `GroupInviteForbidden` / 池外跳过 / 超员）；`mcp.go` `group_invite` 路由 + 非法 bearer 拒；`session.go` 协调者 turn allowedTools 含 invite、非协调者不含；招募退役回归（`@` 未进群名不再自动入群）。
+**C**：`group_svc` `HandleInvite`（主持人成功 / 非主持人 `GroupInviteForbidden` / 池外跳过 / 超员）；`mcp.go` `group_invite` 路由 + 非法 bearer 拒；`session.go` 主持人 turn allowedTools 含 invite、非主持人不含；招募退役回归（`@` 未进群名不再自动入群）。
 
 后端 `make test-backend`（race）+ golangci-lint v2 0 issues；前端 `tsc --noEmit` + Vitest + eslint（含 `i18next/no-literal-string`）；新绑定字段需 `make generate`。
 

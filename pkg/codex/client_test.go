@@ -369,26 +369,14 @@ func TestSessionSetGoal_StartsThreadBeforeFirstTurn(t *testing.T) {
 	runner := &fakeAppServerRunner{t: t}
 	runner.handler = func(t *testing.T, h *fakeAppServerHandle) {
 		sc := bufio.NewScanner(h.stdinR)
-		respondRPC(h, readRPCReq(t, sc), map[string]any{})
-		_ = readRPCReq(t, sc) // initialized
+		respondAppServerInit(t, h, sc)
 
-		startReq := readRPCReq(t, sc)
-		assert.Equal(t, "thread/start", startReq.Method)
-		assert.JSONEq(t, `{"cwd":"/tmp/work","approvalPolicy":"never"}`, string(startReq.Params))
-		respondRPC(h, startReq, map[string]any{"thread": map[string]any{"id": "thread-new-goal", "cwd": "/tmp/work"}})
+		respondThreadStart(t, h, sc, `{"cwd":"/tmp/work","approvalPolicy":"never"}`, "thread-new-goal")
 
 		goalReq := readRPCReq(t, sc)
 		assert.Equal(t, "thread/goal/set", goalReq.Method)
 		assert.JSONEq(t, `{"threadId":"thread-new-goal","objective":"ship before turn","status":"active"}`, string(goalReq.Params))
-		respondRPC(h, goalReq, map[string]any{"goal": map[string]any{
-			"threadId":        "thread-new-goal",
-			"objective":       "ship before turn",
-			"status":          "active",
-			"tokensUsed":      0,
-			"timeUsedSeconds": 0,
-			"createdAt":       11,
-			"updatedAt":       12,
-		}})
+		respondRPC(h, goalReq, map[string]any{"goal": goalWire("thread-new-goal", "ship before turn", 0, 0)})
 	}
 
 	client := New(
@@ -413,6 +401,69 @@ func TestSessionSetGoal_StartsThreadBeforeFirstTurn(t *testing.T) {
 	assert.Equal(t, "thread-new-goal", sess.ID())
 	assert.Equal(t, "thread-new-goal", goal.ThreadID)
 	assert.Equal(t, "ship before turn", goal.Objective)
+}
+
+func TestSessionGetGoal_ResumesThreadAndSendsGoalGetRPC(t *testing.T) {
+	runner := &fakeAppServerRunner{t: t}
+	runner.handler = func(t *testing.T, h *fakeAppServerHandle) {
+		sc := bufio.NewScanner(h.stdinR)
+		respondAppServerInit(t, h, sc)
+
+		respondThreadResume(t, h, sc, `{"threadId":"thread-existing-goal","excludeTurns":true,"cwd":"/tmp/work","approvalPolicy":"never"}`, "thread-existing-goal")
+
+		goalReq := readRPCReq(t, sc)
+		assert.Equal(t, "thread/goal/get", goalReq.Method)
+		assert.JSONEq(t, `{"threadId":"thread-existing-goal"}`, string(goalReq.Params))
+		respondRPC(h, goalReq, map[string]any{"goal": goalWire("thread-existing-goal", "read existing goal", 7, 9)})
+	}
+
+	client := New(
+		WithCwd("/tmp/work"),
+		WithApproval(ApprovalNever),
+		WithAppServerRunnerForTesting(runner),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	sess, err := client.OpenSession(ctx, Resume("thread-existing-goal"))
+	require.NoError(t, err)
+	defer func() { _ = sess.Close(context.Background()) }()
+
+	goal, err := sess.GetGoal(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, goal)
+	assert.Equal(t, "thread-existing-goal", goal.ThreadID)
+	assert.Equal(t, "read existing goal", goal.Objective)
+	assert.Equal(t, 7, goal.TokensUsed)
+}
+
+func TestSessionClearGoal_ResumesThreadAndSendsGoalClearRPC(t *testing.T) {
+	runner := &fakeAppServerRunner{t: t}
+	runner.handler = func(t *testing.T, h *fakeAppServerHandle) {
+		sc := bufio.NewScanner(h.stdinR)
+		respondAppServerInit(t, h, sc)
+
+		respondThreadResume(t, h, sc, `{"threadId":"thread-clear-goal","excludeTurns":true,"cwd":"/tmp/work","approvalPolicy":"never"}`, "thread-clear-goal")
+
+		goalReq := readRPCReq(t, sc)
+		assert.Equal(t, "thread/goal/clear", goalReq.Method)
+		assert.JSONEq(t, `{"threadId":"thread-clear-goal"}`, string(goalReq.Params))
+		respondRPC(h, goalReq, map[string]any{"cleared": true})
+	}
+
+	client := New(
+		WithCwd("/tmp/work"),
+		WithApproval(ApprovalNever),
+		WithAppServerRunnerForTesting(runner),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	sess, err := client.OpenSession(ctx, Resume("thread-clear-goal"))
+	require.NoError(t, err)
+	defer func() { _ = sess.Close(context.Background()) }()
+
+	cleared, err := sess.ClearGoal(ctx)
+	require.NoError(t, err)
+	assert.True(t, cleared)
 }
 
 func TestClientGoal_RequiresThreadID(t *testing.T) {
@@ -1018,6 +1069,40 @@ func readRPCReq(t *testing.T, sc *bufio.Scanner) rpcReq {
 	var req rpcReq
 	require.NoError(t, json.Unmarshal(sc.Bytes(), &req))
 	return req
+}
+
+func respondAppServerInit(t *testing.T, h *fakeAppServerHandle, sc *bufio.Scanner) {
+	t.Helper()
+	respondRPC(h, readRPCReq(t, sc), map[string]any{})
+	_ = readRPCReq(t, sc) // initialized notification
+}
+
+func respondThreadStart(t *testing.T, h *fakeAppServerHandle, sc *bufio.Scanner, wantParams, threadID string) {
+	t.Helper()
+	req := readRPCReq(t, sc)
+	assert.Equal(t, "thread/start", req.Method)
+	assert.JSONEq(t, wantParams, string(req.Params))
+	respondRPC(h, req, map[string]any{"thread": map[string]any{"id": threadID, "cwd": "/tmp/work"}})
+}
+
+func respondThreadResume(t *testing.T, h *fakeAppServerHandle, sc *bufio.Scanner, wantParams, threadID string) {
+	t.Helper()
+	req := readRPCReq(t, sc)
+	assert.Equal(t, "thread/resume", req.Method)
+	assert.JSONEq(t, wantParams, string(req.Params))
+	respondRPC(h, req, map[string]any{"thread": map[string]any{"id": threadID, "cwd": "/tmp/work"}})
+}
+
+func goalWire(threadID, objective string, tokensUsed, timeUsedSeconds int) map[string]any {
+	return map[string]any{
+		"threadId":        threadID,
+		"objective":       objective,
+		"status":          "active",
+		"tokensUsed":      tokensUsed,
+		"timeUsedSeconds": timeUsedSeconds,
+		"createdAt":       11,
+		"updatedAt":       12,
+	}
 }
 
 func respondRPC(h *fakeAppServerHandle, req rpcReq, result any) {

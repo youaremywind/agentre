@@ -30,11 +30,11 @@ func TestListAgents_PinnedDerivation(t *testing.T) {
 	m.provider.EXPECT().BatchFindByKey(ctx, []string{}).Return(map[string]*llm_provider_entity.LLMProvider{}, nil)
 	ids := []int64{1, 2, 3}
 	m.session.EXPECT().CountRunningByAgents(ctx, ids).Return(map[int64]int{}, nil)
-	m.session.EXPECT().CountByAgents(ctx, ids).Return(map[int64]int64{}, nil)
-	m.session.EXPECT().ListIDsByAgents(ctx, ids).Return(map[int64][]int64{}, nil)
+	m.session.EXPECT().CountByAgentsIncludingGroups(ctx, ids).Return(map[int64]int64{}, nil)
+	m.session.EXPECT().ListIDsByAgentsIncludingGroups(ctx, ids).Return(map[int64][]int64{}, nil)
 	for _, id := range ids {
-		m.session.EXPECT().ListByAgent(ctx, id, 5).Return(nil, nil)
-		m.session.EXPECT().ListAttentionByAgent(ctx, id, 20).Return(nil, nil)
+		m.session.EXPECT().ListByAgentIncludingGroups(ctx, id, 5).Return(nil, nil)
+		m.session.EXPECT().ListAttentionByAgentIncludingGroups(ctx, id, 20).Return(nil, nil)
 	}
 
 	resp, err := m.svc.ListAgents(ctx, &chat_svc.ListAgentsRequest{})

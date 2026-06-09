@@ -737,27 +737,9 @@ func (s *Session) Close(ctx context.Context) error {
 // subagent 过滤:沿用 assistant 帧的语义,parent_tool_use_id != "" 的 stream_event
 // 来自 Task/Agent 子会话,其 message_delta usage 不能影响主 agent 的进度条。
 func (s *Session) parseStreamEvent(f rawFrame) []Event {
-	if f.ParentToolUseID != "" || len(f.Event) == 0 {
-		return nil
-	}
-	var ev rawStreamEvent
-	if err := json.Unmarshal(f.Event, &ev); err != nil {
-		return nil
-	}
-	if ev.Type != "message_delta" || ev.Usage == nil || isZeroUsage(ev.Usage) {
-		return nil
-	}
-	s.lastAssistantUsage = ev.Usage
-	return []Event{{
-		Kind:      EventUsage,
-		SessionID: s.sessionID,
-		Usage: provider.Usage{
-			PromptTokens:        ev.Usage.InputTokens,
-			CompletionTokens:    ev.Usage.OutputTokens,
-			CachedTokens:        ev.Usage.CacheReadInputTokens,
-			CacheCreationTokens: ev.Usage.CacheCreationInputTokens,
-		},
-	}}
+	return parseStreamEventUsage(f, s.sessionID, func(u *rawUsage) {
+		s.lastAssistantUsage = u
+	})
 }
 
 // isZeroUsage 判定一份 rawUsage 是否四项全 0。用于 zero-clobber guard:

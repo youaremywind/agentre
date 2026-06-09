@@ -24,6 +24,20 @@ func newTestDispatcherEmitter() (*dispatcherEmitter, *captureEmitter) {
 	return &dispatcherEmitter{svc: svc}, em
 }
 
+func emitToolPermissionBlock(requestID string, toolName string, toolInput map[string]any) ChatStreamEvent {
+	de, em := newTestDispatcherEmitter()
+	de.Emit(context.Background(), "s", map[string]any{
+		"kind": "tool_permission_request",
+		"toolPermission": &blocks.ToolPermissionBlock{
+			RequestID: requestID,
+			ToolName:  toolName,
+			ToolInput: toolInput,
+		},
+	})
+	So(em.events, ShouldHaveLength, 1)
+	return em.events[0]
+}
+
 func TestDispatcherEmitter_Chunk(t *testing.T) {
 	Convey("kind=chunk → ChatStreamEvent{Kind:chunk, Delta}", t, func() {
 		de, em := newTestDispatcherEmitter()
@@ -211,17 +225,7 @@ func TestDispatcherEmitter_PlanUpdate_AttachesCanonicalPlanUpdate(t *testing.T) 
 
 func TestDispatcherEmitter_ToolPermission_ExitPlanMode_AttachesPlanApprove(t *testing.T) {
 	Convey("tool_permission_request 的 ExitPlanMode 工具填 ev.Canonical=PlanApproveRequest", t, func() {
-		de, em := newTestDispatcherEmitter()
-		de.Emit(context.Background(), "s", map[string]any{
-			"kind": "tool_permission_request",
-			"toolPermission": &blocks.ToolPermissionBlock{
-				RequestID: "p-1",
-				ToolName:  "ExitPlanMode",
-				ToolInput: map[string]any{"plan": "## Plan\n- a\n- b\n"},
-			},
-		})
-		So(em.events, ShouldHaveLength, 1)
-		ev := em.events[0]
+		ev := emitToolPermissionBlock("p-1", "ExitPlanMode", map[string]any{"plan": "## Plan\n- a\n- b\n"})
 		So(ev.Canonical, ShouldNotBeNil)
 		So(string(ev.Canonical.Kind), ShouldEqual, "plan.approve_request")
 		So(ev.Canonical.PlanApprove, ShouldNotBeNil)
@@ -230,17 +234,7 @@ func TestDispatcherEmitter_ToolPermission_ExitPlanMode_AttachesPlanApprove(t *te
 	})
 
 	Convey("tool_permission_request 非 ExitPlanMode 工具填 ev.Canonical=ToolPermission", t, func() {
-		de, em := newTestDispatcherEmitter()
-		de.Emit(context.Background(), "s", map[string]any{
-			"kind": "tool_permission_request",
-			"toolPermission": &blocks.ToolPermissionBlock{
-				RequestID: "p-2",
-				ToolName:  "Bash",
-				ToolInput: map[string]any{"command": "rm -rf /"},
-			},
-		})
-		So(em.events, ShouldHaveLength, 1)
-		ev := em.events[0]
+		ev := emitToolPermissionBlock("p-2", "Bash", map[string]any{"command": "rm -rf /"})
 		So(ev.Canonical, ShouldNotBeNil)
 		So(string(ev.Canonical.Kind), ShouldEqual, "tool.permission")
 		So(ev.Canonical.ToolPermission, ShouldNotBeNil)

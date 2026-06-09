@@ -4,6 +4,7 @@ import { Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { ChatPanel } from "../chat-panel";
+import { pruneChatPanelScrollState } from "../chat-panel-scroll-state";
 import { GroupChat } from "../group-chat";
 import { TerminalPanel } from "../terminal/terminal-panel";
 import { reloadSidebarSources } from "@/stores/sidebar-reload";
@@ -58,6 +59,9 @@ export function ChatPanelHost() {
     () => tabsByPanelOrder(tabs, panelOrder),
     [panelOrder, tabs],
   );
+  React.useEffect(() => {
+    pruneChatPanelScrollState(new Set(tabs.map((tab) => tab.id)));
+  }, [tabs]);
 
   if (tabs.length === 0) {
     return (
@@ -115,7 +119,10 @@ const HostedPanel = React.memo(function HostedPanel({
   tab: ChatTab;
   active: boolean;
 }) {
-  const sid = tab.meta.kind === "session" ? tab.meta.sessionId : 0;
+  const sid =
+    tab.meta.kind === "session" || tab.meta.kind === "groupSession"
+      ? tab.meta.sessionId
+      : 0;
   const isNewTab = tab.meta.kind === "new";
   const newAgentId = tab.meta.kind === "new" ? tab.meta.agentId : 0;
   const newProjectId = tab.meta.kind === "new" ? tab.meta.projectId : 0;
@@ -202,6 +209,7 @@ const HostedPanel = React.memo(function HostedPanel({
       ) : (
         <ChatPanel
           active={active}
+          scrollStateKey={tab.id}
           sessionId={sid}
           newSessionAgent={isNewTab ? agent : null}
           newSessionContext={newSessionContext}

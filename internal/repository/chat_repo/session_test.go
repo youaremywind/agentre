@@ -1,6 +1,7 @@
 package chat_repo_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -12,6 +13,20 @@ import (
 	"agentre/internal/model/entity/chat_entity"
 	"agentre/internal/repository/chat_repo"
 )
+
+func assertResetActiveSessions(t *testing.T, ctx context.Context, mock sqlmock.Sqlmock, affectedRows int64) {
+	t.Helper()
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `chat_sessions` SET `agent_status`=\\?,`updatetime`=\\? WHERE agent_status IN \\(\\?,\\?\\) AND status = \\?").
+		WithArgs("error", sqlmock.AnyArg(), "running", "waiting", consts.ACTIVE).
+		WillReturnResult(sqlmock.NewResult(0, affectedRows))
+	mock.ExpectCommit()
+
+	n, err := chat_repo.NewSession().ResetActiveSessions(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, affectedRows, n)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestSessionRepo_Find(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
@@ -48,8 +63,10 @@ func TestSessionRepo_CountRunningByAgents(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
 	// 只计入 agent_status='running' 且未软删除的会话 —— 历史 idle 会话不应让前端亮"运行中"呼吸灯。
-	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE .agent_id IN \\(\\?,\\?\\) AND agent_status = \\? AND status = \\?. AND group_id = \\? GROUP BY `agent_id`").
-		WithArgs(int64(1), int64(2), "running", consts.ACTIVE, int64(0)).
+	// 群成员 backing session(group_id>0)的运行轮也计入(SQL 不过滤 group_id),与含群的
+	// attention bubble 一致 —— 否则 agent 仅在跑群轮时呼吸灯不亮。
+	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE agent_id IN \\(\\?,\\?\\) AND agent_status = \\? AND status = \\? GROUP BY `agent_id`").
+		WithArgs(int64(1), int64(2), "running", consts.ACTIVE).
 		WillReturnRows(sqlmock.NewRows([]string{"agent_id", "n"}).
 			AddRow(1, 2))
 
@@ -167,6 +184,25 @@ func TestSessionRepo_ListIDsByAgents(t *testing.T) {
 	})
 }
 
+func TestSessionRepo_ListIDsByAgentsIncludingGroups(t *testing.T) {
+	t.Run("Given group backing sessions exist, When listing ids for sidebar, Then SQL does not filter group_id=0", func(t *testing.T) {
+		ctx, _, mock := testutils.Database(t)
+
+		mock.ExpectQuery("SELECT agent_id, id FROM `chat_sessions` WHERE agent_id IN \\(\\?,\\?\\) AND status = \\? ORDER BY agent_id ASC, last_message_at DESC, id DESC").
+			WithArgs(int64(7), int64(8), consts.ACTIVE).
+			WillReturnRows(sqlmock.NewRows([]string{"agent_id", "id"}).
+				AddRow(7, 12).
+				AddRow(7, 11).
+				AddRow(8, 21))
+
+		got, err := chat_repo.NewSession().ListIDsByAgentsIncludingGroups(ctx, []int64{7, 8})
+		assert.NoError(t, err)
+		assert.Equal(t, []int64{12, 11}, got[7])
+		assert.Equal(t, []int64{21}, got[8])
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestSessionRepo_CountByAgents(t *testing.T) {
 	t.Run("批量返回每个 agent 的会话数；缺席 agent 在 map 里读出 0", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
@@ -193,6 +229,22 @@ func TestSessionRepo_CountByAgents(t *testing.T) {
 	})
 }
 
+func TestSessionRepo_CountByAgentsIncludingGroups(t *testing.T) {
+	ctx, _, mock := testutils.Database(t)
+
+	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE agent_id IN \\(\\?,\\?\\) AND status = \\? GROUP BY `agent_id`").
+		WithArgs(int64(1), int64(2), consts.ACTIVE).
+		WillReturnRows(sqlmock.NewRows([]string{"agent_id", "n"}).
+			AddRow(1, 2).
+			AddRow(2, 1))
+
+	got, err := chat_repo.NewSession().CountByAgentsIncludingGroups(ctx, []int64{1, 2})
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), got[1])
+	assert.Equal(t, int64(1), got[2])
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestSessionRepo_CountByAgent(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
@@ -203,6 +255,19 @@ func TestSessionRepo_CountByAgent(t *testing.T) {
 	got, err := chat_repo.NewSession().CountByAgent(ctx, 7)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(42), got)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSessionRepo_CountByAgentIncludingGroups(t *testing.T) {
+	ctx, _, mock := testutils.Database(t)
+
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions` WHERE agent_id = \\? AND status = \\?").
+		WithArgs(int64(7), consts.ACTIVE).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(43))
+
+	got, err := chat_repo.NewSession().CountByAgentIncludingGroups(ctx, 7)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(43), got)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -316,31 +381,13 @@ func TestSessionRepo_ResetActiveSessions(t *testing.T) {
 	t.Run("有残留时把 running / waiting 翻成 error 并返回受影响行数", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectBegin()
-		mock.ExpectExec("UPDATE `chat_sessions` SET `agent_status`=\\?,`updatetime`=\\? WHERE agent_status IN \\(\\?,\\?\\) AND status = \\?").
-			WithArgs("error", sqlmock.AnyArg(), "running", "waiting", consts.ACTIVE).
-			WillReturnResult(sqlmock.NewResult(0, 3))
-		mock.ExpectCommit()
-
-		n, err := chat_repo.NewSession().ResetActiveSessions(ctx)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(3), n)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertResetActiveSessions(t, ctx, mock, 3)
 	})
 
 	t.Run("没残留时也走 SQL,返回 0 行不报错", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectBegin()
-		mock.ExpectExec("UPDATE `chat_sessions` SET `agent_status`=\\?,`updatetime`=\\? WHERE agent_status IN \\(\\?,\\?\\) AND status = \\?").
-			WithArgs("error", sqlmock.AnyArg(), "running", "waiting", consts.ACTIVE).
-			WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectCommit()
-
-		n, err := chat_repo.NewSession().ResetActiveSessions(ctx)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(0), n)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertResetActiveSessions(t, ctx, mock, 0)
 	})
 }
 
@@ -358,6 +405,22 @@ func TestSessionRepo_ListByAgent_FiltersGroupSessions(t *testing.T) {
 
 	_, err := chat_repo.NewSession().ListByAgent(ctx, 7, 5)
 	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSessionRepo_ListByAgentIncludingGroups(t *testing.T) {
+	ctx, _, mock := testutils.Database(t)
+
+	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE agent_id = \\? AND status = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+		WithArgs(int64(7), consts.ACTIVE, 5).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "group_id", "title"}).
+			AddRow(12, 7, 5, "支付小队 / 后端"))
+
+	got, err := chat_repo.NewSession().ListByAgentIncludingGroups(ctx, 7, 5)
+	assert.NoError(t, err)
+	if assert.Len(t, got, 1) {
+		assert.Equal(t, int64(5), got[0].GroupID)
+	}
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -433,15 +496,18 @@ func TestSessionRepo_CountByAgents_FiltersGroupSessions(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestSessionRepo_CountRunningByAgents_FiltersGroupSessions(t *testing.T) {
+// 群成员 backing session 的运行轮要计入呼吸灯: SQL 不得出现 group_id 过滤,
+// 这样某 agent 仅在跑群轮(group_id>0)时呼吸灯也能亮,与含群 attention bubble 一致。
+func TestSessionRepo_CountRunningByAgents_IncludesGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE .agent_id IN .\\?,\\?. AND agent_status = \\? AND status = \\?. AND group_id = \\? GROUP BY `agent_id`").
-		WithArgs(int64(1), int64(2), "running", consts.ACTIVE, int64(0)).
+	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE agent_id IN .\\?,\\?. AND agent_status = \\? AND status = \\? GROUP BY `agent_id`").
+		WithArgs(int64(1), int64(2), "running", consts.ACTIVE).
 		WillReturnRows(sqlmock.NewRows([]string{"agent_id", "n"}).AddRow(1, 2))
 
-	_, err := chat_repo.NewSession().CountRunningByAgents(ctx, []int64{1, 2})
+	got, err := chat_repo.NewSession().CountRunningByAgents(ctx, []int64{1, 2})
 	assert.NoError(t, err)
+	assert.Equal(t, 2, got[1], "含群轮的运行会话应计入呼吸灯")
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
