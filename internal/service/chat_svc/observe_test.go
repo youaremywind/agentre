@@ -9,9 +9,9 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/repository/chat_repo"
-	"agentre/internal/repository/chat_repo/mock_chat_repo"
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/repository/chat_repo"
+	"github.com/agentre-ai/agentre/internal/repository/chat_repo/mock_chat_repo"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 )
 
 func TestObserveTurn_ReceivesTerminalOnce(t *testing.T) {

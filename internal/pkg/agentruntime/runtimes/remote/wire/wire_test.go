@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/jsonrpc"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/jsonrpc"
 )
 
 func TestToFromJSONRPCError_RoundTrip(t *testing.T) {

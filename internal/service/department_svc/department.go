@@ -11,13 +11,13 @@ import (
 	"github.com/cago-frame/cago/pkg/i18n"
 	"gorm.io/gorm"
 
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/department_entity"
-	"agentre/internal/pkg/code"
-	"agentre/internal/repository/agent_backend_repo"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/department_repo"
-	"agentre/internal/repository/llm_provider_repo"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/department_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/department_repo"
+	"github.com/agentre-ai/agentre/internal/repository/llm_provider_repo"
 )
 
 const (

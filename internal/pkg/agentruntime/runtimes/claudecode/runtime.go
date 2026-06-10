@@ -13,11 +13,11 @@ import (
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/pkg/httpgateway"
-	"agentre/pkg/claudecode"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/pkg/httpgateway"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
 )
 
 // defaultRuntime 是包级单例,init() 时登记到 agentruntime.RuntimeFor 注册表。
@@ -230,6 +230,11 @@ func (r *Runtime) Abort(ctx context.Context, sessionID int64) error {
 }
 
 // SetPermissionMode 实现 PermissionModeSetter。语义同顶层 SetPermissionMode。
+//
+// CLI 切换成功后必须同步 active.permissionMode 快照:CLI 的空闲 status 回显帧被
+// demux reader 丢弃(pkg/claudecode session.go isNonTurnFrame),复用进程的下一轮
+// 也不重发 mode —— 不写这里,快照会停留在 spawn 时的值,handleControlRequest 的
+// bypassPermissions 短路就会吞掉本应弹审批的 control_request。
 func (r *Runtime) SetPermissionMode(ctx context.Context, sessionID int64, mode string) error {
 	if sessionID <= 0 {
 		return fmt.Errorf("agentruntime/runtimes/claudecode: invalid sessionID %d", sessionID)
@@ -242,7 +247,11 @@ func (r *Runtime) SetPermissionMode(ctx context.Context, sessionID int64, mode s
 	if a.handle == nil {
 		return agentruntime.ErrNoActiveTurn
 	}
-	return a.handle.SetPermissionMode(ctx, mode)
+	if err := a.handle.SetPermissionMode(ctx, mode); err != nil {
+		return err
+	}
+	a.setPermissionModeSnapshot(mode)
+	return nil
 }
 
 // CloseSession 显式释放某个 chat session 的常驻进程。
@@ -441,7 +450,7 @@ func (r *Runtime) acquireSession(ctx context.Context, req agentruntime.RunReques
 		// 下发。回吐当前缓存的 mode 让 chat_svc 写库幂等(值不变即 noop)。
 		cur.inTurn.Store(true)
 		r.cache.MarkActive(key)
-		return cur, cur.permissionMode, nil
+		return cur, cur.permissionModeSnapshot(), nil
 	}
 
 	isolationUUID := newUUIDv4()
@@ -494,8 +503,9 @@ func (r *Runtime) acquireSession(ctx context.Context, req agentruntime.RunReques
 	// 让前端 pill 看到的 mode 和 CLI 实际行为一致。失败仅记 warn 不阻 spawn ——
 	// launch mode (bypass) 已是最宽松, 用户可以在 pill 上手动重试切换。
 	//
-	// 必须在 cache.Put + drainStream goroutine 启动前调用同步 SetPermissionMode,
-	// 否则与 EventPermissionModeChanged 写 active.permissionMode 的路径有 race。
+	// 必须在 cache.Put + drainStream goroutine 启动前调用同步 SetPermissionMode:
+	// 校准结果直赋 claudeActive.permissionMode 初值(发布前,无需 modeMu),发布后
+	// 的更新一律走 setPermissionModeSnapshot。
 	runtimeMode := resolvedLaunchMode
 	if req.PermissionMode != "" && req.PermissionMode != resolvedLaunchMode {
 		if err := handle.SetPermissionMode(ctx, req.PermissionMode); err != nil {
@@ -543,10 +553,10 @@ func drainStream(stream ccStream, out chan<- agentruntime.Event, result *agentru
 			handleControlRequest(ev.ControlRequest, active, out)
 			continue
 		}
-		// 同步 in-process mode 快照 —— ExitPlanMode 之后 CLI 会切到 default,
+		// 同步 in-process mode 快照 —— ExitPlanMode 批准后 CLI 会自切 mode,
 		// handleControlRequest 里的 bypassPermissions 短路判断要看新值。
 		if ev.Kind == claudecode.EventPermissionModeChanged && ev.PermissionMode != "" && active != nil {
-			active.permissionMode = ev.PermissionMode
+			active.setPermissionModeSnapshot(ev.PermissionMode)
 		}
 		translated, usage, stopErr := translate(ev)
 		for _, t := range translated {

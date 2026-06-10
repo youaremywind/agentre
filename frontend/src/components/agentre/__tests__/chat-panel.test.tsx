@@ -455,6 +455,25 @@ describe("computeTopVisibleAnchor", () => {
     });
   });
 
+  it("Given rows carry data-row-key, Then the anchor includes the row key for row-precise restore", () => {
+    // 行级虚拟化下一条长消息会拆成多行;只记 anchorId 的话,恢复会塌到消息首行,
+    // 偏差可达整条消息的高度。data-row-key 让恢复端精确钉回同一行。
+    const row = {
+      getAttribute: (name: string) =>
+        name === "data-message-id"
+          ? "1"
+          : name === "data-row-key"
+            ? "message:1:tool:tool:toolu-120"
+            : null,
+      getBoundingClientRect: () => ({ top: 60, bottom: 140 }) as DOMRect,
+    } as unknown as HTMLElement;
+    expect(computeTopVisibleAnchor(fakeContainer(100, [row]))).toEqual({
+      anchorId: 1,
+      anchorOffset: 40,
+      anchorRowKey: "message:1:tool:tool:toolu-120",
+    });
+  });
+
   it("Given no message rows, Then it returns null", () => {
     expect(computeTopVisibleAnchor(fakeContainer(100, []))).toBeNull();
   });

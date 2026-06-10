@@ -2,15 +2,16 @@ package group_svc
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/cago-frame/cago/pkg/i18n"
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
 
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/pkg/code"
-	"agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
 )
 
 // ingestMu 返回某 group 的 per-group 锁(sync.Map 懒建), 串行化 IngestAgentMessage 的 seq/round_count 临界区。
@@ -40,7 +41,8 @@ func (s *groupSvc) IngestAgentMessage(ctx context.Context, memberID int64, body 
 		return err
 	}
 	recipientIDs, toUser := s.resolveMentionNames(ctx, g, members, sender, mentions)
-	recipientIDs, toUser = s.applyFallback(ctx, g, sender, recipientIDs, toUser)
+	body = prependMissingMentions(body, mentions)
+	recipientIDs, toUser = s.applyFallback(ctx, g, sender, members, recipientIDs, toUser)
 
 	g.RoundCount++
 	if err := group_repo.Group().Update(ctx, g); err != nil {
@@ -49,9 +51,33 @@ func (s *groupSvc) IngestAgentMessage(ctx context.Context, memberID int64, body 
 	if _, err := s.persistMessage(ctx, g, group_entity.SenderKindAgent, sender.ID, body, recipientIDs, toUser, 0); err != nil {
 		logger.Ctx(ctx).Warn("group_svc.IngestAgentMessage: persist failed", zap.Error(err))
 	}
-	s.enqueueDeliveries(g.ID, recipientIDs, body, s.names(ctx, sender.AgentID))
+	s.enqueueDeliveries(g.ID, recipientIDs, body, s.names(ctx, sender.AgentID), sender.ID)
 	s.kick(ctx, g.ID)
 	return nil
+}
+
+func prependMissingMentions(body string, mentions []string) string {
+	if len(mentions) == 0 || strings.Contains(body, "@") {
+		return body
+	}
+	prefixes := make([]string, 0, len(mentions))
+	seen := map[string]bool{}
+	for _, name := range mentions {
+		name = strings.TrimSpace(strings.TrimPrefix(name, "@"))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		prefixes = append(prefixes, "@"+name)
+	}
+	if len(prefixes) == 0 {
+		return body
+	}
+	body = strings.TrimLeft(body, " \t\r\n")
+	if body == "" {
+		return strings.Join(prefixes, " ")
+	}
+	return strings.Join(prefixes, " ") + " " + body
 }
 
 // resolveMentionNames 把成员显示名解析成 member id(+ 是否 @用户)。剔除自我 mention(防自循环)。
@@ -82,10 +108,26 @@ func (s *groupSvc) resolveMentionNames(ctx context.Context, g *group_entity.Grou
 	return ids, toUser
 }
 
-// applyFallback: 无任何 agent 收件人也不 @用户 → 回上一个发送者; 仍没有 → 回用户(quiesce)。
-func (s *groupSvc) applyFallback(ctx context.Context, g *group_entity.Group, sender *group_entity.GroupMember, ids []int64, toUser bool) ([]int64, bool) {
+// applyFallback: 无任何 agent 收件人也不 @用户 → 回「触发本轮的来源」(用户→toUser;
+// 成员→该成员)。来源不可查(成员不在跑, 防御)或已离群时退回旧链: 最近一个非自己的
+// 发送者; 仍没有 → 回用户(quiesce)。
+//
+// 不能用「全群最近发言成员」当首选: 用户消息 sender_member_id=0 会被跳过, 用户
+// 触发的回复会路由到无关 agent, 把未被 @ 的成员卷进互聊(dev group-3 实锤)。
+func (s *groupSvc) applyFallback(ctx context.Context, g *group_entity.Group, sender *group_entity.GroupMember, members []*group_entity.GroupMember, ids []int64, toUser bool) ([]int64, bool) {
 	if len(ids) > 0 || toUser {
 		return ids, toUser
+	}
+	if src, ok := s.turnSource(g.ID, sender.ID); ok {
+		if src == 0 {
+			return ids, true
+		}
+		for _, m := range members {
+			if m.ID == src && m.IsActive() {
+				return []int64{src}, false
+			}
+		}
+		// 来源成员已离群 → 走旧回退链。
 	}
 	if prev := s.lastSenderMemberID(ctx, g.ID, sender.ID); prev > 0 {
 		return []int64{prev}, false

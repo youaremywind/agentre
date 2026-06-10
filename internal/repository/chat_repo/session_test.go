@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"agentre/internal/model/entity/chat_entity"
-	"agentre/internal/repository/chat_repo"
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
+	"github.com/agentre-ai/agentre/internal/repository/chat_repo"
 )
 
 func assertResetActiveSessions(t *testing.T, ctx context.Context, mock sqlmock.Sqlmock, affectedRows int64) {

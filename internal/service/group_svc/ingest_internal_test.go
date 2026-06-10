@@ -8,12 +8,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/agent_repo/mock_agent_repo"
-	"agentre/internal/repository/group_repo"
-	"agentre/internal/repository/group_repo/mock_group_repo"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo/mock_group_repo"
 )
 
 // 退役 @mention 自动招募回归:主持人 @ 一个未进群的部门同事,resolveMentionNames

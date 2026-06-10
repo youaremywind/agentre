@@ -11,9 +11,11 @@ export type MentionSegment =
 
 // <mention>NAME</mention>：编排器 / 后端可能下发的结构化标记。NAME 原样取出（可含空格），
 // 先归一成 @NAME 再统一扫描；归一后仍需命中 roster 才成为 chip，未命中回退纯文本。
+// 导出给 markdown 渲染路径：react-markdown 默认丢弃 raw HTML 节点，<mention> 标记
+// 必须在喂给 markdown 之前归一成 @NAME，否则整段标记会从渲染结果里消失。
 const MENTION_MARKUP = /<mention>([^<]*)<\/mention>/g;
 
-function normalizeMarkup(text: string): string {
+export function normalizeMentionMarkup(text: string): string {
   return text.replace(MENTION_MARKUP, (_m, name: string) => `@${name}`);
 }
 
@@ -62,7 +64,7 @@ export function tokenizeMentions(
   text: string,
   roster: MentionRosterEntry[],
 ): MentionSegment[] {
-  const normalized = normalizeMarkup(text);
+  const normalized = normalizeMentionMarkup(text);
   const candidates = rosterByLengthDesc(roster);
   const segments: MentionSegment[] = [];
   let pending = ""; // 累积尚未冲刷的纯文本

@@ -10,8 +10,8 @@
 package mock_group_repo
 
 import (
-	group_entity "agentre/internal/model/entity/group_entity"
 	context "context"
+	group_entity "github.com/agentre-ai/agentre/internal/model/entity/group_entity"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"

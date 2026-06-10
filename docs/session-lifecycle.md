@@ -32,6 +32,16 @@ Group chat creates the backing session lazily:
 
 Group backing sessions are ordinary `chat_sessions` rows with `group_id > 0`. They reuse chat history, runtime selection, steering, tool approval, permission mode, and remote execution behavior.
 
+### Sidebar Visibility For Out-Of-Band Sessions
+
+The left sidebar reads from `chat-agents-store`, a snapshot loaded by the `ListChatAgents` RPC. For normal chat it stays fresh because `ChatPanel` calls `onSidebarShouldReload` → `reloadSidebarSources()` on new-session / turn-done / steer.
+
+Sessions created **outside** a `ChatPanel` bypass that path: they will not appear in the sidebar list — and, having no row, cannot show a running indicator — until some unrelated reload happens. A group member backing session is exactly this case: it is created lazily on the @-mention turn, and the member turn runs through the scheduler + `GroupChat`, never through a `ChatPanel`.
+
+The single reusable entry point is `ensureSessionInSidebar(sessionId)` in `frontend/src/stores/sidebar-reload.ts`: if the id is not yet known to `chat-agents-store` it triggers `reloadSidebarSources()`, otherwise it short-circuits (cheap to call per turn). `GroupEventsHost` calls it when it receives a `member_run_state` `running` event on the global `groups:run_state` channel, so the new backing session enters the list and the agent's run-light turns on whether or not the group page is open.
+
+Any future out-of-band session-creation path — a remote daemon creating a session, issue/hook dispatch — should reuse `ensureSessionInSidebar` from its frontend event handler instead of re-implementing the reload, so the sidebar stays correct without each producer hand-rolling it.
+
 ### Issue And Hook Dispatch
 
 Issue and hook features that need to start agent work should call `chat_svc.EnsureSession` instead of writing `chat_sessions` themselves. Add a new `SessionPurpose` only when the identity and reuse key are different from an existing purpose.
@@ -54,4 +64,5 @@ When adding a new feature that creates sessions:
 2. Add the smallest `SessionPurpose` and request fields needed by `chat_svc.EnsureSession`.
 3. Keep the feature service dependent on a narrow gateway/interface rather than on `chat_repo`.
 4. Emit a domain event if the creating service stores the returned `SessionID` and the frontend needs to update live state.
-5. Document the new purpose in this file.
+5. If the session is created outside a `ChatPanel` (group member, remote dispatch, issue/hook), have the frontend event handler call `ensureSessionInSidebar(sessionId)` so the new row appears in the sidebar and can show run state.
+6. Document the new purpose in this file.

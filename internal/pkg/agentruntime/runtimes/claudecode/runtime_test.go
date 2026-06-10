@@ -10,10 +10,10 @@ import (
 	"github.com/cago-frame/agents/provider"
 	. "github.com/smartystreets/goconvey/convey"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/pkg/claudecode"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
 )
 
 // TestClaudeCodeCapabilities 钉死 claudecode runtime 的能力矩阵 + permission
@@ -201,6 +201,9 @@ type fakeCCHandle struct {
 	gotImages []claudecode.Image
 	// autoTurns 注入自主续轮(AutonomousTurns 桥接测试用);nil 时方法返回 nil。
 	autoTurns <-chan *claudecode.AutoTurn
+	// respondedResults 非 nil 时记录 RespondToControl 收到的结果(control_request
+	// 自动放行路径在后台 goroutine 里回包,单测经 channel 同步观察)。
+	respondedResults chan claudecode.PermissionResult
 }
 
 func (f *fakeCCHandle) ID() string                      { return f.id }
@@ -210,7 +213,10 @@ func (f *fakeCCHandle) SetPermissionMode(_ context.Context, mode string) error {
 	f.setPermissionModeCalls = append(f.setPermissionModeCalls, mode)
 	return f.setPermissionModeErr
 }
-func (f *fakeCCHandle) RespondToControl(context.Context, string, claudecode.PermissionResult) error {
+func (f *fakeCCHandle) RespondToControl(_ context.Context, _ string, res claudecode.PermissionResult) error {
+	if f.respondedResults != nil {
+		f.respondedResults <- res
+	}
 	return nil
 }
 func (f *fakeCCHandle) ExitErr() error                               { return nil }

@@ -11,13 +11,13 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/pkg/code"
-	"agentre/internal/repository/group_repo"
-	"agentre/internal/repository/group_repo/mock_group_repo"
-	"agentre/internal/service/chat_svc"
-	"agentre/internal/service/group_svc"
-	"agentre/internal/service/group_svc/mock_group_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo/mock_group_repo"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/service/group_svc"
+	"github.com/agentre-ai/agentre/internal/service/group_svc/mock_group_svc"
 )
 
 func TestStopGroup_AbortsInflightAndClearsQueue(t *testing.T) {
@@ -180,8 +180,10 @@ func TestRenameGroup(t *testing.T) {
 	})
 }
 
-func TestArchiveGroup_StopsAllAndSoftDeletes(t *testing.T) {
-	Convey("ArchiveGroup → stopAll + status=DELETE + Update", t, func() {
+// TestDeleteGroup_DeleteSessionsFalse_KeepsSessions 锁住"保留会话"分支: deleteSessions=false
+// 时只软删群行(status=DELETE), 绝不删成员 backing session。
+func TestDeleteGroup_DeleteSessionsFalse_KeepsSessions(t *testing.T) {
+	Convey("DeleteGroup(deleteSessions=false) → status=DELETE 但保留 backing session(不调 gw.DeleteSession)", t, func() {
 		ctx := context.Background()
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
@@ -198,11 +200,15 @@ func TestArchiveGroup_StopsAllAndSoftDeletes(t *testing.T) {
 				So(gg.Status, ShouldEqual, consts.DELETE)
 				return nil
 			})
-		// 无在跑成员 → ListByGroup 返回空, 不调 gw.Stop。
-		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
+		// 成员有 backing session, 但 deleteSessions=false → 绝不调 gw.DeleteSession(未设 EXPECT, 调到即失败)。
+		// ListByGroup 仍被 stopAll 调用(无在跑成员 → 不调 gw.Stop)。
+		members := []*group_entity.GroupMember{
+			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Status: group_entity.MemberActive},
+		}
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(members, nil).AnyTimes()
 
 		svc := group_svc.NewForTest(gw)
-		So(svc.ArchiveGroup(ctx, 5), ShouldBeNil)
+		So(svc.DeleteGroup(ctx, 5, false), ShouldBeNil)
 		So(g.Status, ShouldEqual, consts.DELETE)
 	})
 }
@@ -312,10 +318,10 @@ func TestRemoveGroupMember_DeletesBackingSession(t *testing.T) {
 	})
 }
 
-// TestArchiveGroup_DeletesMemberBackingSessions 锁住归档清理: 归档群时删除全群成员的
-// backing session, 只删有 BackingSessionID 的, 跳过尚未起轮(=0)的成员。
-func TestArchiveGroup_DeletesMemberBackingSessions(t *testing.T) {
-	Convey("ArchiveGroup 删除全群成员的 backing session(跳过 BackingSessionID=0)", t, func() {
+// TestDeleteGroup_DeleteSessionsTrue_DeletesBackingSessions 锁住删除清理: deleteSessions=true 时
+// 删除全群成员的 backing session, 只删有 BackingSessionID 的, 跳过尚未起轮(=0)的成员。
+func TestDeleteGroup_DeleteSessionsTrue_DeletesBackingSessions(t *testing.T) {
+	Convey("DeleteGroup(deleteSessions=true) 删除全群成员 backing session(跳过 BackingSessionID=0)", t, func() {
 		ctx := context.Background()
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
@@ -339,7 +345,7 @@ func TestArchiveGroup_DeletesMemberBackingSessions(t *testing.T) {
 		// member 3 BackingSessionID=0 → 不应调 DeleteSession。
 
 		svc := group_svc.NewForTest(gw)
-		So(svc.ArchiveGroup(ctx, 5), ShouldBeNil)
+		So(svc.DeleteGroup(ctx, 5, true), ShouldBeNil)
 		So(g.Status, ShouldEqual, consts.DELETE)
 	})
 }

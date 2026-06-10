@@ -3,7 +3,7 @@ package chat_svc
 import (
 	"testing"
 
-	"agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
 
 	. "github.com/smartystreets/goconvey/convey"
 )

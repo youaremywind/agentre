@@ -24,38 +24,38 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	daemonrpc "agentre/internal/daemon/rpc"
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/chat_entity"
-	"agentre/internal/model/entity/llm_provider_entity"
-	"agentre/internal/model/entity/project_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/canonical"
-	"agentre/internal/pkg/agentruntime/capability"
+	daemonrpc "github.com/agentre-ai/agentre/internal/daemon/rpc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/llm_provider_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/project_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/canonical"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
 
 	// 显式 blank import 触发本地 runtime 子包 init() 把 *Runtime 注册到 RuntimeFor。
 	// remote 是显式构造,不参与全局注册;以下三种为本地后端,必须自注册才能被
 	// selectRunner 解析到。claudecodert 别名避免与 pkg/claudecode CLI 库名字撞车。
-	_ "agentre/internal/pkg/agentruntime/runtimes/builtin"
-	claudecodert "agentre/internal/pkg/agentruntime/runtimes/claudecode"
-	codexrt "agentre/internal/pkg/agentruntime/runtimes/codex"
-	_ "agentre/internal/pkg/agentruntime/runtimes/piagent"
-	"agentre/internal/pkg/agentruntime/runtimes/remote"
-	"agentre/internal/pkg/code"
-	"agentre/internal/pkg/httpgateway"
-	"agentre/internal/pkg/llmcatalog"
-	"agentre/internal/repository/agent_backend_repo"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/chat_repo"
-	"agentre/internal/repository/llm_provider_repo"
-	"agentre/internal/repository/project_repo"
-	chatblocks "agentre/internal/service/chat_svc/blocks"
-	"agentre/internal/service/chat_svc/handlers"
-	"agentre/internal/service/chat_svc/turn"
-	"agentre/internal/service/chat_svc/view"
-	"agentre/internal/service/remote_device_svc"
-	"agentre/pkg/claudecode"
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/builtin"
+	claudecodert "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/claudecode"
+	codexrt "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/codex"
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/piagent"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/remote"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/pkg/httpgateway"
+	"github.com/agentre-ai/agentre/internal/pkg/llmcatalog"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/chat_repo"
+	"github.com/agentre-ai/agentre/internal/repository/llm_provider_repo"
+	"github.com/agentre-ai/agentre/internal/repository/project_repo"
+	chatblocks "github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc/handlers"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc/turn"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc/view"
+	"github.com/agentre-ai/agentre/internal/service/remote_device_svc"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
 )
 
 const (
@@ -1183,8 +1183,10 @@ func (s *chatSvc) send(ctx context.Context, req *SendRequest, opts sendOptions) 
 			// runtime 后续仍按 resolveLaunchMode 结果幂等覆盖,处理后端默认值回落。
 			PermissionModeAtLaunch: permissionMode,
 			Title:                  sessionTitleFromFirstMessage(text),
-			AgentStatus:            "running",
-			Status:                 consts.ACTIVE,
+			// idle 落库;running 由 startTurn 事务内的 Update 原子翻转 —— 事务失败
+			// 时不残留 running(否则空会话永久卡 running,还会 block 退出)。
+			AgentStatus: "idle",
+			Status:      consts.ACTIVE,
 		}
 		if err := chat_repo.Session().Create(ctx, sess); err != nil {
 			return nil, i18n.NewError(ctx, code.OperationFailed)
@@ -1197,8 +1199,6 @@ func (s *chatSvc) send(ctx context.Context, req *SendRequest, opts sendOptions) 
 		if err := s.applyRequestedPermissionMode(ctx, sess, be, req.PermissionMode, planWaiting); err != nil {
 			return nil, err
 		}
-		sess.AgentStatus = "running"
-		_ = chat_repo.Session().Update(ctx, sess)
 	}
 
 	return s.startTurn(ctx, sess, a, be, prov, userBlocksForSend(text, imageBlocks), nil /*preTxHook*/, "" /*forkAnchor*/, turnExtras{
@@ -1902,8 +1902,6 @@ func (s *chatSvc) Regenerate(ctx context.Context, req *RegenerateRequest) (*Send
 	if err := s.applyRequestedPermissionMode(ctx, sess, be, req.PermissionMode, false); err != nil {
 		return nil, err
 	}
-	sess.AgentStatus = "running"
-	_ = chat_repo.Session().Update(ctx, sess)
 
 	// preTx 在同一事务里先截掉 user 锚点（含）开始的全部历史，
 	// 然后 startTurn 的标准路径会以新的 NextSeq 写回 user + assistant。
@@ -1970,8 +1968,6 @@ func (s *chatSvc) Edit(ctx context.Context, req *EditRequest) (*SendResponse, er
 	if err := s.applyRequestedPermissionMode(ctx, sess, be, req.PermissionMode, false); err != nil {
 		return nil, err
 	}
-	sess.AgentStatus = "running"
-	_ = chat_repo.Session().Update(ctx, sess)
 
 	anchorSeq := target.Seq
 	preTx := func(txCtx context.Context) error {
@@ -2103,6 +2099,10 @@ func (s *chatSvc) startTurn(
 	if !lock.TryLock() {
 		return nil, i18n.NewError(ctx, code.ChatSendInFlight)
 	}
+
+	// running 随下方事务内的 Session().Update 原子落库:事务失败(SQLITE_BUSY 等)
+	// 即回滚,不残留 running(回归: dev sess-21 事务外预写后失败,DB 永久卡 running)。
+	sess.AgentStatus = "running"
 
 	userMsg := &chat_entity.Message{SessionID: sess.ID, Role: "user", DeviceID: be.DeviceID}
 	_ = userMsg.SetBlocks(userBlocks)

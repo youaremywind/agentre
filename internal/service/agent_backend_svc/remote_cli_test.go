@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/daemon/handlers"
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/pkg/code"
-	"agentre/internal/repository/agent_backend_repo"
-	"agentre/internal/repository/agent_backend_repo/mock_agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/daemon/handlers"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo/mock_agent_backend_repo"
 )
 
 // fakeRemoteCLI 是 remoteCLIPort 的测试替身：记录调用次数 / 入参，

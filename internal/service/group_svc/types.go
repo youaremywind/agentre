@@ -1,7 +1,7 @@
 package group_svc
 
 import (
-	"agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
 )
 
 type CreateGroupRequest struct {

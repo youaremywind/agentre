@@ -6,8 +6,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/service/group_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/service/group_svc"
 )
 
 // fakeGroupSvc 嵌入 group_svc.GroupSvc(nil 接口)以满足全部 12 个方法,
@@ -39,7 +39,7 @@ func TestApp_GroupLoad_MapsDetail(t *testing.T) {
 		prev := group_svc.Default()
 		defer group_svc.SetDefault(prev)
 		group_svc.SetDefault(&fakeGroupSvc{detail: &group_svc.GroupDetail{
-			Group:   &group_entity.Group{ID: 5, Title: "队", RunStatus: "running", RoundCount: 3, Createtime: 11, Updatetime: 22},
+			Group:   &group_entity.Group{ID: 5, Title: "队", RunStatus: "running", RoundCount: 3, ProjectID: 42, Createtime: 11, Updatetime: 22},
 			Members: []*group_entity.GroupMember{{ID: 1, AgentID: 2, BackingSessionID: 9, Role: "host", Status: "active"}},
 			Messages: []*group_entity.GroupMessage{{
 				ID: 7, Seq: 1, SenderKind: "agent", SenderMemberID: 1,
@@ -56,6 +56,7 @@ func TestApp_GroupLoad_MapsDetail(t *testing.T) {
 		So(resp.Group.RoundCount, ShouldEqual, 3)
 		So(resp.Group.Createtime, ShouldEqual, 11)
 		So(resp.Group.Updatetime, ShouldEqual, 22)
+		So(resp.Group.ProjectID, ShouldEqual, 42)
 		So(resp.Members[0].Role, ShouldEqual, "host")
 		So(resp.Members[0].AgentID, ShouldEqual, 2)
 		So(resp.Members[0].BackingSessionID, ShouldEqual, 9)
@@ -100,5 +101,12 @@ func TestApp_GroupItem_CarriesPinned(t *testing.T) {
 	Convey("toGroupItem 应带出 Pinned", t, func() {
 		So(toGroupItem(&group_entity.Group{ID: 5, Pinned: true}).Pinned, ShouldBeTrue)
 		So(toGroupItem(&group_entity.Group{ID: 6}).Pinned, ShouldBeFalse)
+	})
+}
+
+func TestApp_GroupItem_CarriesProjectID(t *testing.T) {
+	Convey("toGroupItem 应带出 ProjectID(供前端 roster 解析项目名 + 点击跳转)", t, func() {
+		So(toGroupItem(&group_entity.Group{ID: 5, ProjectID: 7}).ProjectID, ShouldEqual, 7)
+		So(toGroupItem(&group_entity.Group{ID: 6}).ProjectID, ShouldEqual, 0)
 	})
 }

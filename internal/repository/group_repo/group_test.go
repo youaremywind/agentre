@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
 )
 
 // ── GroupRepo ────────────────────────────────────────────────────────────────

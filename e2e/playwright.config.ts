@@ -60,6 +60,11 @@ export default defineConfig({
     env: {
       AGENTRE_DATA_DIR: dataDir,
       AGENTRE_ENV: "test",
+      // Bind the local HTTP gateway to an OS-chosen free port (0) instead of the fixed default
+      // 52401. A running real Agentre already holds 52401, so without this the e2e gateway fails
+      // to bind → BaseURL() empty → group_send (and any gateway round-trip) silently dies. Keeps
+      // "a running Agentre does not interfere" true for the gateway too, not just the data dir.
+      AGENTRE_PROXY_PORT: "0",
     },
   },
 });

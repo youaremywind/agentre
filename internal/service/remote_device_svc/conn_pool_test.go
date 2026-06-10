@@ -12,12 +12,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/daemon/client"
-	"agentre/internal/model/entity/paired_agentred_entity"
-	"agentre/internal/pkg/keychain"
-	repomock "agentre/internal/repository/remote_device_repo/mock_remote_device_repo"
-	"agentre/internal/service/remote_device_svc"
-	svcmock "agentre/internal/service/remote_device_svc/mock_remote_device_svc"
+	"github.com/agentre-ai/agentre/internal/daemon/client"
+	"github.com/agentre-ai/agentre/internal/model/entity/paired_agentred_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/keychain"
+	repomock "github.com/agentre-ai/agentre/internal/repository/remote_device_repo/mock_remote_device_repo"
+	"github.com/agentre-ai/agentre/internal/service/remote_device_svc"
+	svcmock "github.com/agentre-ai/agentre/internal/service/remote_device_svc/mock_remote_device_svc"
 )
 
 // poolFixture 给 Pool 单测装好 mock + 一台 device 的标准数据。

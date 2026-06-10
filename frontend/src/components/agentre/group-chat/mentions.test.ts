@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  normalizeMentionMarkup,
   parseMentionedMemberIds,
   tokenizeMentions,
   type MentionRosterEntry,
@@ -147,5 +148,17 @@ describe("tokenizeMentions", () => {
       { type: "mention", memberId: 9, name: "C++" },
       { type: "text", value: " ok" },
     ]);
+  });
+});
+
+describe("normalizeMentionMarkup", () => {
+  it("rewrites <mention>NAME</mention> markup to @NAME", () => {
+    expect(normalizeMentionMarkup("好的 <mention>前端</mention>")).toBe(
+      "好的 @前端",
+    );
+  });
+
+  it("leaves text without markup unchanged", () => {
+    expect(normalizeMentionMarkup("麻烦 @后端 看下")).toBe("麻烦 @后端 看下");
   });
 });

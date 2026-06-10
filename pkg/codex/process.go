@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"agentre/internal/pkg/cliprocess"
+	"github.com/agentre-ai/agentre/internal/pkg/cliprocess"
 )
 
 var (

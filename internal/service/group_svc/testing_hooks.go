@@ -10,9 +10,10 @@ func SetEmitterForTest(svc GroupSvc, e Emitter) {
 }
 
 // EnqueueForTest 暴露内部 enqueueDeliveries 给外部测试包(驱动调度器, 不经 Send 路径)。
-func EnqueueForTest(svc GroupSvc, groupID int64, recipientIDs []int64, content, fromName string) {
+// source 是触发投递的来源成员 id(0=用户)。
+func EnqueueForTest(svc GroupSvc, groupID int64, recipientIDs []int64, content, fromName string, source int64) {
 	if s, ok := svc.(*groupSvc); ok {
-		s.enqueueDeliveries(groupID, recipientIDs, content, fromName)
+		s.enqueueDeliveries(groupID, recipientIDs, content, fromName, source)
 	}
 }
 

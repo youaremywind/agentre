@@ -10,8 +10,8 @@
 package mock_chat_repo
 
 import (
-	chat_entity "agentre/internal/model/entity/chat_entity"
 	context "context"
+	chat_entity "github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"

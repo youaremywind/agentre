@@ -10,16 +10,16 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/pkg/code"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/agent_repo/mock_agent_repo"
-	"agentre/internal/repository/group_repo"
-	"agentre/internal/repository/group_repo/mock_group_repo"
-	"agentre/internal/service/group_svc"
-	"agentre/internal/service/group_svc/mock_group_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo/mock_group_repo"
+	"github.com/agentre-ai/agentre/internal/service/group_svc"
+	"github.com/agentre-ai/agentre/internal/service/group_svc/mock_group_svc"
 )
 
 func TestGroupSvc_CreateGroup_AddsHostMember(t *testing.T) {

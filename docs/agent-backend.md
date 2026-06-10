@@ -546,11 +546,11 @@ To let a new backend run on the `agentred` daemon, change **only** `internal/dae
 
 ```go
 import (
-    _ "agentre/internal/pkg/agentruntime/runtimes/builtin"
-    _ "agentre/internal/pkg/agentruntime/runtimes/claudecode"
-    _ "agentre/internal/pkg/agentruntime/runtimes/codex"
-    _ "agentre/internal/pkg/agentruntime/runtimes/piagent"
-    _ "agentre/internal/pkg/agentruntime/runtimes/myagent"   // ← add this line
+    _ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/builtin"
+    _ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/claudecode"
+    _ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/codex"
+    _ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/piagent"
+    _ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/myagent"   // ← add this line
 )
 ```
 

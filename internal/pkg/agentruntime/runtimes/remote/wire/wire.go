@@ -15,9 +15,9 @@ import (
 
 	"github.com/cago-frame/agents/agent/blocks"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/pkg/jsonrpc"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/pkg/jsonrpc"
 )
 
 // ── RPC method names ────────────────────────────────────────────────────────

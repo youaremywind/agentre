@@ -21,27 +21,27 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/chat_entity"
-	"agentre/internal/model/entity/llm_provider_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/canonical"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/pkg/agentruntime/runtimes/remote/wire"
-	"agentre/internal/pkg/httpgateway"
-	"agentre/internal/repository/agent_backend_repo"
-	"agentre/internal/repository/agent_backend_repo/mock_agent_backend_repo"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/agent_repo/mock_agent_repo"
-	"agentre/internal/repository/chat_repo"
-	"agentre/internal/repository/chat_repo/mock_chat_repo"
-	"agentre/internal/repository/llm_provider_repo"
-	"agentre/internal/repository/llm_provider_repo/mock_llm_provider_repo"
-	"agentre/internal/service/chat_svc"
-	"agentre/internal/service/remote_device_svc"
-	"agentre/internal/service/remote_device_svc/mock_remote_device_svc"
-	"agentre/pkg/claudecode"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/llm_provider_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/canonical"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/remote/wire"
+	"github.com/agentre-ai/agentre/internal/pkg/httpgateway"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo/mock_agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/chat_repo"
+	"github.com/agentre-ai/agentre/internal/repository/chat_repo/mock_chat_repo"
+	"github.com/agentre-ai/agentre/internal/repository/llm_provider_repo"
+	"github.com/agentre-ai/agentre/internal/repository/llm_provider_repo/mock_llm_provider_repo"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/service/remote_device_svc"
+	"github.com/agentre-ai/agentre/internal/service/remote_device_svc/mock_remote_device_svc"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
 )
 
 type chatMocks struct {
@@ -3153,6 +3153,107 @@ func TestSend_ErrorSessionMarksRunningAtTurnStart(t *testing.T) {
 	assert.Equal(t, "running", captured[0].AgentStatus)
 	assert.False(t, captured[0].NeedsAttention)
 	assert.Equal(t, "idle", captured[len(captured)-1].AgentStatus)
+}
+
+// 回归(dev sess-21 卡 running):Send 不得在 startTurn 事务外预写 agent_status=running ——
+// 事务持久化失败(如 SQLITE_BUSY)时无人回滚,DB 永久卡 running 且 quit 被 block。
+// running 只能随 startTurn 事务内的 session Update 原子落库,事务失败即不残留,
+// 故本测试不设任何 session.Update 期望:出现调用即违规。
+func TestSend_PersistFailureDoesNotPersistRunning(t *testing.T) {
+	m := setupChatTest(t)
+	ctx := m.ctx
+
+	m.session.EXPECT().Find(gomock.Any(), int64(100)).Return(&chat_entity.Session{
+		ID: 100, AgentID: 7, AgentStatus: "idle", Status: consts.ACTIVE,
+	}, nil)
+	m.agent.EXPECT().Find(gomock.Any(), int64(7)).Return(&agent_entity.Agent{
+		ID: 7, Name: "Eng", AgentBackendID: 12, Status: consts.ACTIVE, PromptJSON: `[]`,
+	}, nil)
+	m.backend.EXPECT().Find(gomock.Any(), int64(12)).Return(&agent_backend_entity.AgentBackend{
+		ID: 12, Type: string(agent_backend_entity.TypeBuiltin), LLMProviderKey: "key-21", Status: consts.ACTIVE,
+	}, nil)
+	m.provider.EXPECT().FindByKey(gomock.Any(), "key-21").Return(&llm_provider_entity.LLMProvider{
+		Type: string(llm_provider_entity.TypeAnthropic), Status: consts.ACTIVE, Model: "claude-sonnet-4-6",
+	}, nil)
+
+	m.dbMock.ExpectBegin()
+	m.message.EXPECT().NextSeq(gomock.Any(), int64(100)).Return(0, errors.New("database is locked"))
+	m.dbMock.ExpectRollback()
+
+	_, err := m.svc.Send(ctx, &chat_svc.SendRequest{SessionID: 100, AgentID: 7, Text: "hi"})
+	require.Error(t, err, "事务持久化失败必须把错误返回给调用方")
+}
+
+// 回归(同上):新建会话必须以 idle Create;running 由 startTurn 事务内 Update 原子翻转。
+// 否则 Create(running) 后事务失败,留下一条永久 running 的空会话。
+func TestSend_NewSessionCreatesIdleNotRunning(t *testing.T) {
+	m := setupChatTest(t)
+	ctx := m.ctx
+
+	m.agent.EXPECT().Find(gomock.Any(), int64(7)).Return(&agent_entity.Agent{
+		ID: 7, Name: "Eng", AgentBackendID: 12, Status: consts.ACTIVE, PromptJSON: `[]`,
+	}, nil)
+	m.backend.EXPECT().Find(gomock.Any(), int64(12)).Return(&agent_backend_entity.AgentBackend{
+		ID: 12, Type: string(agent_backend_entity.TypeBuiltin), LLMProviderKey: "key-21", Status: consts.ACTIVE,
+	}, nil)
+	m.provider.EXPECT().FindByKey(gomock.Any(), "key-21").Return(&llm_provider_entity.LLMProvider{
+		Type: string(llm_provider_entity.TypeAnthropic), Status: consts.ACTIVE, Model: "claude-sonnet-4-6",
+	}, nil)
+
+	var created chat_entity.Session
+	m.session.EXPECT().Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, s *chat_entity.Session) error {
+			s.ID = 100
+			created = *s
+			return nil
+		})
+
+	m.dbMock.ExpectBegin()
+	m.message.EXPECT().NextSeq(gomock.Any(), int64(100)).Return(0, errors.New("database is locked"))
+	m.dbMock.ExpectRollback()
+
+	_, err := m.svc.Send(ctx, &chat_svc.SendRequest{AgentID: 7, Text: "hi"})
+	require.Error(t, err)
+	assert.Equal(t, "idle", created.AgentStatus,
+		"新建会话以 idle 落库,事务失败时不残留 running")
+}
+
+// 回归(同上):Regenerate 与 Send 同病 —— 事务外预写 running。
+func TestRegenerate_PersistFailureDoesNotPersistRunning(t *testing.T) {
+	m := setupChatTest(t)
+	ctx := m.ctx
+	restore := agentruntime.SwapRuntimeForTest(agent_backend_entity.TypeBuiltin, scriptedRunner{
+		events: []agentruntime.RuntimeEvent{{Kind: agentruntime.EventDone}},
+	})
+	t.Cleanup(restore)
+
+	m.session.EXPECT().Find(gomock.Any(), int64(100)).Return(&chat_entity.Session{
+		ID: 100, AgentID: 7, AgentStatus: "idle", Status: consts.ACTIVE,
+	}, nil)
+	m.message.EXPECT().Find(gomock.Any(), int64(1001)).Return(&chat_entity.Message{
+		ID: 1001, SessionID: 100, Role: "assistant", Seq: 2, BlocksJSON: encodeText("v1"),
+	}, nil)
+	m.message.EXPECT().List(gomock.Any(), int64(100)).Return([]*chat_entity.Message{
+		{ID: 1000, SessionID: 100, Role: "user", Seq: 1, BlocksJSON: encodeText("hi")},
+		{ID: 1001, SessionID: 100, Role: "assistant", Seq: 2, BlocksJSON: encodeText("v1")},
+	}, nil).AnyTimes()
+	m.agent.EXPECT().Find(gomock.Any(), int64(7)).Return(&agent_entity.Agent{
+		ID: 7, Name: "Eng", AgentBackendID: 12, Status: consts.ACTIVE, PromptJSON: `[]`,
+	}, nil)
+	m.backend.EXPECT().Find(gomock.Any(), int64(12)).Return(&agent_backend_entity.AgentBackend{
+		ID: 12, Type: string(agent_backend_entity.TypeBuiltin), LLMProviderKey: "key-21", Status: consts.ACTIVE,
+	}, nil)
+	m.provider.EXPECT().FindByKey(gomock.Any(), "key-21").Return(&llm_provider_entity.LLMProvider{
+		ID: 21, Type: string(llm_provider_entity.TypeAnthropic), Status: consts.ACTIVE, Model: "claude-sonnet-4-6",
+	}, nil)
+
+	m.dbMock.ExpectBegin()
+	m.message.EXPECT().DeleteFromSeq(gomock.Any(), int64(100), 1).
+		Return(int64(0), errors.New("database is locked"))
+	m.dbMock.ExpectRollback()
+
+	_, err := m.svc.Regenerate(ctx, &chat_svc.RegenerateRequest{SessionID: 100, MessageID: 1001})
+	require.Error(t, err)
 }
 
 // TestSend_AskUserQuestionFlipsSessionToWaiting:

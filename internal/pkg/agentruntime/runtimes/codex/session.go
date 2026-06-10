@@ -12,8 +12,8 @@ import (
 
 	cagoblocks "github.com/cago-frame/agents/agent/blocks"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/pkg/codex"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/pkg/codex"
 )
 
 // defaultModelID 是 Agentre 在 codex CLI login 路径没有显式 provider model、

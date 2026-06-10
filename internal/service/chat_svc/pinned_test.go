@@ -7,10 +7,10 @@ import (
 	"github.com/cago-frame/cago/pkg/consts"
 	"github.com/stretchr/testify/assert"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/llm_provider_entity"
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/llm_provider_entity"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 )
 
 // TestListAgents_PinnedDerivation: ChatAgentItem.Pinned = IsSystem() || a.Pinned。

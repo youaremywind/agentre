@@ -5,7 +5,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"agentre/internal/app"
+	"github.com/agentre-ai/agentre/internal/app"
 )
 
 func TestSingleInstanceUniqueID(t *testing.T) {

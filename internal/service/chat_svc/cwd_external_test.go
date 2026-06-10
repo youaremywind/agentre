@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/chat_entity"
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -445,7 +445,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 )
 
 func TestObserveTurn_ReceivesTerminalOnce(t *testing.T) {
@@ -778,7 +778,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
 )
 
 func TestGroupCanAdvance(t *testing.T) {
@@ -830,7 +830,7 @@ import (
 	"github.com/cago-frame/cago/pkg/consts"
 	"github.com/cago-frame/cago/pkg/i18n"
 
-	"agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
 )
 
 const (
@@ -1191,7 +1191,7 @@ import (
 	"github.com/cago-frame/cago/pkg/consts"
 	"gorm.io/gorm"
 
-	"agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
 )
 
 //go:generate mockgen -source group.go -destination mock_group_repo/mock_group.go
@@ -1470,7 +1470,7 @@ package group_svc
 import (
 	"context"
 
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 )
 
 //go:generate mockgen -source gateway.go -destination mock_group_svc/mock_gateway.go
@@ -1541,7 +1541,7 @@ git commit -m "✨ group: group_svc→chat_svc 窄网关接口 ChatGateway + ada
 package group_svc
 
 import (
-	"agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
 )
 
 type CreateGroupRequest struct {
@@ -1623,9 +1623,9 @@ import (
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
 
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/pkg/code"
-	"agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
 )
 
 // Emitter 群事件出口(由 app 层注入 → wailsruntime.EventsEmit)。
@@ -2676,8 +2676,8 @@ git commit -m "✨ group: group_send MCP server handler + per-member token + 群
 package app
 
 import (
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/service/group_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/service/group_svc"
 )
 
 type GroupItem struct {

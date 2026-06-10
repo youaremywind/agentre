@@ -7,9 +7,9 @@ import (
 	"os/exec"
 	"strings"
 
-	"agentre/pkg/claudecode"
-	"agentre/pkg/codex"
-	"agentre/pkg/piagent"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
+	"github.com/agentre-ai/agentre/pkg/codex"
+	"github.com/agentre-ai/agentre/pkg/piagent"
 )
 
 // ProbeRequest 调用方装配好的 CLI 子进程参数。Env 必须完整 —— 包括

@@ -33,5 +33,6 @@ func migrationList() []*gormigrate.Migration {
 		migration202605220010(), // projects.sort_order
 		migration202605220011(), // issues + labels + issue_labels + label seed
 		migration202606030001(), // group chat baseline
+		migration202606100001(), // agent_backends.default_model
 	}
 }

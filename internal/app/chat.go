@@ -1,8 +1,8 @@
 package app
 
 import (
-	"agentre/internal/service/chat_svc"
-	"agentre/internal/service/chat_svc/ipc"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc/ipc"
 )
 
 // ListChatAgents 聚合返回左栏 Agent 列表（含每个 Agent 的最近会话和可对话状态）。

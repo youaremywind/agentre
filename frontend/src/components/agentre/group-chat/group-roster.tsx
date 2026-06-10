@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Archive, ChevronRight, UserPlus } from "lucide-react";
+import { ChevronRight, Trash2, UserPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 
 import { AgentAvatar } from "../primitives";
 
+import { GroupDeleteDialog } from "./group-delete-dialog";
 import { agentColorForMember } from "./group-transcript";
 
 import type { app } from "../../../../wailsjs/go/models";
@@ -18,11 +19,15 @@ type RosterTab = "members" | "settings";
 export type GroupRosterProps = {
   members: GroupMemberItem[];
   memberName: (memberId: number) => string;
-  /** 工作目录是动态值（路径），原样展示，不进 t()。 */
-  workdir?: string;
+  /** 群绑定的项目 id（0 = 未绑定）。取代了原先未接线的「工作目录」展示。 */
+  projectID?: number;
+  /** 项目显示名是动态值，原样展示，不进 t()。projectID>0 但缺名时按未绑定兜底。 */
+  projectName?: string;
+  /** 点击项目名跳转到该项目（navigate(`/projects?focus=<id>`)）。 */
+  onOpenProject?: (projectID: number) => void;
   onOpenMember: (member: GroupMemberItem) => void;
   onInvite: () => void;
-  onArchive: () => void;
+  onDelete: (deleteSessions: boolean) => void;
 };
 
 // 状态点按运行态(running/idle)着色,而不是成员身份(active/left)。在跑→绿,
@@ -82,13 +87,16 @@ function MemberRow({
 function GroupRoster({
   members,
   memberName,
-  workdir,
+  projectID,
+  projectName,
+  onOpenProject,
   onOpenMember,
   onInvite,
-  onArchive,
+  onDelete,
 }: GroupRosterProps) {
   const { t } = useTranslation();
   const [tab, setTab] = React.useState<RosterTab>("members");
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
 
   const hosts = members.filter((m) => m.role === "host");
   const regulars = members.filter((m) => m.role !== "host");
@@ -163,22 +171,38 @@ function GroupRoster({
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
           <div>
             <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("group.settings.workdir")}
+              {t("group.settings.project")}
             </div>
-            {/* 工作目录路径是动态值，原样渲染。 */}
-            <div className="mt-1 break-all font-mono text-xs text-foreground">
-              {workdir || "—"}
-            </div>
+            {projectID && projectID > 0 && projectName ? (
+              // 项目名是动态值，原样渲染；点击跳转到该项目。
+              <button
+                type="button"
+                onClick={() => onOpenProject?.(projectID)}
+                className="mt-1 block max-w-full truncate text-left text-xs text-primary hover:underline"
+                title={projectName}
+              >
+                {projectName}
+              </button>
+            ) : (
+              <div className="mt-1 text-xs text-muted-foreground">
+                {t("group.settings.noProject")}
+              </div>
+            )}
           </div>
           <Button
             type="button"
             variant="destructive"
             size="sm"
-            onClick={onArchive}
+            onClick={() => setDeleteOpen(true)}
           >
-            <Archive data-icon="inline-start" aria-hidden="true" />
-            {t("group.settings.archive")}
+            <Trash2 data-icon="inline-start" aria-hidden="true" />
+            {t("group.delete.button")}
           </Button>
+          <GroupDeleteDialog
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+            onConfirm={onDelete}
+          />
         </div>
       )}
     </aside>

@@ -1,7 +1,7 @@
 package app
 
 import (
-	"agentre/internal/service/agent_svc"
+	"github.com/agentre-ai/agentre/internal/service/agent_svc"
 )
 
 // CreateAgent 新建 Agent。

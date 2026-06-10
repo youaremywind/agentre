@@ -10,10 +10,11 @@ import (
 	"os"
 	stdruntime "runtime"
 
-	"agentre/internal/app"
-	"agentre/internal/bootstrap"
-	"agentre/internal/cli/claudecodecmd"
-	"agentre/internal/pkg/paths"
+	"github.com/agentre-ai/agentre/e2e/fakes"
+	"github.com/agentre-ai/agentre/internal/app"
+	"github.com/agentre-ai/agentre/internal/bootstrap"
+	"github.com/agentre-ai/agentre/internal/cli/claudecodecmd"
+	"github.com/agentre-ai/agentre/internal/pkg/paths"
 
 	"github.com/cago-frame/cago/pkg/logger"
 	"github.com/wailsapp/wails/v2"
@@ -48,7 +49,7 @@ func main() {
 	}
 	defer runtime.Close()
 
-	installE2EFakes(context.Background())
+	fakes.Install(context.Background())
 
 	// Create an instance of the app structure
 	appInst := app.NewApp()

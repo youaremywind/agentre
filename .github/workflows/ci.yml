@@ -24,7 +24,8 @@ jobs:
         run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          # Pinned to match local dev (reproducible + stable action cache).
+          version: v2.12.2
 
   test:
     name: Go Test
@@ -72,7 +73,14 @@ jobs:
           node-version: "22"
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Cache Wails CLI
+        id: cache-wails
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/wails
+          key: ${{ runner.os }}-wails-v2.10.2
       - name: Install Wails CLI
+        if: steps.cache-wails.outputs.cache-hit != 'true'
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.2
       - name: Create frontend dist placeholder
         run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
@@ -109,14 +117,36 @@ jobs:
       - name: Install Linux dependencies
         run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-dev libwebkit2gtk-4.0-dev
 
+      - name: Cache Wails CLI
+        id: cache-wails
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/wails
+          key: ${{ runner.os }}-wails-v2.10.2
+
       - name: Install Wails CLI
+        if: steps.cache-wails.outputs.cache-hit != 'true'
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.2
+
+      - name: Cache Playwright browsers
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('e2e/pnpm-lock.yaml') }}
 
       - name: Install frontend dependencies
         run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Install e2e dependencies
-        run: cd e2e && pnpm install --frozen-lockfile && pnpm exec playwright install --with-deps chromium
+        run: cd e2e && pnpm install --frozen-lockfile
+
+      - name: Install Playwright system deps
+        run: cd e2e && pnpm exec playwright install-deps chromium
+
+      - name: Install Playwright browsers
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        run: cd e2e && pnpm exec playwright install chromium
 
       - name: Run e2e
         run: xvfb-run -a make e2e

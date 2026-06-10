@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/chat_entity"
-	"agentre/internal/model/entity/llm_provider_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/llm_provider_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 )
 
 // sendPassthroughFixture 用 builtin 后端跑一遍 Send,捕获交给 runtime 的 RunRequest。

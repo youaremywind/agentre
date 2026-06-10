@@ -9,9 +9,9 @@ import (
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
 
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/repository/group_repo"
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 )
 
 // 成员级运行态:区别于 GroupMember.Status 的"成员身份"(active/left)。roster 用它
@@ -22,21 +22,30 @@ const (
 )
 
 // delivery 是投给某成员的一条待消费消息(正文 + 自然抬头来源名)。
+// attempts 记录已失败的投递次数, Send 瞬时失败回队重试用。
+// source 是触发这条投递的来源成员 id(0=用户), 收件成员无 mention 回复时回它。
 type delivery struct {
 	fromName string
 	content  string
+	attempts int
+	source   int64
 }
+
+// maxDeliveryAttempts: Send 瞬时失败(SQLITE_BUSY / 锁竞争等)最多投这么多次,
+// 超过即丢弃 —— 防 kick→launchDelivery→kick 无限循环。
+const maxDeliveryAttempts = 2
 
 // scheduler 是每个群的运行态: 每成员 pending FIFO + 在跑成员集合。
 type scheduler struct {
-	mu         sync.Mutex
-	pending    map[int64][]delivery // memberID -> FIFO
-	inflight   map[int64]bool       // memberID -> 是否有在跑 turn
-	generation uint64               // stop/archive increments this to cancel launches outside the lock
+	mu             sync.Mutex
+	pending        map[int64][]delivery // memberID -> FIFO
+	inflight       map[int64]bool       // memberID -> 是否有在跑 turn
+	inflightSource map[int64]int64      // memberID -> 触发本轮的来源成员 id(0=用户)
+	generation     uint64               // stop/delete increments this to cancel launches outside the lock
 }
 
 func newScheduler() *scheduler {
-	return &scheduler{pending: map[int64][]delivery{}, inflight: map[int64]bool{}}
+	return &scheduler{pending: map[int64][]delivery{}, inflight: map[int64]bool{}, inflightSource: map[int64]int64{}}
 }
 
 // schedulerFor 懒建并返回某群的调度器(s.mu 保护 s.schedulers)。
@@ -52,14 +61,15 @@ func (s *groupSvc) schedulerFor(groupID int64) *scheduler {
 }
 
 // enqueueDeliveries 把同一条消息追加到每个收件成员的 pending FIFO。
-func (s *groupSvc) enqueueDeliveries(groupID int64, recipientIDs []int64, content, fromName string) {
+// source 是发出这条消息的成员 id(0=用户), 随 delivery 传递到 inflightSource。
+func (s *groupSvc) enqueueDeliveries(groupID int64, recipientIDs []int64, content, fromName string, source int64) {
 	if len(recipientIDs) == 0 {
 		return
 	}
 	sc := s.schedulerFor(groupID)
 	sc.mu.Lock()
 	for _, mid := range recipientIDs {
-		sc.pending[mid] = append(sc.pending[mid], delivery{fromName: fromName, content: content})
+		sc.pending[mid] = append(sc.pending[mid], delivery{fromName: fromName, content: content, source: source})
 	}
 	sc.mu.Unlock()
 }
@@ -69,7 +79,21 @@ func (s *groupSvc) markDone(groupID, memberID int64) {
 	sc := s.schedulerFor(groupID)
 	sc.mu.Lock()
 	delete(sc.inflight, memberID)
+	delete(sc.inflightSource, memberID)
 	sc.mu.Unlock()
+}
+
+// turnSource 给出某成员当前在跑 turn 的触发来源(0=用户)。ok=false 表示该成员
+// 没有在跑的 turn(无来源可查)。IngestAgentMessage 的 fallback 用它把无 mention
+// 的回复路由回触发者。锁序: 调用方持 ingestMu → 此处取 sc.mu, 与 kick 同向。
+func (s *groupSvc) turnSource(groupID, memberID int64) (int64, bool) {
+	sc := s.schedulerFor(groupID)
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if !sc.inflight[memberID] {
+		return 0, false
+	}
+	return sc.inflightSource[memberID], true
 }
 
 // memberRunStates 按调度器在跑集合给出 memberID -> RunStateRunning/RunStateIdle 快照。
@@ -90,13 +114,19 @@ func (s *groupSvc) memberRunStates(groupID int64, members []*group_entity.GroupM
 }
 
 // emitMemberRunState 推一条成员级运行态变更给前端(roster 据此翻状态点)。
-// 与 member_updated(成员身份)分开,避免覆盖彼此字段。
-func (s *groupSvc) emitMemberRunState(ctx context.Context, groupID, memberID int64, runState string) {
-	s.emitter.Emit(ctx, groupEventName(groupID), map[string]any{
-		"kind":     "member_run_state",
-		"memberID": memberID,
-		"runState": runState,
-	})
+// 与 member_updated(成员身份)分开,避免覆盖彼此字段。同步发到全局频道
+// (GroupRunStateEventName),带 backingSessionID 让侧栏把成员运行态映射到
+// 该 backing session 的会话行。
+func (s *groupSvc) emitMemberRunState(ctx context.Context, groupID, memberID, sessionID int64, runState string) {
+	payload := map[string]any{
+		"kind":             "member_run_state",
+		"groupID":          groupID,
+		"memberID":         memberID,
+		"runState":         runState,
+		"backingSessionID": sessionID,
+	}
+	s.emitter.Emit(ctx, groupEventName(groupID), payload)
+	s.emitter.Emit(ctx, GroupRunStateEventName, payload)
 }
 
 // stopAll 清空某群队列 + 对每个在跑成员的 backing session 调 gw.Stop(中止 turn)。
@@ -109,6 +139,7 @@ func (s *groupSvc) stopAll(ctx context.Context, groupID int64) {
 	}
 	sc.pending = map[int64][]delivery{}
 	sc.inflight = map[int64]bool{}
+	sc.inflightSource = map[int64]int64{}
 	sc.generation++
 	sc.mu.Unlock()
 
@@ -123,6 +154,9 @@ func (s *groupSvc) stopAll(ctx context.Context, groupID int64) {
 				logger.Ctx(ctx).Warn("group_svc.stopAll: stop failed", zap.Int64("sessionId", sid), zap.Error(err))
 			}
 		}
+		// inflight 已清, 但订阅方(roster / 侧栏)看不见内部状态 —— 不补 idle 事件
+		// 会卡 running 直到 reload。
+		s.emitMemberRunState(ctx, groupID, mid, sessByMember[mid], RunStateIdle)
 	}
 }
 
@@ -169,6 +203,7 @@ func (s *groupSvc) kick(ctx context.Context, groupID int64) {
 			sc.pending[mid] = rest
 		}
 		sc.inflight[mid] = true
+		sc.inflightSource[mid] = d.source
 		launches = append(launches, launchItem{d: d, m: m, generation: sc.generation})
 	}
 	hasPending := false
@@ -202,7 +237,7 @@ func (s *groupSvc) transitionRunStatus(ctx context.Context, g *group_entity.Grou
 			zap.Int64("groupId", g.ID), zap.String("status", status), zap.Error(err))
 		return
 	}
-	s.emitter.Emit(ctx, groupEventName(g.ID), map[string]any{"kind": "run_status", "runStatus": status})
+	s.emitRunStatus(ctx, g.ID, status)
 }
 
 // launchDelivery 订阅成员 turn 生命周期 → Send(带 group MCP tool + 群 system prompt) → 后台等 turn 结束。
@@ -239,18 +274,26 @@ func (s *groupSvc) launchDelivery(g *group_entity.Group, members []*group_entity
 	sc.mu.Unlock()
 	if err != nil {
 		cancel()
-		// Send 瞬时失败: 已从 pending 弹出的这条 delivery 被有意丢弃(仅 Warn, 不回队) ——
-		// 避免无限重试; MVP 可接受。释放槽后再 kick 让其它 ready 成员/后续 delivery 继续。
-		logger.Ctx(bg).Warn("group_svc.launchDelivery: send failed", zap.Int64("memberId", m.ID), zap.Error(err))
-		s.markDone(m.GroupID, m.ID)
+		// Send 瞬时失败: delivery 回队队首重试(attempts 封顶 maxDeliveryAttempts,
+		// 超限丢弃, 仅 Warn)。generation 校验防 Stop/Delete 后复活已清空的队列。
+		d.attempts++
+		sc.mu.Lock()
+		if sc.generation == generation && d.attempts < maxDeliveryAttempts {
+			sc.pending[m.ID] = append([]delivery{d}, sc.pending[m.ID]...)
+		} else {
+			logger.Ctx(bg).Warn("group_svc.launchDelivery: send failed, delivery dropped",
+				zap.Int64("memberId", m.ID), zap.Int("attempts", d.attempts), zap.Error(err))
+		}
+		sc.mu.Unlock()
 		// 此处同步 kick→launchDelivery→kick 的递归有界: 每次 kick 对每个成员至多弹一条,
-		// 深度受「当前 ready 成员数」约束(成员上限 ~8), 不会失控。
+		// 深度受「当前 ready 成员数 × maxDeliveryAttempts」约束(成员上限 ~8), 不会失控。
+		s.markDone(m.GroupID, m.ID)
 		s.kick(bg, m.GroupID)
 		return
 	}
 	// 成员 turn 已真正起步:推 running 让正在看群的 roster 立刻翻状态点(已订阅
 	// group:event 的群视图收得到;中途打开群的走 LoadGroup 快照回填)。
-	s.emitMemberRunState(bg, m.GroupID, m.ID, RunStateRunning)
+	s.emitMemberRunState(bg, m.GroupID, m.ID, sessionID, RunStateRunning)
 	gogo.Go(func() error {
 		defer cancel()
 		res := <-ch
@@ -293,7 +336,7 @@ func (s *groupSvc) handleTurnResult(ctx context.Context, groupID int64, m *group
 	s.markDone(groupID, m.ID)
 	// 槽已释放:推 idle 让 roster 翻回空转点。出错也算这一轮结束(错误详情在该成员的
 	// backing session 里),roster 只表达"在跑/没跑"。下一条 pending 会由 kick 再翻 running。
-	s.emitMemberRunState(ctx, groupID, m.ID, RunStateIdle)
+	s.emitMemberRunState(ctx, groupID, m.ID, m.BackingSessionID, RunStateIdle)
 	if res.Err != nil {
 		logger.Ctx(ctx).Warn("group_svc.handleTurnResult: member turn error", zap.Int64("memberId", m.ID), zap.Error(res.Err))
 	}

@@ -3,8 +3,8 @@ package chat_svc
 import (
 	"context"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
 )
 
 // DriveAutonomousTurnForTest 暴露 driveAutonomousTurn 给外部测试包,直接驱动一轮

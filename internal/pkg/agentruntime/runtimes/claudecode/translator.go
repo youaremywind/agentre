@@ -7,11 +7,11 @@ import (
 
 	"github.com/cago-frame/agents/provider"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/canonical"
-	"agentre/internal/pkg/diff"
-	"agentre/internal/pkg/llmcatalog"
-	"agentre/pkg/claudecode"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/canonical"
+	"github.com/agentre-ai/agentre/internal/pkg/diff"
+	"github.com/agentre-ai/agentre/internal/pkg/llmcatalog"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
 )
 
 // writeContentByteCap canonical.FileWrite 内容字节上限。

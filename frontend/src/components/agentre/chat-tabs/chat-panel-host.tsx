@@ -94,7 +94,7 @@ export function ChatPanelHost() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
+    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       {panelTabs.map((t) =>
         t.meta.kind === "terminal" ? (
           <HostedTerminalPanel
@@ -197,8 +197,8 @@ const HostedPanel = React.memo(function HostedPanel({
       ref={wrapperRef}
       data-tab-id={tab.id}
       data-active={active}
-      style={{ display: active ? "flex" : "none" }}
-      className="flex h-full min-h-0 flex-1 flex-col"
+      aria-hidden={!active}
+      className={panelFrameClassName(active)}
     >
       {isNewTab && !agent ? (
         <MissingNewSessionAgent
@@ -240,8 +240,8 @@ const HostedTerminalPanel = React.memo(function HostedTerminalPanel({
     <div
       data-tab-id={tab.id}
       data-active={active}
-      style={{ display: active ? "flex" : "none" }}
-      className="flex h-full min-h-0 flex-1 flex-col"
+      aria-hidden={!active}
+      className={panelFrameClassName(active)}
     >
       <TerminalPanel
         terminalID={meta.terminalId}
@@ -266,13 +266,19 @@ const HostedGroupPanel = React.memo(function HostedGroupPanel({
     <div
       data-tab-id={tab.id}
       data-active={active}
-      style={{ display: active ? "flex" : "none" }}
-      className="flex h-full min-h-0 flex-1 flex-col"
+      aria-hidden={!active}
+      className={panelFrameClassName(active)}
     >
       <GroupChat groupId={meta.groupId} />
     </div>
   );
 });
+
+function panelFrameClassName(active: boolean): string {
+  const base = "h-full min-h-0 flex-1 flex-col";
+  if (active) return `${base} relative z-10 flex`;
+  return `${base} invisible pointer-events-none absolute inset-0 z-0 flex overflow-hidden`;
+}
 
 function MissingNewSessionAgent({
   agentId,

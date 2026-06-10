@@ -118,6 +118,11 @@
       "providerSynced": "已同步远端 Provider",
       "saved": "已保存"
     },
+    "defaultModel": {
+      "hint": "--model · 留空走供应商模型 / CLI 默认",
+      "label": "自定义模型",
+      "placeholder": "如 claude-fable-5 或别名 opus/sonnet（走 CLI 登录态时生效）"
+    },
     "modelRoutes": {
       "hint": "ANTHROPIC_DEFAULT_*_MODEL，留空走主供应商",
       "inheritMain": "继承主供应商",
@@ -662,7 +667,14 @@
       "placeholder": "给群里发消息… 用 @ 提及成员",
       "send": "发送"
     },
-    "settings": { "workdir": "工作目录", "archive": "归档群" },
+    "settings": { "project": "项目", "noProject": "未绑定项目" },
+    "delete": {
+      "button": "删除群",
+      "title": "删除群聊？",
+      "description": "将移除该群。成员会话默认保留,除非你勾选下面的选项一并删除。",
+      "alsoSessions": "同时删除关联的会话",
+      "confirm": "删除"
+    },
     "you": "你",
     "onlyXReceived": "仅 {{name}} 收到",
     "new": {

@@ -8,12 +8,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/agent_repo/mock_agent_repo"
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 )
 
 // fakeRosterGW 是内部测试用的最小 ChatGateway(避免 internal 测试 import mock_group_svc
@@ -49,6 +49,31 @@ func TestBuildGroupMCP_HostGetsInvite(t *testing.T) {
 		So(host[0].Tools, ShouldContain, "group_invite")
 		So(member[0].Tools, ShouldContain, "group_send")
 		So(member[0].Tools, ShouldNotContain, "group_invite")
+	})
+}
+
+// 回归(dev group-3): prompt 只说「@用户 = 回复人类」而投递抬头写「(来自 你)」,
+// 词汇对不上 → codex 完成任务后把汇报对象选成 host(mentions:["claude glm"]),
+// 未被 @ 的成员被卷入, agent 互聊不止。prompt 必须给出明确的回复路由规则。
+func TestBuildGroupSystemPrompt_ReplyToSourceGuidance(t *testing.T) {
+	Convey("成员 prompt 含「默认回复消息来源 / 来自用户时 mentions:[\"用户\"] / 勿随意 @ 其他成员」", t, func() {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		agentRepo := mock_agent_repo.NewMockAgentRepo(ctrl)
+		agent_repo.RegisterAgent(agentRepo)
+		agentRepo.EXPECT().Find(gomock.Any(), gomock.Any()).Return(
+			&agent_entity.Agent{Status: consts.ACTIVE}, nil).AnyTimes()
+
+		s := newGroupSvc(fakeRosterGW{}, nil)
+		g := &group_entity.Group{ID: 5, Title: "队"}
+		members := []*group_entity.GroupMember{
+			{ID: 1, AgentID: 1, Role: group_entity.RoleHost},
+			{ID: 2, AgentID: 2, Role: group_entity.RoleMember},
+		}
+		prompt := s.buildGroupSystemPrompt(g, members, members[1])
+		So(prompt, ShouldContainSubstring, `(来自 X)`)
+		So(prompt, ShouldContainSubstring, `mentions:["用户"]`)
+		So(prompt, ShouldContainSubstring, "不要主动 @ 其他成员")
 	})
 }
 

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/paths"
-	"agentre/pkg/piagent"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/paths"
+	"github.com/agentre-ai/agentre/pkg/piagent"
 )
 
 type stream interface {

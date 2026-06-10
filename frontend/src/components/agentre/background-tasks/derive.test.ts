@@ -4,11 +4,20 @@ import type { chat_svc } from "../../../../wailsjs/go/models";
 
 import { deriveBackgroundTasks } from "./derive";
 
+// A genuine background task block carries BOTH a local_bash overlay AND the
+// run_in_background tool input — the helpers default to that so fixtures stay
+// valid under the corrected "is this a background task" contract.
 const makeBlock = (
   type: string,
   toolUseId: string,
   subagent: Record<string, unknown>,
-) => ({ type, toolUseId, subagent }) as unknown as chat_svc.ChatBlock;
+) =>
+  ({
+    type,
+    toolUseId,
+    toolInput: { run_in_background: true },
+    subagent,
+  }) as unknown as chat_svc.ChatBlock;
 const makeMessage = (createtime: number, blocks: chat_svc.ChatBlock[]) =>
   ({ createtime, blocks }) as unknown as chat_svc.ChatMessage;
 
@@ -16,6 +25,7 @@ const tu = (over: Record<string, unknown> = {}) =>
   ({
     type: "tool_use",
     toolUseId: "tu1",
+    toolInput: { run_in_background: true },
     subagent: {
       kind: "local_bash",
       taskDescription: "sleep 20",
@@ -101,6 +111,41 @@ describe("deriveBackgroundTasks", () => {
       [tu({ subagent: { taskDescription: "y", status: "running" } })],
     );
     expect(tasks).toHaveLength(0);
+  });
+
+  it("excludes a foreground bash — local_bash overlay without run_in_background is not a background task", () => {
+    // The real CLI emits task_type:"local_bash" frames for EVERY Bash, not just
+    // run_in_background ones, so the kind alone is not enough — gate on the
+    // tool input's run_in_background flag (same discriminator the inline pill uses).
+    const foreground = {
+      type: "tool_use",
+      toolUseId: "tu-fg",
+      toolName: "Bash",
+      toolInput: { command: "git stash -u" },
+      subagent: {
+        kind: "local_bash",
+        status: "running",
+        taskDescription: "Stash untracked files",
+      },
+    } as unknown as Parameters<typeof deriveBackgroundTasks>[1][number];
+    const tasks = deriveBackgroundTasks([], [foreground]);
+    expect(tasks).toHaveLength(0);
+  });
+
+  it("includes a bash with run_in_background:true", () => {
+    const background = {
+      type: "tool_use",
+      toolUseId: "tu-bg",
+      toolName: "Bash",
+      toolInput: { command: "sleep 20", run_in_background: true },
+      subagent: {
+        kind: "local_bash",
+        status: "running",
+        taskDescription: "sleep 20",
+      },
+    } as unknown as Parameters<typeof deriveBackgroundTasks>[1][number];
+    const tasks = deriveBackgroundTasks([], [background]);
+    expect(tasks.map((t) => t.toolUseId)).toEqual(["tu-bg"]);
   });
 
   it("threads startedAt from the containing message createtime + durationMs + summary", () => {

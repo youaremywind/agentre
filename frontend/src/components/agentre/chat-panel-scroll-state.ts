@@ -6,6 +6,9 @@ type TranscriptScrollState = {
   // 仅凭 scrollTop 像素会落到错的消息;有锚点时改用 scrollToAnchor 钉到该消息并随测量收敛。
   anchorId?: number;
   anchorOffset?: number;
+  // 行级虚拟化下长消息拆成多行;anchorRowKey(data-row-key)让恢复精确钉回
+  // 视口顶那一行,而不是塌到消息首行。可选:旧快照/无行时按 anchorId 回退。
+  anchorRowKey?: string;
 };
 
 const transcriptScrollStates = new Map<string, TranscriptScrollState>();

@@ -137,14 +137,16 @@ describe("ChatPanelHost", () => {
     expect(chatPanelRenderCounts.get(3)).toBeGreaterThan(oldActiveBefore);
   });
 
-  it("非 active tab 的 ChatPanel 容器 display:none", () => {
+  it("Given an inactive session tab is mounted, When ChatPanelHost renders, Then it stays out of interaction without display:none", () => {
     useChatTabsStore.getState().openSessionInNewTab(1);
     useChatTabsStore.getState().openSessionInNewTab(2);
     const firstId = useChatTabsStore.getState().tabs[0].id;
     useChatTabsStore.getState().setActive(firstId);
     render(<ChatPanelHost />);
     const wrap2 = screen.getByTestId("chat-panel-2").parentElement!;
-    expect(wrap2).toHaveStyle({ display: "none" });
+    expect(wrap2).not.toHaveStyle({ display: "none" });
+    expect(wrap2).toHaveAttribute("aria-hidden", "true");
+    expect(wrap2).toHaveClass("pointer-events-none");
   });
 
   it("Given terminal tabs, When the active tab changes, Then TerminalPanel receives active for focus management", () => {

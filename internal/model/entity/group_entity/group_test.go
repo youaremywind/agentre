@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
 )
 
 func TestGroup_Check(t *testing.T) {

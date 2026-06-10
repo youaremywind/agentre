@@ -15,8 +15,8 @@ import (
 	"github.com/cago-frame/cago/pkg/consts"
 	"github.com/stretchr/testify/assert"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/llm_provider_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/llm_provider_entity"
 )
 
 // fakeLookup 测试用 provider lookup，返回构造时 inject 的 map。

@@ -15,13 +15,13 @@ import (
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
 
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/pkg/code"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
 )
 
 // Emitter 群事件出口(由 app 层注入 → wailsruntime.EventsEmit)。
@@ -57,7 +57,9 @@ type GroupSvc interface {
 	ResumeGroup(ctx context.Context, id int64) error
 	RenameGroup(ctx context.Context, id int64, title string) error
 	SetGroupPinned(ctx context.Context, id int64, pinned bool) error
-	ArchiveGroup(ctx context.Context, id int64) error
+	// DeleteGroup 删除群(软删 status=DELETE)。deleteSessions=true 时一并软删全群成员的
+	// backing session;false 时保留会话原样(仍带 group_id)。
+	DeleteGroup(ctx context.Context, id int64, deleteSessions bool) error
 	// MCPHandler 返回 group_send MCP handler，供 bootstrap 注册到 gateway /mcp/group/。
 	MCPHandler() http.Handler
 	// SetGatewayBaseURL 注入本机 gateway base(如 http://127.0.0.1:<port>)，供拼装 agent 子进程的 MCP 配置。
@@ -446,8 +448,10 @@ func (s *groupSvc) SendGroupMessage(ctx context.Context, req *SendGroupMessageRe
 	_ = group_repo.Group().Update(ctx, g)
 	logger.Ctx(ctx).Info("group_svc.SendGroupMessage: sent",
 		zap.Int64("groupID", g.ID), zap.Int64s("recipientMemberIDs", recipientIDs), zap.Bool("toUser", toUser))
-	// 把 agent 收件人入队 + 踢调度器。
-	s.enqueueDeliveries(g.ID, recipientIDs, req.Text, "你")
+	// 把 agent 收件人入队 + 踢调度器。fromName 必须与 prompt 的「@用户 = 回复人类」
+	// 词汇一致, 成员才能把回复路由回提问的人(回归: 抬头写「你」时成员认不出来源
+	// 是人类, 把任务汇报 @ 给了别的成员)。
+	s.enqueueDeliveries(g.ID, recipientIDs, req.Text, "用户", 0)
 	s.kick(ctx, g.ID)
 	return nil
 }
@@ -481,6 +485,19 @@ func (s *groupSvc) persistMessage(ctx context.Context, g *group_entity.Group, ki
 }
 
 func groupEventName(groupID int64) string { return "group:event:" + strconv.FormatInt(groupID, 10) }
+
+// GroupRunStateEventName 是面向侧栏的全局运行态频道:只发 run_status 与
+// member_run_state(带 groupID / backingSessionID),不广播群消息。per-group 频道
+// (group:event:<id>)仅打开的群页订阅;侧栏的群行与成员 backing session 行
+// 需要不开群页也能实时拿到运行态,由前端常驻 GroupEventsHost 订阅这里。
+const GroupRunStateEventName = "groups:run_state"
+
+// emitRunStatus 把 run_status 变更同时发到 per-group 频道(群页)与全局频道(侧栏)。
+func (s *groupSvc) emitRunStatus(ctx context.Context, groupID int64, status string) {
+	payload := map[string]any{"kind": "run_status", "groupID": groupID, "runStatus": status}
+	s.emitter.Emit(ctx, groupEventName(groupID), payload)
+	s.emitter.Emit(ctx, GroupRunStateEventName, payload)
+}
 
 // MCPHandler 供 bootstrap 注册到 gateway /mcp/group/。
 func (s *groupSvc) MCPHandler() http.Handler { return s.mcp }
@@ -532,6 +549,7 @@ func (s *groupSvc) buildGroupSystemPrompt(g *group_entity.Group, members []*grou
 		fmt.Fprintf(&b, "\n- %s（%s）", s.names(context.Background(), m.AgentID), m.Role)
 	}
 	b.WriteString("\n\n你只会收到 @ 到你的消息。要发言请调用 `group_send` 工具：body=正文，mentions=收件成员显示名数组（@用户 = 回复人类）。一个回合可多次调用、可分别对不同人发不同内容。**不调用 group_send 的内容不会进群**。")
+	b.WriteString("\n回复路由：消息抬头「(来自 X)」标明来源，回复时默认 mentions 该来源——来源是用户时用 mentions:[\"用户\"]。除非任务确实需要协作，不要主动 @ 其他成员；任务完成直接向来源汇报，不要转发给主持人或其他成员。")
 	if me.IsHost() {
 		b.WriteString("\n作为主持人，调用 `group_invite` 工具邀请本部门同事进群：agentNames 填显示名数组（或 agentIds 填 id），reason 可选。")
 		if roster := s.recruitableRoster(context.Background(), g, members); roster != "" {
@@ -583,7 +601,7 @@ func (s *groupSvc) StopGroup(ctx context.Context, id int64) error {
 		return err
 	}
 	logger.Ctx(ctx).Info("group_svc.StopGroup: stopped", zap.Int64("groupId", id))
-	s.emitter.Emit(ctx, groupEventName(id), map[string]any{"kind": "run_status", "runStatus": group_entity.RunIdle})
+	s.emitRunStatus(ctx, id, group_entity.RunIdle)
 	return nil
 }
 
@@ -613,7 +631,7 @@ func (s *groupSvc) setRunStatus(ctx context.Context, id int64, status string) er
 		return err
 	}
 	logger.Ctx(ctx).Info("group_svc.setRunStatus: changed", zap.Int64("groupId", id), zap.String("runStatus", status))
-	s.emitter.Emit(ctx, groupEventName(id), map[string]any{"kind": "run_status", "runStatus": status})
+	s.emitRunStatus(ctx, id, status)
 	return nil
 }
 
@@ -642,28 +660,32 @@ func (s *groupSvc) SetGroupPinned(ctx context.Context, id int64, pinned bool) er
 	return group_repo.Group().SetPinned(ctx, id, pinned)
 }
 
-// ArchiveGroup 归档(软删): 先 stopAll 再 status=DELETE。
-func (s *groupSvc) ArchiveGroup(ctx context.Context, id int64) error {
+// DeleteGroup 删除群(软删 status=DELETE): 先 stopAll 再 status=DELETE。
+// deleteSessions=true 时一并软删全群成员的 backing session;false 时保留会话原样。
+func (s *groupSvc) DeleteGroup(ctx context.Context, id int64, deleteSessions bool) error {
 	g, err := group_repo.Group().Find(ctx, id)
 	if err != nil || g == nil {
 		return i18n.NewError(ctx, code.GroupNotFound)
 	}
 	s.stopAll(ctx, id)
-	// 归档无需显式吊销 token:status=DELETE 后 memberCanPost(群已非 active)即拒绝全群 group_send。
-	// 软删全群成员的 backing session, 否则归档后它们仍以 group_id>0 的 ACTIVE 会话残留在各
-	// agent 侧栏。best-effort: 单条删除失败不阻断归档。
-	if members, err := group_repo.Member().ListByGroup(ctx, id); err == nil {
-		for _, m := range members {
-			if m.BackingSessionID <= 0 {
-				continue
-			}
-			if derr := s.gw.DeleteSession(ctx, m.BackingSessionID); derr != nil {
-				logger.Ctx(ctx).Warn("group_svc.ArchiveGroup: delete backing session failed",
-					zap.Int64("groupId", id), zap.Int64("sessionId", m.BackingSessionID), zap.Error(derr))
+	// 删除无需显式吊销 token:status=DELETE 后 memberCanPost(群已非 active)即拒绝全群 group_send。
+	// deleteSessions=true 时软删全群成员的 backing session, 否则它们仍以 group_id>0 的 ACTIVE 会话
+	// 残留在各 agent 侧栏。best-effort: 单条删除失败不阻断删除。
+	if deleteSessions {
+		if members, err := group_repo.Member().ListByGroup(ctx, id); err == nil {
+			for _, m := range members {
+				if m.BackingSessionID <= 0 {
+					continue
+				}
+				if derr := s.gw.DeleteSession(ctx, m.BackingSessionID); derr != nil {
+					logger.Ctx(ctx).Warn("group_svc.DeleteGroup: delete backing session failed",
+						zap.Int64("groupId", id), zap.Int64("sessionId", m.BackingSessionID), zap.Error(derr))
+				}
 			}
 		}
 	}
 	g.Status = consts.DELETE
-	logger.Ctx(ctx).Info("group_svc.ArchiveGroup: archived", zap.Int64("groupId", id))
+	logger.Ctx(ctx).Info("group_svc.DeleteGroup: deleted",
+		zap.Int64("groupId", id), zap.Bool("deleteSessions", deleteSessions))
 	return group_repo.Group().Update(ctx, g)
 }

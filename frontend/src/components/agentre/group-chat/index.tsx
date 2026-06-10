@@ -1,22 +1,29 @@
 import * as React from "react";
 import { ArrowDown, Pause, Play, Square } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useChatAgentsStore } from "@/stores/chat-agents-store";
 import { useChatTabsStore } from "@/stores/chat-tabs-store";
+import { useGroupListStore } from "@/stores/group-list-store";
 
 import { useChatAgents } from "../../../hooks/use-chat-agents";
 import { useGroup } from "../../../hooks/use-group";
+import { useProjectList } from "../../../hooks/use-project-list";
 import { useStickToBottom } from "../../../hooks/use-stick-to-bottom";
+
+import { MarkdownText } from "../markdown-text";
 
 import { GroupComposer, type GroupComposerSend } from "./group-composer";
 import { GroupRoster } from "./group-roster";
 import { GroupTranscript } from "./group-transcript";
-import { MentionText } from "./mention-text";
+import { MentionText, mentionMarkdownDecorator } from "./mention-text";
+import { normalizeMentionMarkup } from "./mentions";
 
 import {
-  GroupArchive,
+  GroupDelete,
   GroupPause,
   GroupResume,
   GroupSend,
@@ -40,13 +47,26 @@ const RUN_STATUS_KEY: Record<string, string> = {
 
 function GroupChat({ groupId }: { groupId: number }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { detail } = useGroup(groupId);
   const { agents } = useChatAgents();
+  const { projects } = useProjectList();
   const openGroupMemberSession = useChatTabsStore(
     (s) => s.openGroupMemberSession,
   );
 
   const group = detail?.group;
+
+  // 群绑定项目 → roster 设置页展示。projectId=0(未绑定)时 projectName 为空,
+  // roster 兜底成「未绑定项目」。点击跳到 /projects 并 focus 该项目。
+  const projectName = React.useMemo(
+    () => projects.find((p) => p.id === group?.projectId)?.name,
+    [projects, group?.projectId],
+  );
+  const openProject = React.useCallback(
+    (projectID: number) => navigate(`/projects?focus=${projectID}`),
+    [navigate],
+  );
   const members = React.useMemo(() => detail?.members ?? [], [detail?.members]);
   const messages = React.useMemo(
     () => detail?.messages ?? [],
@@ -101,6 +121,34 @@ function GroupChat({ groupId }: { groupId: number }) {
     openMemberById(member.id);
   }
 
+  // handleDelete: 删除该群(deleteSessions 决定是否一并删关联会话),然后让删除在 UI 立即可见 ——
+  // reload 群列表(Group().List 过滤 status=ACTIVE → 群消失)+ reload 会话列表(deleteSessions=true
+  // 时被软删的成员 backing session 从各 agent 侧栏 recent/attention/运行灯消失)+ 关闭该群标签页。
+  const handleDelete = React.useCallback(
+    async (deleteSessions: boolean) => {
+      try {
+        await GroupDelete(groupId, deleteSessions);
+      } catch (e: unknown) {
+        console.error("[group] delete failed", e);
+        return;
+      }
+      await Promise.all([
+        useGroupListStore.getState().reload(),
+        useChatAgentsStore.getState().reload(),
+      ]);
+      // 关闭该群的群标签页 + 其所有成员会话(groupSession)标签页 —— 群已不存在,
+      // 群上下文的 tab 一并收掉(快照后再逐个关,closeTab 会原地改 tabs)。
+      const tabsStore = useChatTabsStore.getState();
+      const stale = tabsStore.tabs.filter(
+        (tb) =>
+          (tb.meta.kind === "group" || tb.meta.kind === "groupSession") &&
+          tb.meta.groupId === groupId,
+      );
+      for (const tb of stale) tabsStore.closeTab(tb.id);
+    },
+    [groupId],
+  );
+
   // mentionRoster: 把成员映射成 MentionText 需要的 { memberId, name } 形态,
   // 供 transcript 里 @mention chip 按名字命中 + 点击跳转成员会话视图。
   const mentionRoster = React.useMemo(
@@ -108,9 +156,30 @@ function GroupChat({ groupId }: { groupId: number }) {
     [members, nameOf],
   );
 
-  // renderMessageBody: transcript 的 body 渲染接缝。把正文交给 MentionText 高亮
-  // @mention,点击 chip 复用 openMemberById —— 与点击 roster 行的 "›" 跳到同一视图。
+  // mentionDecorator: 挂在 MarkdownText 内联装饰器接缝上的 @mention chip,点击
+  // 复用 openMemberById —— 与点击 roster 行的 "›" 跳到同一视图。useMemo 保持引用
+  // 稳定,让 MarkdownText 的 memo 生效。
+  const mentionDecorator = React.useMemo(
+    () => mentionMarkdownDecorator(mentionRoster, openMemberById),
+    [mentionRoster, openMemberById],
+  );
+
+  // renderMessageBody: user/agent 正文走与单聊一致的 markdown 渲染(复用 MarkdownText),
+  // mention chip 经装饰器在 markdown 文本节点层面注入(代码块天然跳过)。
+  // <mention> 标记必须先归一成 @NAME —— react-markdown 会丢弃 raw HTML 节点。
   const renderMessageBody = React.useCallback(
+    (content: string) => (
+      <MarkdownText
+        text={normalizeMentionMarkup(content)}
+        decorator={mentionDecorator}
+      />
+    ),
+    [mentionDecorator],
+  );
+
+  // renderSystemBody: system 行("X 加入了群聊")是短动态文案,保持纯文本 + mention
+  // 高亮,不走 markdown —— 胶囊里渲染块级 markdown 元素既无必要也破坏样式。
+  const renderSystemBody = React.useCallback(
     (content: string) => (
       <MentionText
         text={content}
@@ -156,53 +225,63 @@ function GroupChat({ groupId }: { groupId: number }) {
     <div className="flex min-h-0 min-w-0 flex-1">
       <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex min-h-[44px] shrink-0 items-center gap-3 border-b border-border px-5 py-1.5">
-            {/* 群标题是动态内容，不进 t()。 */}
-            <div
-              className="min-w-0 flex-1 truncate text-sm font-semibold"
-              title={group.title}
-            >
-              {group.title}
-            </div>
-            <Badge variant="secondary">
-              {t(`group.runStatus.${runStatusKey}`)}
-            </Badge>
-            <span className="text-2xs text-muted-foreground">
-              {t("group.rounds", { count: group.roundCount })}
-            </span>
-            {isRunning ? (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => runControl(GroupPause)}
-                >
-                  <Pause data-icon="inline-start" aria-hidden="true" />
-                  {t("group.controls.pause")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => runControl(GroupStop)}
-                >
-                  <Square data-icon="inline-start" aria-hidden="true" />
-                  {t("group.controls.stop")}
-                </Button>
-              </>
-            ) : null}
-            {isPaused ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => runControl(GroupResume)}
+          <div className="flex min-h-[44px] shrink-0 flex-col justify-center gap-1 border-b border-border px-5 py-1.5">
+            {/* 第一行：群标题 + 运行控制按钮 */}
+            <div className="flex min-w-0 items-center gap-3">
+              {/* 群标题是动态内容，不进 t()。 */}
+              <div
+                className="min-w-0 flex-1 truncate text-sm font-semibold"
+                title={group.title}
               >
-                <Play data-icon="inline-start" aria-hidden="true" />
-                {t("group.controls.resume")}
-              </Button>
-            ) : null}
+                {group.title}
+              </div>
+              {isRunning ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => runControl(GroupPause)}
+                  >
+                    <Pause data-icon="inline-start" aria-hidden="true" />
+                    {t("group.controls.pause")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => runControl(GroupStop)}
+                  >
+                    <Square data-icon="inline-start" aria-hidden="true" />
+                    {t("group.controls.stop")}
+                  </Button>
+                </>
+              ) : null}
+              {isPaused ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => runControl(GroupResume)}
+                >
+                  <Play data-icon="inline-start" aria-hidden="true" />
+                  {t("group.controls.resume")}
+                </Button>
+              ) : null}
+            </div>
+            {/* 第二行：群标识符 + 运行状态 + 轮次（与普通会话的 sess-{id} 元数据行对齐） */}
+            <div className="flex min-w-0 items-center gap-2">
+              {/* group-{id} 是技术标识符，和 sess-{id} 一致，不进 t()。 */}
+              <span className="font-mono text-2xs text-muted-foreground">
+                group-{group.id}
+              </span>
+              <Badge variant="secondary">
+                {t(`group.runStatus.${runStatusKey}`)}
+              </Badge>
+              <span className="text-2xs text-muted-foreground">
+                {t("group.rounds", { count: group.roundCount })}
+              </span>
+            </div>
           </div>
 
           <section
@@ -216,6 +295,7 @@ function GroupChat({ groupId }: { groupId: number }) {
               roster={members}
               memberName={memberName}
               renderBody={renderMessageBody}
+              renderSystemBody={renderSystemBody}
             />
             {!atBottom ? (
               <Button
@@ -243,12 +323,15 @@ function GroupChat({ groupId }: { groupId: number }) {
       <GroupRoster
         members={members}
         memberName={memberName}
+        projectID={group.projectId}
+        projectName={projectName}
+        onOpenProject={openProject}
         onOpenMember={openMember}
         onInvite={() => {
           // MVP：邀请 picker 留待后续接入真实 agent 选择器。
           console.warn("[group] invite picker not wired");
         }}
-        onArchive={() => void GroupArchive(group.id)}
+        onDelete={(deleteSessions) => void handleDelete(deleteSessions)}
       />
     </div>
   );

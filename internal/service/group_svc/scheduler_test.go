@@ -10,12 +10,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/repository/group_repo"
-	"agentre/internal/repository/group_repo/mock_group_repo"
-	"agentre/internal/service/chat_svc"
-	"agentre/internal/service/group_svc"
-	"agentre/internal/service/group_svc/mock_group_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo/mock_group_repo"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/service/group_svc"
+	"github.com/agentre-ai/agentre/internal/service/group_svc/mock_group_svc"
 )
 
 func TestScheduler_FanOutThenToolRoute(t *testing.T) {
@@ -310,6 +310,147 @@ func waitForRunStatus(ch <-chan string, want string, timeout time.Duration) bool
 	}
 }
 
+// 回归(dev group-3): 用户消息投递抬头原为「(来自 你)」,与 prompt 的「@用户 =
+// 回复人类」词汇对不上 → 成员认不出消息来自人类用户, 把回复路由给了别的成员。
+// 统一成「(来自 用户)」。
+func TestScheduler_UserDeliveryHeaderUsesYonghu(t *testing.T) {
+	Convey("用户消息的 delivery 抬头是 (来自 用户)", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		msgRepo := mock_group_repo.NewMockGroupMessageRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+		group_repo.RegisterMessage(msgRepo)
+
+		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunRunning, Status: consts.ACTIVE}
+		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
+		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		members := []*group_entity.GroupMember{
+			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
+		}
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(members, nil).AnyTimes()
+		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
+		msgRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+		ch11 := make(chan chat_svc.TurnResult, 1)
+		gw.EXPECT().ObserveTurn(int64(11)).Return((<-chan chat_svc.TurnResult)(ch11), func() {}).AnyTimes()
+		sent := make(chan string, 1)
+		gw.EXPECT().Send(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, req *chat_svc.SendRequest) (*chat_svc.SendResponse, error) {
+				sent <- req.Text
+				return &chat_svc.SendResponse{SessionID: req.SessionID}, nil
+			})
+
+		svc := group_svc.NewForTestWithNames(gw, map[int64]string{1: "林队"})
+		So(svc.SendGroupMessage(ctx, &group_svc.SendGroupMessageRequest{GroupID: 5, Text: "干活", RecipientMemberIDs: []int64{1}}), ShouldBeNil)
+
+		select {
+		case text := <-sent:
+			So(text, ShouldStartWith, "(来自 用户)\n")
+		case <-time.After(2 * time.Second):
+			t.Fatal("投递未起")
+		}
+	})
+}
+
+// 回归(dev group-3 msg33 丢失): Send 瞬时失败(如 SQLITE_BUSY)时 delivery 被
+// 有意丢弃 —— 消息静默消失, 收件成员永远收不到。改为回队队首重试一次。
+func TestScheduler_SendFailureRetriesOnceThenDelivers(t *testing.T) {
+	Convey("Send 第一次失败 → delivery 回队重试一次, 消息不丢", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		msgRepo := mock_group_repo.NewMockGroupMessageRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+		group_repo.RegisterMessage(msgRepo)
+
+		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunRunning, Status: consts.ACTIVE}
+		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
+		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		members := []*group_entity.GroupMember{
+			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
+		}
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(members, nil).AnyTimes()
+		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
+		msgRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+		ch11 := make(chan chat_svc.TurnResult, 1)
+		gw.EXPECT().ObserveTurn(int64(11)).Return((<-chan chat_svc.TurnResult)(ch11), func() {}).AnyTimes()
+		var calls int
+		sent := make(chan string, 4)
+		gw.EXPECT().Send(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, req *chat_svc.SendRequest) (*chat_svc.SendResponse, error) {
+				calls++ // launchDelivery 串行递归调用, 无并发写
+				if calls == 1 {
+					return nil, errors.New("database is locked")
+				}
+				sent <- req.Text
+				return &chat_svc.SendResponse{SessionID: req.SessionID}, nil
+			}).AnyTimes()
+
+		svc := group_svc.NewForTestWithNames(gw, map[int64]string{1: "林队"})
+		So(svc.SendGroupMessage(ctx, &group_svc.SendGroupMessageRequest{GroupID: 5, Text: "干活", RecipientMemberIDs: []int64{1}}), ShouldBeNil)
+
+		select {
+		case text := <-sent:
+			So(text, ShouldContainSubstring, "干活") // 重投的是同一条 delivery
+		case <-time.After(2 * time.Second):
+			t.Fatal("Send 失败后未重试, delivery 被丢弃")
+		}
+	})
+}
+
+// 重试有上界: 连续失败 maxDeliveryAttempts 次后丢弃并 quiesce, 不无限循环。
+func TestScheduler_SendFailureTwiceDropsDelivery(t *testing.T) {
+	Convey("Send 连续失败两次 → 丢弃 delivery 并静默到 waiting_user", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		msgRepo := mock_group_repo.NewMockGroupMessageRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+		group_repo.RegisterMessage(msgRepo)
+
+		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunRunning, Status: consts.ACTIVE}
+		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
+		groupRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		members := []*group_entity.GroupMember{
+			{ID: 1, GroupID: 5, AgentID: 1, BackingSessionID: 11, Role: group_entity.RoleHost, Status: group_entity.MemberActive},
+		}
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(members, nil).AnyTimes()
+		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
+		msgRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+		ch11 := make(chan chat_svc.TurnResult, 1)
+		gw.EXPECT().ObserveTurn(int64(11)).Return((<-chan chat_svc.TurnResult)(ch11), func() {}).AnyTimes()
+		var calls int
+		gw.EXPECT().Send(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(context.Context, *chat_svc.SendRequest) (*chat_svc.SendResponse, error) {
+				calls++
+				return nil, errors.New("database is locked")
+			}).AnyTimes()
+
+		svc := group_svc.NewForTestWithNames(gw, map[int64]string{1: "林队"})
+		runStatusCh := make(chan string, 8)
+		group_svc.SetEmitterForTest(svc, runStatusEmitter(runStatusCh))
+		So(svc.SendGroupMessage(ctx, &group_svc.SendGroupMessageRequest{GroupID: 5, Text: "干活", RecipientMemberIDs: []int64{1}}), ShouldBeNil)
+
+		So(waitForRunStatus(runStatusCh, group_entity.RunWaitingUser, time.Second), ShouldBeTrue)
+		So(calls, ShouldEqual, 2) // 重试一次即止, 不出现第三次
+	})
+}
+
 func TestScheduler_TurnErrorReleasesSlot(t *testing.T) {
 	Convey("成员 turn 以 Err 结束 → 释放槽(后续投递可再起), 且不为出错 turn 落消息", t, func() {
 		ctx := context.Background()
@@ -362,7 +503,7 @@ func TestScheduler_TurnErrorReleasesSlot(t *testing.T) {
 		// quiesce 到 waiting_user(经 emitter 同步)说明出错 turn 的槽已释放。
 		So(waitForRunStatus(runStatusCh, group_entity.RunWaitingUser, time.Second), ShouldBeTrue)
 
-		group_svc.EnqueueForTest(svc, 5, []int64{1}, "再来一次", "你")
+		group_svc.EnqueueForTest(svc, 5, []int64{1}, "再来一次", "用户", 0)
 		group_svc.KickForTest(svc, ctx, 5)
 		select {
 		case sid := <-sent:

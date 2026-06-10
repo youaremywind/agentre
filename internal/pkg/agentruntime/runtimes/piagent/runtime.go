@@ -10,11 +10,11 @@ import (
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/pkg/llmcatalog"
-	pkgpi "agentre/pkg/piagent"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/pkg/llmcatalog"
+	pkgpi "github.com/agentre-ai/agentre/pkg/piagent"
 )
 
 var defaultRuntime = New()

@@ -6,7 +6,7 @@ This file provides unified guidance for all AI coding agents (Claude Code, Codex
 
 - Agentre is a Wails v2 desktop app: Go 1.26 backend + React 19 / TypeScript frontend.
 - Main tech stack: Go 1.26, Wails v2, React 19, TypeScript, Vite, Tailwind CSS v4, pnpm 10.33.
-- The Go module path is `agentre`, with no VCS prefix — do not invent a `github.com/...` import prefix.
+- The Go module path is `github.com/agentre-ai/agentre`.
 - Frontend-backend IPC only goes through the Wails bindings in `internal/app`; the generated bindings live in `frontend/wailsjs`; **do not add HTTP-style app APIs**.
 
 This repository produces two binaries:

@@ -12,16 +12,16 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/chat_entity"
-	"agentre/internal/repository/agent_backend_repo"
-	"agentre/internal/repository/agent_backend_repo/mock_agent_backend_repo"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/agent_repo/mock_agent_repo"
-	"agentre/internal/repository/chat_repo"
-	"agentre/internal/repository/chat_repo/mock_chat_repo"
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo/mock_agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/chat_repo"
+	"github.com/agentre-ai/agentre/internal/repository/chat_repo/mock_chat_repo"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 )
 
 // registerAgentBackendForGroupSession 注册 agent(agentID→backendID 12)+ claudecode 后端,

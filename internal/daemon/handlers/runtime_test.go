@@ -12,14 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/daemon/handlers"
-	"agentre/internal/daemon/handlers/mock_handlers"
-	"agentre/internal/daemon/rpc"
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/llm_provider_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/pkg/agentruntime/runtimes/remote/wire"
+	"github.com/agentre-ai/agentre/internal/daemon/handlers"
+	"github.com/agentre-ai/agentre/internal/daemon/handlers/mock_handlers"
+	"github.com/agentre-ai/agentre/internal/daemon/rpc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/llm_provider_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/remote/wire"
 )
 
 // ── fake Runtimes ───────────────────────────────────────────────────────────

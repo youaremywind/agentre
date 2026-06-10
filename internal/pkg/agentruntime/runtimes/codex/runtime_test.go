@@ -9,10 +9,10 @@ import (
 	"github.com/cago-frame/agents/provider"
 	. "github.com/smartystreets/goconvey/convey"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/capability"
-	pkgcodex "agentre/pkg/codex"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	pkgcodex "github.com/agentre-ai/agentre/pkg/codex"
 )
 
 // TestCodexCapabilities 钉死 codex runtime 的能力矩阵 + permission mode 元数据。

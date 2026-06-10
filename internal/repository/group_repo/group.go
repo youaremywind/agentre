@@ -10,7 +10,7 @@ import (
 	"github.com/cago-frame/cago/pkg/consts"
 	"gorm.io/gorm"
 
-	"agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
 )
 
 //go:generate mockgen -source group.go -destination mock_group_repo/mock_group.go

@@ -3,7 +3,7 @@ package chat_svc
 import (
 	"testing"
 
-	"agentre/internal/model/entity/chat_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
 )
 
 // activeStreamName backs LoadSession.ActiveStream: when a turn is in-flight, a frontend

@@ -104,10 +104,12 @@ type ChatAgentItem = chat_svc.ChatAgentItem;
 type TranscriptScrollSnapshot = {
   atBottom: boolean;
   scrollTop: number;
-  // 非贴底时记的锚点:视口顶部那条消息的 id + 其顶边在视口顶上方的 px。
+  // 非贴底时记的锚点:视口顶部那一行的消息 id + 行顶边在视口顶上方的 px +
+  // 行身份(行级虚拟化下长消息拆多行,rowKey 才能钉回同一行)。
   // 见 computeTopVisibleAnchor / ChatTranscriptHandle.scrollToAnchor。
   anchorId?: number;
   anchorOffset?: number;
+  anchorRowKey?: string;
 };
 
 type ScrollMetrics = {
@@ -157,9 +159,11 @@ function isCollapsedBelowGuard(
 // 返回其 id 与顶边在视口顶上方的 px。非贴底保存时记下它,路由重挂后据此 scrollToAnchor
 // 钉回该消息,避免仅凭像素 scrollTop 在"整列还是 estimate 高度"时落到错消息的漂移。
 // 找不到(无消息行 / 容器未布局)返回 null,调用方退回纯像素快照。
-export function computeTopVisibleAnchor(
-  el: HTMLElement,
-): { anchorId: number; anchorOffset: number } | null {
+export function computeTopVisibleAnchor(el: HTMLElement): {
+  anchorId: number;
+  anchorOffset: number;
+  anchorRowKey?: string;
+} | null {
   const containerTop = el.getBoundingClientRect().top;
   const rows = el.querySelectorAll<HTMLElement>("[data-message-id]");
   for (const row of rows) {
@@ -167,7 +171,14 @@ export function computeTopVisibleAnchor(
     if (rect.bottom <= containerTop) continue; // 完全在视口上方,跳过
     const id = Number(row.getAttribute("data-message-id"));
     if (!Number.isFinite(id)) continue;
-    return { anchorId: id, anchorOffset: Math.max(0, containerTop - rect.top) };
+    // 行级虚拟化下一条消息拆成多行,offset 相对的是「这一行」的顶边 —— 把行身份
+    // (data-row-key)一并记下,恢复端才能钉回同一行而不是塌到消息首行。
+    const rowKey = row.getAttribute("data-row-key");
+    return {
+      anchorId: id,
+      anchorOffset: Math.max(0, containerTop - rect.top),
+      ...(rowKey ? { anchorRowKey: rowKey } : {}),
+    };
   }
   return null;
 }
@@ -879,6 +890,7 @@ function ChatPanel({
         transcriptHandleRef.current?.scrollToAnchor(
           saved.anchorId,
           saved.anchorOffset ?? 0,
+          saved.anchorRowKey,
         )
       ) {
         pendingScrollRestoreRef.current = null;
@@ -1761,6 +1773,7 @@ function ChatPanel({
               ) : (
                 <section
                   ref={setTranscriptNode}
+                  data-testid="chat-transcript-scroll"
                   onScroll={handleTranscriptScroll}
                   className="min-h-0 flex-1 overflow-auto px-7 py-5"
                 >
@@ -1792,6 +1805,7 @@ function ChatPanel({
                   {showBackToBottom ? (
                     <Button
                       type="button"
+                      data-testid="back-to-bottom-button"
                       variant="outline"
                       size="icon-sm"
                       aria-label={t("chatPanel.scroll.backToBottom")}

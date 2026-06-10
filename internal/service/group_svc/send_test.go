@@ -8,12 +8,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/repository/group_repo"
-	"agentre/internal/repository/group_repo/mock_group_repo"
-	"agentre/internal/service/chat_svc"
-	"agentre/internal/service/group_svc"
-	"agentre/internal/service/group_svc/mock_group_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo/mock_group_repo"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/service/group_svc"
+	"github.com/agentre-ai/agentre/internal/service/group_svc/mock_group_svc"
 )
 
 func TestSendGroupMessage_ResolvesMentionsAndPersists(t *testing.T) {

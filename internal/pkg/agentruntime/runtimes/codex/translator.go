@@ -6,10 +6,10 @@ import (
 
 	"github.com/cago-frame/agents/provider"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/canonical"
-	"agentre/internal/pkg/diff"
-	"agentre/pkg/codex"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/canonical"
+	"github.com/agentre-ai/agentre/internal/pkg/diff"
+	"github.com/agentre-ai/agentre/pkg/codex"
 )
 
 // translate 把单帧 codex.Event 翻成 0/1/n 个 sealed agentruntime.Event。

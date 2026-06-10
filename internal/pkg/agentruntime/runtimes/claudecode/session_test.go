@@ -5,10 +5,10 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/llm_provider_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/pkg/claudecode"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/llm_provider_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
 )
 
 // TestCCBuildClientOpts_MCPServersInjectTool 锁住 AM2:RunRequest.MCPServers 非空时
@@ -94,6 +94,51 @@ func TestCCBuildClientOpts_ProviderModelDownToCLI(t *testing.T) {
 		}
 		c := claudecode.New(ccBuildClientOpts(spec, "claude")...)
 		// strings.TrimSpace 之后空串不应当下发 WithModel,留给 CLI 走默认。
+		So(c.Model(), ShouldEqual, "")
+	})
+}
+
+// TestCCBuildClientOpts_BackendDefaultModel 锁住 CLI 登录态(无 provider)下的自定义
+// 模型:backend.DefaultModel 在 provider.Model 为空时兜底下发成 --model;provider.Model
+// 非空时仍优先,DefaultModel 被忽略(绑 provider 行为不变)。
+func TestCCBuildClientOpts_BackendDefaultModel(t *testing.T) {
+	Convey("provider = nil + backend.DefaultModel 非空 → 下发 DefaultModel", t, func() {
+		spec := ccLaunchSpec{
+			Req: agentruntime.RunRequest{
+				Backend: &agent_backend_entity.AgentBackend{
+					Type:         string(agent_backend_entity.TypeClaudeCode),
+					DefaultModel: "claude-fable-5",
+				},
+			},
+		}
+		c := claudecode.New(ccBuildClientOpts(spec, "claude")...)
+		So(c.Model(), ShouldEqual, "claude-fable-5")
+	})
+
+	Convey("provider.Model 非空 → 优先于 backend.DefaultModel", t, func() {
+		spec := ccLaunchSpec{
+			Req: agentruntime.RunRequest{
+				Backend: &agent_backend_entity.AgentBackend{
+					Type:         string(agent_backend_entity.TypeClaudeCode),
+					DefaultModel: "claude-fable-5",
+				},
+				Provider: &llm_provider_entity.LLMProvider{Model: "glm-5.1"},
+			},
+		}
+		c := claudecode.New(ccBuildClientOpts(spec, "claude")...)
+		So(c.Model(), ShouldEqual, "glm-5.1")
+	})
+
+	Convey("DefaultModel 只有空白 → 不下发 --model", t, func() {
+		spec := ccLaunchSpec{
+			Req: agentruntime.RunRequest{
+				Backend: &agent_backend_entity.AgentBackend{
+					Type:         string(agent_backend_entity.TypeClaudeCode),
+					DefaultModel: "   ",
+				},
+			},
+		}
+		c := claudecode.New(ccBuildClientOpts(spec, "claude")...)
 		So(c.Model(), ShouldEqual, "")
 	})
 }

@@ -1,8 +1,8 @@
 package app
 
 import (
-	"agentre/internal/model/entity/group_entity"
-	"agentre/internal/service/group_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/service/group_svc"
 )
 
 type GroupItem struct {
@@ -11,8 +11,11 @@ type GroupItem struct {
 	RunStatus  string `json:"runStatus"`
 	RoundCount int    `json:"roundCount"`
 	Pinned     bool   `json:"pinned"`
-	Createtime int64  `json:"createtime"`
-	Updatetime int64  `json:"updatetime"`
+	// ProjectID 是群绑定的项目(0 = 未绑定)。前端 roster 设置页据此解析项目名并
+	// 点击跳转到该项目,取代了原先未接线的「工作目录」展示。
+	ProjectID  int64 `json:"projectId"`
+	Createtime int64 `json:"createtime"`
+	Updatetime int64 `json:"updatetime"`
 }
 
 type GroupMemberItem struct {
@@ -59,7 +62,7 @@ type GroupSendRequest struct {
 }
 
 func toGroupItem(g *group_entity.Group) *GroupItem {
-	return &GroupItem{ID: g.ID, Title: g.Title, RunStatus: g.RunStatus, RoundCount: g.RoundCount, Pinned: g.Pinned, Createtime: g.Createtime, Updatetime: g.Updatetime}
+	return &GroupItem{ID: g.ID, Title: g.Title, RunStatus: g.RunStatus, RoundCount: g.RoundCount, Pinned: g.Pinned, ProjectID: g.ProjectID, Createtime: g.Createtime, Updatetime: g.Updatetime}
 }
 
 func toGroupMemberItem(m *group_entity.GroupMember) *GroupMemberItem {
@@ -134,4 +137,6 @@ func (a *App) GroupRename(id int64, title string) error {
 func (a *App) GroupSetPinned(id int64, pinned bool) error {
 	return group_svc.Default().SetGroupPinned(a.ctx, id, pinned)
 }
-func (a *App) GroupArchive(id int64) error { return group_svc.Default().ArchiveGroup(a.ctx, id) }
+func (a *App) GroupDelete(id int64, deleteSessions bool) error {
+	return group_svc.Default().DeleteGroup(a.ctx, id, deleteSessions)
+}

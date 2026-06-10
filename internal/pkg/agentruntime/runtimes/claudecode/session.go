@@ -6,8 +6,8 @@ import (
 	"errors"
 	"strings"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/pkg/claudecode"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
 )
 
 // ccStream 是 pkg/claudecode.Stream 的窄接口,便于测试注入 fake。
@@ -197,15 +197,20 @@ func ccBuildClientOpts(spec ccLaunchSpec, binary string) []claudecode.Option {
 		// 这个 flag,AskUserQuestion 会被 CLI 自动 deny,turn 直接挂掉。
 		claudecode.WithPermissionPromptTool("stdio"),
 	}
-	// 绑了 LLM provider 的 claudecode 后端(GLM / openrouter 等非 Anthropic
-	// 直连场景):必须把 provider.Model 下发成 --model,CLI 才能在 system.init
-	// 帧里报真实模型 id,result.Model → assistantMsg.Model 链才能写对。不传时
-	// CLI 落到本地登录态默认 model(如 claude-opus-4-7),经 gateway 透明改写
-	// 仍能调通 LLM 但 UI 显示错。
+	// --model 取值优先级:provider.Model(绑了 LLM provider,如 GLM / openrouter 等
+	// 非 Anthropic 直连场景,必须下发才能让 CLI 在 system.init 帧报真实模型 id) →
+	// backend.DefaultModel(走 CLI 登录态、未绑 provider 时的自定义模型,如
+	// claude-fable-5) → 不下发(CLI 落到本地登录态默认 model)。绑 provider 的行为
+	// 不变;只在 provider.Model 为空时用后端字段兜底,顺带让 CLI 登录态下
+	// result.Model → assistantMsg.Model 链也能写对。
+	model := strings.TrimSpace(spec.Req.Backend.DefaultModel)
 	if spec.Req.Provider != nil {
-		if model := strings.TrimSpace(spec.Req.Provider.Model); model != "" {
-			opts = append(opts, claudecode.WithModel(model))
+		if pm := strings.TrimSpace(spec.Req.Provider.Model); pm != "" {
+			model = pm
 		}
+	}
+	if model != "" {
+		opts = append(opts, claudecode.WithModel(model))
 	}
 	if spec.SessionUUID != "" {
 		opts = append(opts, claudecode.WithSessionID(spec.SessionUUID))

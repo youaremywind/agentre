@@ -12,7 +12,7 @@ import (
 	"github.com/cago-frame/cago/pkg/consts"
 	"github.com/cago-frame/cago/pkg/i18n"
 
-	"agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
 )
 
 // Project 一条项目记录。

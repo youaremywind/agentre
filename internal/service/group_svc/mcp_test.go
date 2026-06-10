@@ -9,7 +9,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"agentre/internal/service/group_svc"
+	"github.com/agentre-ai/agentre/internal/service/group_svc"
 )
 
 // groupSendCode 用给定 token 发一次 group_send tools/call, 返回 HTTP 状态码

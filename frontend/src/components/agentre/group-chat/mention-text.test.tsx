@@ -1,7 +1,9 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
-import { MentionText } from "./mention-text";
+import { MarkdownText } from "../markdown-text";
+
+import { MentionText, mentionMarkdownDecorator } from "./mention-text";
 
 describe("MentionText", () => {
   const roster = [
@@ -51,5 +53,37 @@ describe("MentionText", () => {
     fireEvent.click(screen.getByText("@Code Reviewer"));
     expect(onJump).toHaveBeenCalledWith(4); // full multi-word name
     expect(screen.queryByText("@Bob")).not.toBeInTheDocument();
+  });
+});
+
+describe("mentionMarkdownDecorator + MarkdownText", () => {
+  const roster = [
+    { memberId: 2, name: "后端" },
+    { memberId: 3, name: "前端" },
+  ];
+
+  it("renders markdown formatting and @mention chips together", () => {
+    const onJump = vi.fn();
+    const { container } = render(
+      <MarkdownText
+        text="请看 **重点**,麻烦 @后端 跟进 @陌生人"
+        decorator={mentionMarkdownDecorator(roster, onJump)}
+      />,
+    );
+    expect(container.querySelector("strong")?.textContent).toBe("重点");
+    fireEvent.click(screen.getByRole("button", { name: "@后端" }));
+    expect(onJump).toHaveBeenCalledWith(2);
+    expect(screen.getByText(/陌生人/)).toBeInTheDocument(); // 未命中 roster 保持纯文本
+  });
+
+  it("does not chip @name inside code blocks", () => {
+    const onJump = vi.fn();
+    render(
+      <MarkdownText
+        text={"运行 `@后端` 字面量:\n\n```\n@前端\n```\n"}
+        decorator={mentionMarkdownDecorator(roster, onJump)}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /@后端|@前端/ })).toBeNull();
   });
 });

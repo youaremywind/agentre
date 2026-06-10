@@ -2,8 +2,9 @@
 // chat-agents-store 一致:全局 store + reload 并发去重,让 sidebar / 其它消费方
 // 共享同一份群列表,任何一处 reload 都立刻被所有订阅者看到。
 //
-// MVP:只负责 mount 时拉一次 + 暴露 reload。live 刷新(建群 / run_status 变更)
-// 由调用方在需要时显式 reload(),这里不订阅 group:event:*。
+// 结构性变更(建群/删群)仍由调用方显式 reload();run_status 运行态走
+// GroupEventsHost 订阅的全局 groups:run_state 事件 → patchRunStatus 增量更新,
+// 侧栏群行状态点不开群页也实时翻转。这里不订阅 group:event:*(per-group 频道)。
 
 import { create } from "zustand";
 
@@ -20,6 +21,9 @@ type State = {
 
 type Actions = {
   reload: () => Promise<void>;
+  // patchRunStatus 只改目标群的 runStatus(GroupEventsHost 的 run_status 事件驱动);
+  // 未知 id / 同值时返回原 state,订阅者不动。
+  patchRunStatus: (groupId: number, runStatus: string) => void;
   // 测试隔离用,生产代码不该调。
   __reset: () => void;
 };
@@ -49,6 +53,14 @@ export const useGroupListStore = create<State & Actions>((set) => ({
     })();
     return inflight;
   },
+  patchRunStatus: (groupId, runStatus) =>
+    set((state) => {
+      const idx = state.groups.findIndex((g) => g.id === groupId);
+      if (idx < 0 || state.groups[idx].runStatus === runStatus) return state;
+      const groups = state.groups.slice();
+      groups[idx] = { ...groups[idx], runStatus } as GroupListItem;
+      return { groups };
+    }),
   __reset: () => {
     inflight = null;
     set({ groups: [], loading: true, error: null });

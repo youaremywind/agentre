@@ -5,33 +5,34 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
-	"agentre/internal/model/entity/app_setting_entity"
-	"agentre/internal/pkg/agentruntime/runtimes/claudecode"
-	_ "agentre/internal/pkg/agentruntime/runtimes/piagent"
-	"agentre/internal/pkg/httpgateway"
-	"agentre/internal/pkg/paths"
-	"agentre/internal/pkg/sysnotify"
-	"agentre/internal/repository/agent_backend_repo"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/app_setting_repo"
-	"agentre/internal/repository/chat_repo"
-	"agentre/internal/repository/department_repo"
-	"agentre/internal/repository/group_repo"
-	"agentre/internal/repository/hook_repo"
-	"agentre/internal/repository/issue_repo"
-	"agentre/internal/repository/llm_provider_repo"
-	"agentre/internal/repository/project_location_repo"
-	"agentre/internal/repository/project_repo"
-	"agentre/internal/service/agent_backend_svc"
-	"agentre/internal/service/app_settings_svc"
-	"agentre/internal/service/chat_svc"
-	"agentre/internal/service/group_svc"
-	"agentre/internal/service/issue_svc"
-	"agentre/internal/service/notification_svc"
-	"agentre/internal/service/project_svc"
-	"agentre/migrations"
+	"github.com/agentre-ai/agentre/internal/model/entity/app_setting_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/claudecode"
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/piagent"
+	"github.com/agentre-ai/agentre/internal/pkg/httpgateway"
+	"github.com/agentre-ai/agentre/internal/pkg/paths"
+	"github.com/agentre-ai/agentre/internal/pkg/sysnotify"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/app_setting_repo"
+	"github.com/agentre-ai/agentre/internal/repository/chat_repo"
+	"github.com/agentre-ai/agentre/internal/repository/department_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/repository/hook_repo"
+	"github.com/agentre-ai/agentre/internal/repository/issue_repo"
+	"github.com/agentre-ai/agentre/internal/repository/llm_provider_repo"
+	"github.com/agentre-ai/agentre/internal/repository/project_location_repo"
+	"github.com/agentre-ai/agentre/internal/repository/project_repo"
+	"github.com/agentre-ai/agentre/internal/service/agent_backend_svc"
+	"github.com/agentre-ai/agentre/internal/service/app_settings_svc"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/service/group_svc"
+	"github.com/agentre-ai/agentre/internal/service/issue_svc"
+	"github.com/agentre-ai/agentre/internal/service/notification_svc"
+	"github.com/agentre-ai/agentre/internal/service/project_svc"
+	"github.com/agentre-ai/agentre/migrations"
 
 	"github.com/cago-frame/cago"
 	"github.com/cago-frame/cago/configs"
@@ -75,7 +76,7 @@ func Init(ctx context.Context) (*Runtime, error) {
 	}
 
 	dbPath := filepath.Join(dataDir, dbFileName)
-	cfg, err := configs.NewConfig(appName, configs.WithSource(memory.NewSource(defaultConfigValues(logsDir, dbPath))))
+	cfg, err := configs.NewConfig(appName, configs.WithSource(memory.NewSource(defaultConfigValues(logsDir, sqliteDSN(dbPath)))))
 	if err != nil {
 		return nil, fmt.Errorf("create cago config: %w", err)
 	}
@@ -184,7 +185,27 @@ func loadProxyAddr(ctx context.Context) (string, int) {
 	if got, err := app_setting_repo.AppSetting().Get(ctx, app_setting_entity.KeyProxyListenPort); err == nil && got != nil && strings.TrimSpace(got.Value) != "" {
 		port = app_setting_entity.ParseProxyPort(got.Value)
 	}
+	// 环境变量覆盖(最高优先级):e2e 用 AGENTRE_PROXY_PORT=0 绑 OS 临时端口,与已运行的正式
+	// Agentre(固定 52401)互不抢端口,保证 gateway 在 e2e 中可靠起来(否则 BaseURL 为空、
+	// group_send 之类经 gateway 的回投全部失效)。生产不设此变量,行为不变。
+	if p, ok := proxyPortFromEnv(); ok {
+		port = p
+	}
 	return host, port
+}
+
+// proxyPortFromEnv 解析 AGENTRE_PROXY_PORT 覆盖值。未设置 / 非数字 / 越界 → ok=false(回退默认)。
+// 0 合法,表示让 OS 选一个空闲端口(e2e 隔离用)。
+func proxyPortFromEnv() (int, bool) {
+	raw := strings.TrimSpace(os.Getenv("AGENTRE_PROXY_PORT"))
+	if raw == "" {
+		return 0, false
+	}
+	p, err := strconv.Atoi(raw)
+	if err != nil || p < 0 || p > 65535 {
+		return 0, false
+	}
+	return p, true
 }
 
 // Default returns the initialized runtime, if Init has already been called.
@@ -219,6 +240,14 @@ func (r *Runtime) Close() {
 // 实际实现在 paths.AppDataDir；保留 wrapper 是为了让现有 internal/bootstrap.AppDataDir
 // 调用点（main.go 等）零改动。
 func AppDataDir() (string, error) { return paths.AppDataDir() }
+
+// sqliteDSN 给 SQLite 文件路径挂上连接 pragma。busy_timeout: 并发 turn 流式写库
+// 时另一条写会撞 SQLITE_BUSY(默认 0 立即失败,实测 0.5ms 即报 database is locked),
+// 改为等锁最多 5s。glebarez 驱动按 DSN _pragma 参数对每个池化连接生效;启动后
+// Exec("PRAGMA ...") 只作用单个连接,不可用。
+func sqliteDSN(dbPath string) string {
+	return dbPath + "?_pragma=busy_timeout(5000)"
+}
 
 func defaultConfigValues(logsDir, dbPath string) map[string]interface{} {
 	// 启动默认 info 级别；debug 日志改由「设置 → 版本 & 更新」开关在 Init 末尾按

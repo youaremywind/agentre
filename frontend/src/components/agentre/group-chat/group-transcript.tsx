@@ -31,16 +31,26 @@ function agentColorForMember(memberId: number): AgentColor {
 
 export type RenderBody = (content: string) => React.ReactNode;
 
-// 默认 body 渲染：纯文本。父层可通过 renderBody 注入 mention chip 等富文本渲染。
-const defaultRenderBody: RenderBody = (content) => content;
+// 默认 body 渲染：pre-wrap 纯文本块。renderBody 拥有整块正文(块级元素自带样式外壳),
+// 父层可注入 markdown / mention chip 等富文本渲染,transcript 不再叠加自己的文本样式。
+const defaultRenderBody: RenderBody = (content) => (
+  <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
+    {content}
+  </div>
+);
+
+// 默认 system 行渲染：原样内联文本(在居中胶囊 span 里,必须是 inline 内容)。
+const defaultRenderSystemBody: RenderBody = (content) => content;
 
 export type GroupTranscriptProps = {
   messages: GroupMessageItem[];
   roster: GroupMemberItem[];
   /** roster member id → 显示名（成员名是动态内容，由父层解析后传入，绝不进 t()）。 */
   memberName: (memberId: number) => string;
-  /** message body 渲染接缝，默认纯文本。 */
+  /** user/agent 消息正文渲染接缝(块级,拥有整块正文),默认 pre-wrap 纯文本。 */
   renderBody?: RenderBody;
+  /** system 行正文渲染接缝(内联,在居中胶囊里),默认原样文本。 */
+  renderSystemBody?: RenderBody;
 };
 
 function GroupTranscript({
@@ -48,6 +58,7 @@ function GroupTranscript({
   roster,
   memberName,
   renderBody = defaultRenderBody,
+  renderSystemBody = defaultRenderSystemBody,
 }: GroupTranscriptProps) {
   const { t } = useTranslation();
   const totalMembers = roster.filter((m) => m.status === "active").length;
@@ -64,7 +75,7 @@ function GroupTranscript({
               className="flex justify-center"
             >
               <span className="rounded-full bg-secondary px-3 py-1 text-2xs text-muted-foreground">
-                {renderBody(msg.content)}
+                {renderSystemBody(msg.content)}
               </span>
             </div>
           );
@@ -103,9 +114,7 @@ function GroupTranscript({
             }
             footer={<MessageCopyButton text={msg.content} />}
           >
-            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-              {renderBody(msg.content)}
-            </div>
+            {renderBody(msg.content)}
           </MessageRow>
         );
       })}

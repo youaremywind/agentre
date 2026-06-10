@@ -26,8 +26,8 @@ it must never be written as if already released.
 your checkout will masquerade as released (the "branch leakage" above is exactly how this happens). Planned / feature-branch-specific content either stays in that branch's docs, or is clearly marked as planned.
 
 > Cross-repo reminder: the workspace root (`/Users/codfrm/Code/agentre`) wraps `agentre/` and `agentre-server/`, **two mutually independent git
-> repositories**. This guide only covers `agentre/`. Don't verify facts about `agentre-server` with `agentre`'s commands, or vice versa; neither module path
-> (`agentre` / `agentre-server`) has a VCS prefix, so don't invent `github.com/...`.
+> repositories**. This guide only covers `agentre/`. Don't verify facts about `agentre-server` with `agentre`'s commands, or vice versa. The desktop module path
+> is `github.com/agentre-ai/agentre`; the server remains the independent local module `agentre-server`.
 
 ## Doc Set and Responsibilities (Don't Duplicate — Cross-Link)
 

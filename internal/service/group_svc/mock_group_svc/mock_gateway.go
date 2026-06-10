@@ -10,9 +10,9 @@
 package mock_group_svc
 
 import (
-	capability "agentre/internal/pkg/agentruntime/capability"
-	chat_svc "agentre/internal/service/chat_svc"
 	context "context"
+	capability "github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	chat_svc "github.com/agentre-ai/agentre/internal/service/chat_svc"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"

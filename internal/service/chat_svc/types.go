@@ -2,9 +2,9 @@
 package chat_svc
 
 import (
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/service/chat_svc/blocks"
-	"agentre/internal/service/chat_svc/view"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc/view"
 )
 
 // Chat Wails 事件名形如 "chat:event:<sessionID>:<assistantMessageID>"。

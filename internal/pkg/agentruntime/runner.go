@@ -8,8 +8,8 @@ import (
 	"github.com/cago-frame/agents/agent/blocks"
 	"github.com/cago-frame/agents/provider"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/llm_provider_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/llm_provider_entity"
 )
 
 // EventKind 统一事件离散类型。chat_svc 按这个枚举做 switch。

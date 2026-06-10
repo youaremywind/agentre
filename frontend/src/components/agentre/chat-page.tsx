@@ -852,7 +852,10 @@ function ChatPage() {
                 >
                   {t("chatPage.add.newAgentChat")}
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setNewGroupOpen(true)}>
+                <DropdownMenuItem
+                  data-testid="new-group-item"
+                  onSelect={() => setNewGroupOpen(true)}
+                >
                   {t("chatPage.add.newGroup")}
                 </DropdownMenuItem>
               </DropdownMenuContent>

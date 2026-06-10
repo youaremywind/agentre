@@ -4,8 +4,8 @@ package group_svc
 import (
 	"context"
 
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/service/chat_svc"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 )
 
 //go:generate mockgen -source gateway.go -destination mock_group_svc/mock_gateway.go

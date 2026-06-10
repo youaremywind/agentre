@@ -43,7 +43,7 @@ The recruitable pool is `agent_repo.ListByDepartment(g.DepartmentID)`. The UI al
 - Modify: `internal/service/group_svc/group.go` (CreateGroup, ~line 125-133)
 - Test: `internal/service/group_svc/group_test.go`
 
-- [ ] **Step 1: Write the failing test** — append inside the existing `func TestGroupSvc_CreateGroup_AddsInitialMembers(t *testing.T)` (it already wires `group_repo` + gateway mocks; this Convey adds an `agent_repo` mock). Add `"agentre/internal/repository/agent_repo"` and `"agentre/internal/repository/agent_repo/mock_agent_repo"` and `"agentre/internal/model/entity/agent_entity"` to the test imports if missing.
+- [ ] **Step 1: Write the failing test** — append inside the existing `func TestGroupSvc_CreateGroup_AddsInitialMembers(t *testing.T)` (it already wires `group_repo` + gateway mocks; this Convey adds an `agent_repo` mock). Add `"github.com/agentre-ai/agentre/internal/repository/agent_repo"` and `"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"` and `"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"` to the test imports if missing.
 
 ```go
 	Convey("DepartmentID==0 时从主持人 agent 派生部门", t, func() {
@@ -116,7 +116,7 @@ func (s *groupSvc) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*G
 	}
 ```
 
-(The file already imports `agent_repo` via `ingest.go` in the same package; if `group.go` itself lacks the import, add `"agentre/internal/repository/agent_repo"`.)
+(The file already imports `agent_repo` via `ingest.go` in the same package; if `group.go` itself lacks the import, add `"github.com/agentre-ai/agentre/internal/repository/agent_repo"`.)
 
 - [ ] **Step 4: Run the test, watch it pass**
 
@@ -365,7 +365,7 @@ func (s *groupSvc) HandleInvite(ctx context.Context, callerMemberID int64, names
 }
 ```
 
-Ensure `group.go` imports `"agentre/internal/model/entity/agent_entity"` (for the targets slice type) — add it if missing.
+Ensure `group.go` imports `"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"` (for the targets slice type) — add it if missing.
 
 - [ ] **Step 6: Run the test, watch it pass**
 
@@ -657,7 +657,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
 )
 
 func TestBuildGroupMCP_HostGetsInvite(t *testing.T) {

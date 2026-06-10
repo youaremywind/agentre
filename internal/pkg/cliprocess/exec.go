@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"agentre/internal/pkg/clienv"
-	"agentre/internal/pkg/procattr"
+	"github.com/agentre-ai/agentre/internal/pkg/clienv"
+	"github.com/agentre-ai/agentre/internal/pkg/procattr"
 )
 
 type Options struct {

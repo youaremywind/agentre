@@ -62,6 +62,49 @@ describe("GroupTranscript", () => {
     );
   });
 
+  it("默认正文渲染保持 pre-wrap 纯文本", () => {
+    const { container } = render(
+      <GroupTranscript
+        messages={[msg({ content: "line1\nline2" })]}
+        roster={roster}
+        memberName={memberName}
+      />,
+    );
+    expect(
+      container.querySelector(".whitespace-pre-wrap")?.textContent,
+    ).toContain("line1\nline2");
+  });
+
+  it("renderBody 拥有整块正文：transcript 不再包 pre-wrap 外壳", () => {
+    const { container } = render(
+      <GroupTranscript
+        messages={[msg({ content: "**bold**" })]}
+        roster={roster}
+        memberName={memberName}
+        renderBody={(content) => <div data-testid="custom-body">{content}</div>}
+      />,
+    );
+    expect(screen.getByTestId("custom-body")).toHaveTextContent("**bold**");
+    expect(container.querySelector(".whitespace-pre-wrap")).toBeNull();
+  });
+
+  it("system 行走 renderSystemBody,不进 renderBody", () => {
+    const renderBody = vi.fn((content: string) => <div>{content}</div>);
+    render(
+      <GroupTranscript
+        messages={[msg({ senderKind: "system", content: "X 加入了群聊" })]}
+        roster={roster}
+        memberName={memberName}
+        renderBody={renderBody}
+        renderSystemBody={(content) => (
+          <span data-testid="system-body">{content}</span>
+        )}
+      />,
+    );
+    expect(screen.getByTestId("system-body")).toHaveTextContent("X 加入了群聊");
+    expect(renderBody).not.toHaveBeenCalled();
+  });
+
   it("system 行不渲染复制按钮", () => {
     render(
       <GroupTranscript

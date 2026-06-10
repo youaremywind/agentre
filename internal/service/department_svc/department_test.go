@@ -8,13 +8,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
-	"agentre/internal/model/entity/agent_entity"
-	"agentre/internal/model/entity/department_entity"
-	"agentre/internal/pkg/code"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/repository/agent_repo/mock_agent_repo"
-	"agentre/internal/repository/department_repo"
-	"agentre/internal/repository/department_repo/mock_department_repo"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/department_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/department_repo"
+	"github.com/agentre-ai/agentre/internal/repository/department_repo/mock_department_repo"
 )
 
 func setupSvc(t *testing.T) (

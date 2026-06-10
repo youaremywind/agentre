@@ -1,6 +1,9 @@
 //go:build e2e
 
-package main
+// Package fakes 提供 e2e 构建(`-tags e2e`)专用的确定性 fake 装配。
+// 它和 e2e/ 下的 Playwright 工程同处一个目录树,但单独成包,避免 Go 源码与
+// TS/Playwright 工具链在同一目录里混在一起。
+package fakes
 
 import (
 	"context"
@@ -8,22 +11,22 @@ import (
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/pkg/agentruntime"
-	fakert "agentre/internal/pkg/agentruntime/runtimes/fake"
-	"agentre/internal/repository/agent_backend_repo"
-	"agentre/internal/repository/agent_repo"
-	"agentre/internal/service/agent_backend_svc"
-	"agentre/internal/service/agent_svc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	fakert "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/fake"
+	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/service/agent_backend_svc"
+	"github.com/agentre-ai/agentre/internal/service/agent_svc"
 )
 
-// installE2EFakes 仅在 `-tags e2e` 构建中编译:
+// Install 仅在 `-tags e2e` 构建中编译:
 //  1. 用确定性 fake 覆盖 claudecode runtime(无子进程/无登录);
 //  2. seed 一个本地 claudecode backend 并挂到默认 CEO agent,
 //     让前端"建会话→发消息→看回复"无需真实 CLI 即可跑通。
 //
 // 失败只记日志不 panic:e2e 环境异常应让 Playwright 用例红,而不是让 app 崩。
-func installE2EFakes(ctx context.Context) {
+func Install(ctx context.Context) {
 	agentruntime.RegisterRuntime(agent_backend_entity.TypeClaudeCode, fakert.New())
 
 	// 幂等:正常每次 e2e run 用全新 AGENTRE_DATA_DIR(临时目录),但 wails dev 热重载
@@ -31,7 +34,7 @@ func installE2EFakes(ctx context.Context) {
 	const backendName = "E2E Local Backend"
 	var backendID int64
 	if existing, err := agent_backend_repo.AgentBackend().FindByName(ctx, backendName); err != nil {
-		logger.Ctx(ctx).Error("main.installE2EFakes: lookup backend failed", zap.Error(err))
+		logger.Ctx(ctx).Error("e2efakes.Install: lookup backend failed", zap.Error(err))
 		return
 	} else if existing != nil {
 		backendID = existing.ID
@@ -41,7 +44,7 @@ func installE2EFakes(ctx context.Context) {
 			Name: backendName,
 		})
 		if err != nil {
-			logger.Ctx(ctx).Error("main.installE2EFakes: create backend failed", zap.Error(err))
+			logger.Ctx(ctx).Error("e2efakes.Install: create backend failed", zap.Error(err))
 			return
 		}
 		backendID = resp.Item.ID
@@ -49,11 +52,11 @@ func installE2EFakes(ctx context.Context) {
 
 	ceo, err := agent_repo.Agent().FindSystem(ctx)
 	if err != nil {
-		logger.Ctx(ctx).Error("main.installE2EFakes: find system agent failed", zap.Error(err))
+		logger.Ctx(ctx).Error("e2efakes.Install: find system agent failed", zap.Error(err))
 		return
 	}
 	if ceo == nil {
-		logger.Ctx(ctx).Error("main.installE2EFakes: system agent not found (migration gap?)")
+		logger.Ctx(ctx).Error("e2efakes.Install: system agent not found (migration gap?)")
 		return
 	}
 
@@ -62,10 +65,10 @@ func installE2EFakes(ctx context.Context) {
 		Name:           ceo.Name,
 		AgentBackendID: backendID,
 	}); err != nil {
-		logger.Ctx(ctx).Error("main.installE2EFakes: attach backend to agent failed", zap.Error(err))
+		logger.Ctx(ctx).Error("e2efakes.Install: attach backend to agent failed", zap.Error(err))
 		return
 	}
 
-	logger.Ctx(ctx).Info("main.installE2EFakes: e2e fakes installed",
+	logger.Ctx(ctx).Info("e2efakes.Install: e2e fakes installed",
 		zap.Int64("backendID", backendID), zap.Int64("agentID", ceo.ID))
 }

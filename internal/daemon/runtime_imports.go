@@ -9,8 +9,8 @@ package daemon
 // 进程内),这里 import 它仅为对称,确保 RegisteredRuntimes() 能枚举
 // 完整集合(将来 capability 协商可能用到)。
 import (
-	_ "agentre/internal/pkg/agentruntime/runtimes/builtin"
-	_ "agentre/internal/pkg/agentruntime/runtimes/claudecode"
-	_ "agentre/internal/pkg/agentruntime/runtimes/codex"
-	_ "agentre/internal/pkg/agentruntime/runtimes/piagent"
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/builtin"
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/claudecode"
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/codex"
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/piagent"
 )

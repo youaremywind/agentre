@@ -9,8 +9,8 @@ import (
 	"github.com/cago-frame/cago/pkg/consts"
 	"gorm.io/gorm"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/repository/repoquery"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/repository/repoquery"
 )
 
 //go:generate mockgen -source agent_backend.go -destination mock_agent_backend_repo/mock_agent_backend.go

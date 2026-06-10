@@ -3,9 +3,9 @@ package handlers
 import (
 	"context"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/service/chat_svc/blocks"
-	"agentre/internal/service/chat_svc/turn"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
+	"github.com/agentre-ai/agentre/internal/service/chat_svc/turn"
 )
 
 type UserAskRequestHandler struct{}

@@ -13,7 +13,7 @@ WAILS ?= $(shell command -v wails 2>$(NULLDEV) || printf "%s/bin/wails" "$$(go e
 endif
 COMMIT_ID := $(shell git rev-parse --short HEAD 2>$(NULLDEV) || echo unknown)
 VERSION_PKG := github.com/cago-frame/cago/configs
-BUILDINFO_PKG := agentre/internal/buildinfo
+BUILDINFO_PKG := github.com/agentre-ai/agentre/internal/buildinfo
 LDFLAGS := -s -w -X $(VERSION_PKG).Version=$(VERSION) -X $(BUILDINFO_PKG).CommitID=$(COMMIT_ID)
 FRONTEND_DIR := frontend
 BACKEND_PKGS := . ./cmd/... ./internal/... ./migrations ./pkg/...
