@@ -545,6 +545,33 @@ type SendImage struct {
 	Name    string `json:"name,omitempty"`
 	DataURL string `json:"dataUrl"`
 }
+
+// ── 拖拽图片读取 (ReadDroppedImages) ─────────────────────────────────────────
+
+const (
+	DroppedImageKindImage = "image"
+	DroppedImageKindPath  = "path"
+)
+
+type ReadDroppedImagesRequest struct {
+	Paths []string `json:"paths"`
+}
+
+type ReadDroppedImagesResponse struct {
+	Items []DroppedImageItem `json:"items"`
+}
+
+// DroppedImageItem 是单个拖入路径的归类结果。
+//   - Kind=="image": 可作图片附件,Name/MediaType/DataURL 给出。
+//   - Kind=="path":  降级为纯路径(目录/超限/类型不符/读失败),调用方应把 Path 当文本插入。
+type DroppedImageItem struct {
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name,omitempty"`
+	MediaType string `json:"mediaType,omitempty"`
+	DataURL   string `json:"dataUrl,omitempty"` // 空 for Kind==path
+}
+
 type SendResponse struct {
 	SessionID          int64  `json:"sessionId"`
 	UserMessageID      int64  `json:"userMessageId"`

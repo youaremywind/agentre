@@ -39,6 +39,12 @@ func (a *App) SendChatMessage(req *chat_svc.SendRequest) (*chat_svc.SendResponse
 	return chat_svc.Chat().Send(a.ctx, req)
 }
 
+// ChatReadDroppedImages 按绝对路径读取拖入的图片候选,做 stat/类型/大小校验后归类
+// (image=可附件 / path=降级为纯路径)。供 composer 拖拽链路区分图片与文件/文件夹。
+func (a *App) ChatReadDroppedImages(req *chat_svc.ReadDroppedImagesRequest) (*chat_svc.ReadDroppedImagesResponse, error) {
+	return chat_svc.ReadDroppedImages(a.ctx, req)
+}
+
 // CompactChatSession 触发 Codex app-server 原生 thread/compact/start。
 // 不创建用户消息；压缩完成后 runtime 会 emit compact_boundary 供前端折叠历史。
 func (a *App) CompactChatSession(req *chat_svc.CompactRequest) (*chat_svc.CompactResponse, error) {
