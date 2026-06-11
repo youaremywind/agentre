@@ -38,6 +38,12 @@ type AgentSkillDTO struct {
 	Enabled bool   `json:"enabled"`
 }
 
+// AgentToolDTO 与 agent_entity.AgentToolItem 同结构，避免前端引用 entity 包。
+type AgentToolDTO struct {
+	Key     string `json:"key"`
+	Enabled bool   `json:"enabled"`
+}
+
 // AgentItem 单条 Agent 记录（已 join 部门名 + backend 摘要）。
 type AgentItem struct {
 	ID              int64           `json:"id"`
@@ -56,6 +62,7 @@ type AgentItem struct {
 	SortOrder       int             `json:"sortOrder"`
 	Prompt          []string        `json:"prompt"`
 	Skills          []AgentSkillDTO `json:"skills"`
+	Tools           []AgentToolDTO  `json:"tools"`
 	Createtime      int64           `json:"createtime"`
 	Updatetime      int64           `json:"updatetime"`
 }
@@ -65,8 +72,9 @@ type LoadOrgRequest struct{}
 
 // LoadOrgResponse 一次性返回部门 + Agent 全量（前端首屏使用）。
 type LoadOrgResponse struct {
-	Departments []*DepartmentItem `json:"departments"`
-	Agents      []*AgentItem      `json:"agents"`
+	Departments    []*DepartmentItem `json:"departments"`
+	Agents         []*AgentItem      `json:"agents"`
+	AvailableTools []string          `json:"availableTools"`
 }
 
 // CreateDepartmentRequest 新建部门。

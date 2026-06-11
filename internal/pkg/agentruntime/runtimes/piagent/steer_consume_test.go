@@ -1,6 +1,7 @@
 package piagent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/cago-frame/agents/provider"
@@ -17,7 +18,7 @@ import (
 func TestDrainStream_SessionStatsContextWindowOverridesCatalog(t *testing.T) {
 	result := &agentruntime.RunResult{}
 	out := make(chan agentruntime.Event, 16)
-	drainStream(&scriptStream{events: []pkgpi.Event{
+	drainStream(context.Background(), agentruntime.RunRequest{}, "", &scriptStream{events: []pkgpi.Event{
 		{Kind: pkgpi.EventUsage, Usage: provider.Usage{PromptTokens: 10, CompletionTokens: 2}, Model: "gpt-5.5(xhigh)"},
 		{Kind: pkgpi.EventContextWindow, ContextWindow: 200000},
 		{Kind: pkgpi.EventDone},
@@ -39,7 +40,7 @@ func TestDrainStream_SessionStatsContextWindowOverridesCatalog(t *testing.T) {
 func TestDrainStream_SurfacesObservedModelAndContextWindow(t *testing.T) {
 	result := &agentruntime.RunResult{}
 	out := make(chan agentruntime.Event, 16)
-	drainStream(&scriptStream{events: []pkgpi.Event{
+	drainStream(context.Background(), agentruntime.RunRequest{}, "", &scriptStream{events: []pkgpi.Event{
 		{Kind: pkgpi.EventUsage, Usage: provider.Usage{PromptTokens: 10, CompletionTokens: 2}, Model: "gpt-5.5(xhigh)"},
 		{Kind: pkgpi.EventDone},
 	}}, out, result, nil)
@@ -78,7 +79,7 @@ func (s *scriptStream) Err() error         { return s.err }
 
 func collectSteerConsumed(events []pkgpi.Event, active *activeSession) []agentruntime.SteerConsumed {
 	out := make(chan agentruntime.Event, 64)
-	drainStream(&scriptStream{events: events}, out, &agentruntime.RunResult{}, active)
+	drainStream(context.Background(), agentruntime.RunRequest{}, "", &scriptStream{events: events}, out, &agentruntime.RunResult{}, active)
 	close(out)
 	var consumed []agentruntime.SteerConsumed
 	for ev := range out {

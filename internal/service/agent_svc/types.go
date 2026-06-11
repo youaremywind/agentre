@@ -17,6 +17,7 @@ type CreateAgentRequest struct {
 	AgentBackendID int64                          `json:"agentBackendId" binding:"required"`
 	Prompt         []string                       `json:"prompt"`
 	Skills         []department_svc.AgentSkillDTO `json:"skills"`
+	Tools          []department_svc.AgentToolDTO  `json:"tools"`
 }
 
 type CreateAgentResponse struct {
@@ -33,6 +34,7 @@ type UpdateAgentRequest struct {
 	AgentBackendID int64                          `json:"agentBackendId"`
 	Prompt         []string                       `json:"prompt"`
 	Skills         []department_svc.AgentSkillDTO `json:"skills"`
+	Tools          []department_svc.AgentToolDTO  `json:"tools"`
 }
 
 type UpdateAgentResponse struct {

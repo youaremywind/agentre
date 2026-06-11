@@ -18,10 +18,14 @@ import (
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/piagent"
 	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/service/agent_svc"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 	"github.com/agentre-ai/agentre/internal/service/data_svc"
+	"github.com/agentre-ai/agentre/internal/service/department_svc"
 	"github.com/agentre-ai/agentre/internal/service/group_svc"
 	"github.com/agentre-ai/agentre/internal/service/hook_svc"
+	"github.com/agentre-ai/agentre/internal/service/orgtool_svc"
 	"github.com/agentre-ai/agentre/internal/service/remote_device_svc"
 	watcher "github.com/agentre-ai/agentre/internal/service/remote_device_watcher_svc"
 	"github.com/agentre-ai/agentre/internal/service/server_svc"
@@ -204,6 +208,14 @@ func (a *App) registerChatService() {
 	group_svc.SetEmitter(group_svc.EmitterFunc(func(_ context.Context, name string, payload any) {
 		wailsruntime.EventsEmit(a.ctx, name, payload)
 	}))
+
+	// 注入 orgtool_svc 依赖:必须在 RegisterChat 之后执行,因为 chat_svc.Chat()
+	// 在此之前为 nil(chat 服务是懒注册的)。
+	// department_svc.Department() 同时满足 OrgQuery + DeptCommand 两个窄接口。
+	orgtool_svc.Default().RegisterDeps(
+		department_svc.Department(), department_svc.Department(),
+		agent_svc.Agent(), agent_repo.Agent(), chat_svc.Chat(),
+	)
 }
 
 // Greet returns a greeting for the given name.

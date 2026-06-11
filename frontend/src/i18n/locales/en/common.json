@@ -360,6 +360,25 @@
       "waiting": "WAITING · Awaiting reply"
     }
   },
+  "orgApproval": {
+    "title": "Org structure operation approval",
+    "approve": "Approve",
+    "deny": "Reject",
+    "submitFailed": "Approval submission failed",
+    "status": {
+      "approved": "Approved",
+      "denied": "Rejected",
+      "expired": "Expired"
+    },
+    "tools": {
+      "org_create_department": "Create department",
+      "org_update_department": "Update department",
+      "org_delete_department": "Delete department",
+      "org_create_agent": "Create agent",
+      "org_update_agent": "Update agent",
+      "org_delete_agent": "Delete agent"
+    }
+  },
   "chat": {
     "actions": {
       "approve": "Approve",
@@ -382,6 +401,7 @@
         "tooMany": "Add at most {{count}} images",
         "unsupported": "Only PNG, JPEG, and WebP are supported. Each image must be under 5 MB."
       },
+      "dropHint": "Drop to add files / folder paths",
       "placeholder": "Type a message or / for commands",
       "removeImage": "Remove image {{name}}",
       "saveEdit": "Save edit",
@@ -1757,6 +1777,13 @@
         "list": "Skill list",
         "summary": "{{enabled}} enabled · {{disabled}} disabled",
         "title": "Skills / Tools"
+      },
+      "tools": {
+        "title": "Tools",
+        "empty": "No tools available",
+        "list": "Tool toggles",
+        "names": { "org": "Org Structure" },
+        "descriptions": { "org": "Allow this agent to read and manage departments and members (writes require your approval)" }
       },
       "systemPrompt": "System Prompt",
       "systemPromptHint": "Put style, tone, and boundaries in the system prompt. No separate fields are used.",

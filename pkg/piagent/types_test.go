@@ -48,3 +48,22 @@ func TestBuildRPCArgsOmitsInvalidThinking(t *testing.T) {
 	args := buildRPCArgs(&Client{thinking: "ultra"})
 	assert.Equal(t, []string{"--mode", "rpc"}, args)
 }
+
+func TestBuildRPCArgs_Extensions(t *testing.T) {
+	c := New(WithExtension("/a/x.mjs"), WithExtension("/a/y.mjs"))
+	args := buildRPCArgs(c)
+	assert.Equal(t, []string{
+		"--mode", "rpc",
+		"--extension", "/a/x.mjs",
+		"--extension", "/a/y.mjs",
+	}, args)
+}
+
+func TestBuildRPCArgs_NoExtensionByDefault(t *testing.T) {
+	c := New()
+	for _, a := range buildRPCArgs(c) {
+		if a == "--extension" {
+			t.Fatalf("did not expect --extension by default: %v", buildRPCArgs(c))
+		}
+	}
+}

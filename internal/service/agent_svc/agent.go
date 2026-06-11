@@ -66,6 +66,7 @@ func (s *agentSvc) Create(ctx context.Context, req *CreateAgentRequest) (*Create
 	}
 	a.SetPrompt(req.Prompt)
 	a.SetSkills(skillsFromDTO(req.Skills))
+	a.SetTools(toolsFromDTO(req.Tools))
 	if err := a.Check(ctx); err != nil {
 		return nil, err
 	}
@@ -123,6 +124,7 @@ func (s *agentSvc) Update(ctx context.Context, req *UpdateAgentRequest) (*Update
 	}
 	existing.SetPrompt(req.Prompt)
 	existing.SetSkills(skillsFromDTO(req.Skills))
+	existing.SetTools(toolsFromDTO(req.Tools))
 	existing.Updatetime = s.now()
 	if err := existing.Check(ctx); err != nil {
 		return nil, err
@@ -367,11 +369,24 @@ func skillsFromDTO(items []department_svc.AgentSkillDTO) []agent_entity.AgentSki
 	return out
 }
 
+func toolsFromDTO(items []department_svc.AgentToolDTO) []agent_entity.AgentToolItem {
+	out := make([]agent_entity.AgentToolItem, 0, len(items))
+	for _, t := range items {
+		out = append(out, agent_entity.AgentToolItem{Key: t.Key, Enabled: t.Enabled})
+	}
+	return out
+}
+
 func toItem(a *agent_entity.Agent) *AgentItem {
 	rawSkills := a.GetSkills()
 	skills := make([]department_svc.AgentSkillDTO, 0, len(rawSkills))
 	for _, s := range rawSkills {
 		skills = append(skills, department_svc.AgentSkillDTO{Label: s.Label, Enabled: s.Enabled})
+	}
+	rawTools := a.GetTools()
+	tools := make([]department_svc.AgentToolDTO, 0, len(rawTools))
+	for _, t := range rawTools {
+		tools = append(tools, department_svc.AgentToolDTO{Key: t.Key, Enabled: t.Enabled})
 	}
 	return &AgentItem{
 		ID:             a.ID,
@@ -387,6 +402,7 @@ func toItem(a *agent_entity.Agent) *AgentItem {
 		SortOrder:      a.SortOrder,
 		Prompt:         a.GetPrompt(),
 		Skills:         skills,
+		Tools:          tools,
 		Createtime:     a.Createtime,
 		Updatetime:     a.Updatetime,
 	}

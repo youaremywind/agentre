@@ -294,6 +294,7 @@ func buildRunParams(req agentruntime.RunRequest) (wire.RunParams, error) {
 		ForkAnchor:        req.ForkAnchor,
 		PermissionMode:    req.PermissionMode,
 		CollaborationMode: req.CollaborationMode,
+		MCPServers:        req.MCPServers,
 		LLMProviderKey:    req.LLMProviderKey,
 	}, nil
 }

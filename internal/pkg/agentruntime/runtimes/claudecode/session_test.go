@@ -143,6 +143,70 @@ func TestCCBuildClientOpts_BackendDefaultModel(t *testing.T) {
 	})
 }
 
+// TestCCBuildClientOpts_MCPTimeoutEnv 锁住:有 MCPServers 时注入 MCP_TIMEOUT /
+// MCP_TOOL_TIMEOUT env(均为 600000 ms);无 MCPServers 时不注入;caller 显式配
+// 置同名 key 时不覆盖。
+func TestCCBuildClientOpts_MCPTimeoutEnv(t *testing.T) {
+	Convey("Given RunRequest 带 MCPServers", t, func() {
+		spec := ccLaunchSpec{
+			Req: agentruntime.RunRequest{
+				Backend: &agent_backend_entity.AgentBackend{Type: string(agent_backend_entity.TypeClaudeCode)},
+				MCPServers: []agentruntime.MCPServerSpec{{
+					Name: "org",
+					URL:  "http://127.0.0.1:9001/mcp/org/",
+				}},
+			},
+		}
+		c := claudecode.New(ccBuildClientOpts(spec, "claude")...)
+
+		Convey("Then Env 含 MCP_TIMEOUT=600000 与 MCP_TOOL_TIMEOUT=600000", func() {
+			env := c.Env()
+			So(env["MCP_TIMEOUT"], ShouldEqual, "600000")
+			So(env["MCP_TOOL_TIMEOUT"], ShouldEqual, "600000")
+		})
+	})
+
+	Convey("Given RunRequest 不带 MCPServers", t, func() {
+		spec := ccLaunchSpec{
+			Req: agentruntime.RunRequest{
+				Backend: &agent_backend_entity.AgentBackend{Type: string(agent_backend_entity.TypeClaudeCode)},
+			},
+		}
+		c := claudecode.New(ccBuildClientOpts(spec, "claude")...)
+
+		Convey("Then Env 不含 MCP_TIMEOUT / MCP_TOOL_TIMEOUT", func() {
+			env := c.Env()
+			_, hasMCPTimeout := env["MCP_TIMEOUT"]
+			_, hasMCPToolTimeout := env["MCP_TOOL_TIMEOUT"]
+			So(hasMCPTimeout, ShouldBeFalse)
+			So(hasMCPToolTimeout, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given RunRequest 带 MCPServers 且 spec.Env 已有同名 key", t, func() {
+		spec := ccLaunchSpec{
+			Env: map[string]string{
+				"MCP_TIMEOUT":      "30000",
+				"MCP_TOOL_TIMEOUT": "30000",
+			},
+			Req: agentruntime.RunRequest{
+				Backend: &agent_backend_entity.AgentBackend{Type: string(agent_backend_entity.TypeClaudeCode)},
+				MCPServers: []agentruntime.MCPServerSpec{{
+					Name: "org",
+					URL:  "http://127.0.0.1:9001/mcp/org/",
+				}},
+			},
+		}
+		c := claudecode.New(ccBuildClientOpts(spec, "claude")...)
+
+		Convey("Then caller 的值优先,不被覆盖", func() {
+			env := c.Env()
+			So(env["MCP_TIMEOUT"], ShouldEqual, "30000")
+			So(env["MCP_TOOL_TIMEOUT"], ShouldEqual, "30000")
+		})
+	})
+}
+
 // TestResolveLaunchMode_BypassDefaultLocksLaunchToBypass 锁住"backend admin 配
 // bypass 时 CLI 永远以 bypass 启动"的不变量。stored mode(perTurn)可以是 plan /
 // acceptEdits / default 任意值, launch 永远 bypass —— 这是「先 plan 后 bypass」

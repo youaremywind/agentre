@@ -91,8 +91,8 @@ make build            # wails build with version/commit ldflags (current platfor
 make run              # build and launch production app
 make install          # build + install app bundle (macOS: /Applications/Agentre.app)
 make generate         # wails generate module — refresh frontend/wailsjs/ bindings
-make test             # backend race tests + frontend Vitest (runs `generate` first)
-make test-backend     # Go race tests excluding /frontend/
+make test             # backend Go tests + frontend Vitest (runs `generate` first)
+make test-backend     # Go tests excluding /frontend/
 make test-frontend    # wails generate + frontend Vitest
 make test-cover       # coverage.out + coverage.html
 make lint / lint-fix  # golangci-lint + frontend ESLint (runs `generate` first)

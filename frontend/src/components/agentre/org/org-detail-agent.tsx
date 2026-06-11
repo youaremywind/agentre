@@ -53,6 +53,7 @@ type Props = {
   agents: OrgAgent[];
   backends: agent_backend_svc.BackendItem[];
   isLeadOf: OrgDepartment | null;
+  availableTools?: string[];
   onUpdate: (req: agent_svc.UpdateAgentRequest) => Promise<unknown>;
   onDelete: (req: agent_svc.DeleteAgentRequest) => Promise<unknown>;
   onUploadAvatar: (req: agent_svc.UploadAvatarRequest) => Promise<unknown>;
@@ -97,6 +98,17 @@ export function OrgDetailAgent(props: Props) {
   const [skills, setSkills] = React.useState<department_svc.AgentSkillDTO[]>(
     () => (props.agent.skills ?? []).map((s) => ({ ...s })),
   );
+  const [tools, setTools] = React.useState<department_svc.AgentToolDTO[]>(
+    () => {
+      const cur = new Map(
+        (props.agent.tools ?? []).map((t) => [t.key, t.enabled]),
+      );
+      return (props.availableTools ?? []).map((key) => ({
+        key,
+        enabled: cur.get(key) ?? false,
+      }));
+    },
+  );
   const [deletePromptOpen, setDeletePromptOpen] = React.useState(false);
 
   // 汇报对象走统一解析：显式上级 ▸ 部门 leader（沿父部门链递归） ▸ CEO 兜底。
@@ -124,6 +136,7 @@ export function OrgDetailAgent(props: Props) {
         agentBackendId: backendId,
         prompt: prompt.split("\n").filter((s) => s.trim() !== ""),
         skills,
+        tools,
       }),
     );
   };
@@ -150,6 +163,12 @@ export function OrgDetailAgent(props: Props) {
   const toggleSkill = (label: string) => {
     setSkills((prev) =>
       prev.map((s) => (s.label === label ? { ...s, enabled: !s.enabled } : s)),
+    );
+  };
+
+  const toggleTool = (key: string) => {
+    setTools((prev) =>
+      prev.map((t) => (t.key === key ? { ...t, enabled: !t.enabled } : t)),
     );
   };
 
@@ -431,6 +450,45 @@ export function OrgDetailAgent(props: Props) {
                   )}
                 >
                   {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-2.5" data-slot="agent-section-tools">
+          <div className="flex items-center justify-between">
+            <h3 className="font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {t("org.agent.tools.title")}
+            </h3>
+          </div>
+          {tools.length === 0 ? (
+            <p className="text-2xs text-muted-foreground">
+              {t("org.agent.tools.empty")}
+            </p>
+          ) : (
+            <div
+              className="flex flex-wrap gap-1.5"
+              role="group"
+              aria-label={t("org.agent.tools.list")}
+            >
+              {tools.map((tl) => (
+                <button
+                  key={tl.key}
+                  type="button"
+                  role="switch"
+                  aria-checked={tl.enabled}
+                  aria-label={t(`org.agent.tools.names.${tl.key}`)}
+                  title={t(`org.agent.tools.descriptions.${tl.key}`)}
+                  onClick={() => toggleTool(tl.key)}
+                  className={cn(
+                    "rounded-sm border px-2 py-1 font-mono text-2xs transition-colors",
+                    tl.enabled
+                      ? "border-status-running bg-status-running-bg text-status-running"
+                      : "border-destructive bg-destructive-soft text-destructive line-through",
+                  )}
+                >
+                  {t(`org.agent.tools.names.${tl.key}`)}
                 </button>
               ))}
             </div>

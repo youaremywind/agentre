@@ -105,6 +105,12 @@ type ChatSvc interface {
 	// 后端缺失/类型无法解析 → (false, nil)。MVP 仅解析本地 runtime; 远程后端目前返回 (false, nil)。
 	AgentBackendHasCapability(ctx context.Context, agentID int64, wantCap capability.Capability) (bool, error)
 	CountActiveSessions(ctx context.Context) (int, error)
+	// BeginOrgApproval 在 sessionID 当前活跃 turn 上登记一条 pending 组织架构审批并推流;
+	// 无活跃 turn → error(orgtool MCP handler 据此拒绝工具调用)。orgtool_svc 是唯一调用方。
+	BeginOrgApproval(ctx context.Context, sessionID int64, blk *chatblocks.OrgApprovalBlock) error
+	// FinishOrgApproval 把审批置为终态(approved/denied/expired)并推 resolved 事件;
+	// requestID 不存在(已被 finalize 取走)→ error。
+	FinishOrgApproval(ctx context.Context, sessionID int64, requestID, status, result string) error
 }
 
 var defaultChat ChatSvc
@@ -131,6 +137,7 @@ func NewChat(emitter Emitter) ChatSvc {
 		activeCancels: &sync.Map{},
 		aborted:       &sync.Map{},
 		turnObservers: &sync.Map{},
+		orgApprovals:  map[int64][]*chatblocks.OrgApprovalBlock{},
 		gateway:       defaultGateway,
 	}
 	s.dispatcher = newPackageDispatcher(s)
@@ -164,6 +171,13 @@ type chatSvc struct {
 	// aborted：sessionID(int64) → struct{}。Stop 触发时 store；runTurn 收尾时
 	// LoadAndDelete 判定是否走 StreamAborted 路径 + 跳过 DrainPending 自动接续。
 	aborted *sync.Map
+	// activeTurnStreams: sessionID(int64) → 当前活跃 turn 的 per-turn 流名(string)。
+	// runTurn 起止维护;orgtool 审批(BeginOrgApproval)据此路由审批卡到正确的流。
+	activeTurnStreams sync.Map
+	// orgApprovals: 本会话进行中 turn 上挂起/已决的组织架构审批 block,
+	// finalize 时 merge 进 assistant 消息;LoadSession 时 overlay 到投影。
+	orgApprovalsMu sync.Mutex
+	orgApprovals   map[int64][]*chatblocks.OrgApprovalBlock
 	// turnObservers：sessionID(int64) → *sync.Map(chan TurnResult → struct{})。
 	// 服务端 turn 完成观察口(不经 Wails);group_svc 在 Send 前 ObserveTurn 订阅,
 	// finalize / failTurn 各回灌恰好一条终态用于释放调度位 + 判定 quiesce。
@@ -545,6 +559,18 @@ func (s *chatSvc) LoadSession(ctx context.Context, req *LoadSessionRequest) (*Lo
 		}
 		resp.Messages = append(resp.Messages, cm)
 	}
+	// 进行中 turn 上挂起/已决的审批 block 还没 finalize 进消息行,overlay 到末条
+	// assistant 消息的投影,中途打开会话也能看到审批卡(finalize 时会真正落库)。
+	if pend := s.snapshotOrgApprovals(sess.ID); len(pend) > 0 {
+		for i := len(resp.Messages) - 1; i >= 0; i-- {
+			if resp.Messages[i].Role == "assistant" {
+				for _, b := range pend {
+					resp.Messages[i].Blocks = append(resp.Messages[i].Blocks, orgApprovalBlockToChatBlock(b))
+				}
+				break
+			}
+		}
+	}
 	return resp, nil
 }
 
@@ -731,6 +757,12 @@ func toChatMessage(m *chat_entity.Message) (ChatMessage, error) {
 		case *chatblocks.ToolPermissionBlock:
 			if tb != nil {
 				out.Blocks = append(out.Blocks, toolPermissionBlockToChatBlock(*tb))
+			}
+		case chatblocks.OrgApprovalBlock:
+			out.Blocks = append(out.Blocks, orgApprovalBlockToChatBlock(tb))
+		case *chatblocks.OrgApprovalBlock:
+			if tb != nil {
+				out.Blocks = append(out.Blocks, orgApprovalBlockToChatBlock(*tb))
 			}
 		case PlanBlock:
 			out.Blocks = append(out.Blocks, planBlockToChatBlock(tb))
@@ -2401,7 +2433,7 @@ func (s *chatSvc) runTurn(
 		ProviderSessionID: sess.ProviderSessionID,
 		Compact:           compact,
 		ForkAnchor:        forkAnchor,
-		MCPServers:        extras.mcpServers,
+		MCPServers:        appendTurnMCP(ctx, extras.mcpServers, a, sess.ID, runner.Capabilities().Has(capability.CapMCPTools)),
 	}
 	if userMsg != nil {
 		req.UserText = textOfMessage(userMsg)
@@ -2453,6 +2485,10 @@ func (s *chatSvc) runTurn(
 		s.failTurn(ctx, sess, assistantMsg, stream, s.mapTurnError(ctx, sess, be, err))
 		return
 	}
+	// 登记本 turn 的活跃流名,供 orgtool 审批(BeginOrgApproval)把审批卡路由到此流。
+	// stream 在 SteerConsumed 分段时不变(同 turn 一个流名),Store 一次即可;收尾时清掉。
+	s.activeTurnStreams.Store(sess.ID, stream)
+	defer s.activeTurnStreams.Delete(sess.ID)
 	if result != nil && (be.IsClaudeCode() || be.IsCodex()) {
 		s.persistProviderSessionID(ctx, sess, result.ProviderSessionID, "runner-start")
 	}
@@ -2565,6 +2601,11 @@ func (s *chatSvc) runTurn(
 	_, aborted := s.aborted.LoadAndDelete(sess.ID)
 	if aborted {
 		handlers.MarkRunningSubagentsCancelled(finalBlocks)
+	}
+	// 把本会话登记的组织架构审批 block merge 进 assistant 消息(*OrgApprovalBlock
+	// 实现 cago ContentBlock);仍 pending 的在 take 内被标 expired。
+	for _, b := range s.takeOrgApprovals(sess.ID) {
+		finalBlocks = append(finalBlocks, b)
 	}
 	_ = assistantMsg.SetBlocks(finalBlocks)
 

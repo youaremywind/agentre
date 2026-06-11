@@ -20,6 +20,7 @@ export const Greet = vi.fn((name: string) =>
 
 export const AnswerUserQuestion = vi.fn(() => Promise.resolve({}));
 export const AnswerToolPermission = vi.fn(() => Promise.resolve({}));
+export const AnswerOrgApproval = vi.fn(() => Promise.resolve({}));
 export const ResolvePlanAction = vi.fn(() => Promise.resolve({}));
 
 export const Info = vi.fn(() =>
@@ -233,4 +234,10 @@ export const ApplyImportData = windowBackedMock("ApplyImportData", () =>
 // Quit confirmation — called when the user confirms quitting with active sessions.
 export const ConfirmQuit = windowBackedMock("ConfirmQuit", () =>
   Promise.resolve(),
+);
+
+// File drop bindings
+export const ChatReadDroppedImages = windowBackedMock(
+  "ChatReadDroppedImages",
+  () => Promise.resolve({ items: [] }),
 );

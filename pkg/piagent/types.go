@@ -111,6 +111,9 @@ func buildRPCArgs(c *Client) []string {
 	if thinking := normalizeThinkingLevel(c.thinking); thinking != "" {
 		args = append(args, "--thinking", thinking)
 	}
+	for _, ext := range c.extensions {
+		args = append(args, "--extension", ext)
+	}
 	return args
 }
 

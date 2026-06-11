@@ -157,6 +157,29 @@ describe("buildRenderItems", () => {
     });
   });
 
+  it("org_approval block 产出一个 org_approval 渲染项", () => {
+    const approvalBlock = {
+      type: "org_approval",
+      orgApproval: {
+        requestId: "org-1",
+        toolName: "org_create_department",
+        toolInput: { name: "研发部" },
+        status: "pending",
+      },
+    } as unknown as ChatBlockData;
+
+    const items = buildRenderItems({
+      messageId: 8,
+      blocks: [approvalBlock],
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      type: "org_approval",
+      block: { orgApproval: { requestId: "org-1", status: "pending" } },
+    });
+  });
+
   it("agent.spawn 归集 parentToolUseId 子块到 childBlocks,子块不再上顶层", () => {
     const items = buildRenderItems({
       messageId: 1,

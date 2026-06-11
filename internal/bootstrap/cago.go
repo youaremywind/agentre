@@ -31,6 +31,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/service/group_svc"
 	"github.com/agentre-ai/agentre/internal/service/issue_svc"
 	"github.com/agentre-ai/agentre/internal/service/notification_svc"
+	"github.com/agentre-ai/agentre/internal/service/orgtool_svc"
 	"github.com/agentre-ai/agentre/internal/service/project_svc"
 	"github.com/agentre-ai/agentre/migrations"
 
@@ -147,6 +148,14 @@ func Init(ctx context.Context) (*Runtime, error) {
 	// group MCP 不可达(软降级，App 继续)。
 	gw.RegisterMCP("/mcp/group/", group_svc.Default().MCPHandler())
 	group_svc.Default().SetGatewayBaseURL(gw.BaseURL())
+
+	// 挂组织架构工具 MCP handler(/mcp/org/),并注册 TurnMCPProvider:
+	// agent 开了 org 工具的会话 turn 注入该 MCP server(审批在服务端,见 orgtool_svc)。
+	// 注意:RegisterDeps(含 chat_svc.Chat() 作为 ApprovalGateway)延迟到 app.go
+	// registerChatService() 中 RegisterChat 之后执行——此时 chat_svc.Chat() 已非 nil。
+	gw.RegisterMCP("/mcp/org/", orgtool_svc.Default().MCPHandler())
+	orgtool_svc.Default().SetGatewayBaseURL(gw.BaseURL())
+	chat_svc.RegisterTurnMCPProvider(orgtool_svc.Default().BuildTurnMCP)
 
 	// 注入平台原生通知实现，供前端 App.ShowNotification 调用。
 	notification_svc.RegisterNotifier(sysnotify.New())

@@ -360,6 +360,25 @@
       "waiting": "WAITING · 等待回复"
     }
   },
+  "orgApproval": {
+    "title": "组织架构操作审批",
+    "approve": "批准",
+    "deny": "拒绝",
+    "submitFailed": "审批提交失败",
+    "status": {
+      "approved": "已批准",
+      "denied": "已拒绝",
+      "expired": "已过期"
+    },
+    "tools": {
+      "org_create_department": "创建部门",
+      "org_update_department": "修改部门",
+      "org_delete_department": "删除部门",
+      "org_create_agent": "创建 Agent",
+      "org_update_agent": "修改 Agent",
+      "org_delete_agent": "删除 Agent"
+    }
+  },
   "chat": {
     "actions": {
       "approve": "批准",
@@ -382,6 +401,7 @@
         "tooMany": "最多添加 {{count}} 张图片",
         "unsupported": "仅支持 PNG、JPEG、WebP，单张不超过 5MB"
       },
+      "dropHint": "松开以添加文件 / 文件夹路径",
       "placeholder": "输入消息或 / 触发命令",
       "removeImage": "移除图片 {{name}}",
       "saveEdit": "保存编辑",
@@ -1757,6 +1777,13 @@
         "list": "技能列表",
         "summary": "{{enabled}} 启用 · {{disabled}} 禁用",
         "title": "技能 / 工具"
+      },
+      "tools": {
+        "title": "工具",
+        "empty": "暂无可用工具",
+        "list": "工具开关",
+        "names": { "org": "组织架构" },
+        "descriptions": { "org": "允许该 Agent 查询并管理部门与成员（写操作需你审批）" }
       },
       "systemPrompt": "系统提示词",
       "systemPromptHint": "风格 / 语气 / 边界都写进 system prompt — 不另设字段。",

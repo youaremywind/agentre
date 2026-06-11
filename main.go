@@ -84,6 +84,12 @@ func newWailsOptionsForDataDir(a *app.App, assets fs.FS, goos, dataDir string) *
 		Bind: []interface{}{
 			a,
 		},
+		DragAndDrop: &options.DragAndDrop{
+			// 启用 Wails 原生拖拽,回调返回拖入文件的绝对路径(webview HTML5 drop 拿不到)。
+			// DisableWebViewDrop 保持 false:让 composer 仍收到 HTML5 dragenter/leave 驱动高亮;
+			// 真实路径只来自 OnFileDrop。CSSDropProperty/Value 用默认 --wails-drop-target / drop。
+			EnableFileDrop: true,
+		},
 	}
 
 	if !isWailsDevMode() {

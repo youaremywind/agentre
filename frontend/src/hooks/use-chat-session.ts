@@ -39,7 +39,9 @@ export function useChatSession(sessionId: number) {
     try {
       const resp = await LoadChatSession({ sessionId });
       setSession(resp.session);
-      setMessages(resp.messages ?? []);
+      // loadedMessages 可能在下方 activeStream 分支被替换(剥离 overlay pending
+      // org_approval 块),setMessages 统一挪到该分支之后执行。
+      let loadedMessages = resp.messages ?? [];
       // Cache session 的静态字段 (agentColor / agentName / projectId / title /
       // lastMessageAt / lastReadAt) 到 session-meta-store, 让 TabStrip 在不主动
       // LoadSession 的前提下能拿到这些 detail 字段渲染 avatar 色 / 项目色下划线 /
@@ -99,25 +101,65 @@ export function useChatSession(sessionId: number) {
       // (末条)assistant 消息,StreamDone 经既有路径收口并 reload 回填最终内容。
       if (resp.session.activeStream) {
         const streamsStore = useChatStreamsStore.getState();
-        if (!streamsStore.streams.get(sessionId)) {
-          const loaded = resp.messages ?? [];
-          let assistantMessageId = 0;
-          for (let i = loaded.length - 1; i >= 0; i--) {
-            if (loaded[i].role === "assistant") {
-              assistantMessageId = loaded[i].id;
-              break;
-            }
+        let lastAssistantIdx = -1;
+        for (let i = loadedMessages.length - 1; i >= 0; i--) {
+          if (loadedMessages[i].role === "assistant") {
+            lastAssistantIdx = i;
+            break;
           }
-          if (assistantMessageId > 0) {
+        }
+        if (lastAssistantIdx >= 0) {
+          const lastAssistant = loadedMessages[lastAssistantIdx];
+          // overlay pending org_approval 块搬进 liveBlocks(单一真相源):
+          // 后端把内存里悬而未决的审批 overlay 进末条 assistant 消息投影。若留在
+          // persisted messages 路径,之后的 resolved 流事件只反扫 liveBlocks →
+          // no-op → 卡片永远 pending。这里从消息副本剥离 + 注入 live store,
+          // resolved 自然命中;同时避免与流事件已写入的同 requestId live 块双卡
+          // (transcript 两路 push 同 identity 行不会自动去重)。注入按 requestId
+          // 去重,已有活跃流且 liveBlocks 已含该卡时只剥不注。
+          const isPendingOrgApproval = (b: chat_svc.ChatBlock) =>
+            b.type === "org_approval" && b.orgApproval?.status === "pending";
+          const pendingApprovals = (lastAssistant.blocks ?? []).filter(
+            isPendingOrgApproval,
+          );
+          if (pendingApprovals.length > 0) {
+            loadedMessages = loadedMessages.slice();
+            loadedMessages[lastAssistantIdx] = {
+              ...lastAssistant,
+              blocks: (lastAssistant.blocks ?? []).filter(
+                (b) => !isPendingOrgApproval(b),
+              ),
+            } as ChatMessage;
+          }
+          // 已有活跃 LiveStream 时不覆盖(避免打断正常 Send 已开的流)。
+          if (!streamsStore.streams.get(sessionId) && lastAssistant.id > 0) {
             streamsStore.openStream({
               name: resp.session.activeStream,
               sessionId,
-              assistantMessageId,
+              assistantMessageId: lastAssistant.id,
               streamStartedAt: Date.now(),
             });
           }
+          for (const block of pendingApprovals) {
+            const approval = block.orgApproval;
+            if (!approval?.requestId) continue;
+            const liveNow = useChatStreamsStore
+              .getState()
+              .streams.get(sessionId);
+            const exists = liveNow?.liveBlocks.some(
+              (b) =>
+                b.type === "org_approval" &&
+                b.orgApproval?.requestId === approval.requestId,
+            );
+            if (!exists) {
+              useChatStreamsStore
+                .getState()
+                .appendLiveOrgApproval(sessionId, approval);
+            }
+          }
         }
       }
+      setMessages(loadedMessages);
       // 注:不在这里 MarkRead。语义上"用户已读到 lastMessageAt"只能由
       // ChatPanel 根据 active prop 判断 —— 隐藏 tab 也会 mount useChatSession,
       // 在这里无条件 MarkRead 会把用户没看过的 session 标记成已读。

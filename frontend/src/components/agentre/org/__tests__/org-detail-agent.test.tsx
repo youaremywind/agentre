@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -73,6 +73,7 @@ const backend = (
 function renderPanel(
   overrides: Partial<OrgAgent> = {},
   backends: agent_backend_svc.BackendItem[] = [],
+  availableTools: string[] = [],
 ) {
   const onUpdate = vi.fn().mockResolvedValue(undefined);
   const onDelete = vi.fn().mockResolvedValue(undefined);
@@ -86,6 +87,7 @@ function renderPanel(
       agents={[]}
       backends={backends}
       isLeadOf={null}
+      availableTools={availableTools}
       onUpdate={onUpdate}
       onDelete={onDelete}
       onUploadAvatar={onUploadAvatar}
@@ -224,5 +226,43 @@ describe("OrgDetailAgent", () => {
     expect(screen.getByText(/1 enabled · 1 disabled/)).toBeInTheDocument();
     await user.click(screen.getByRole("switch", { name: /write_file/ }));
     expect(screen.getByText(/2 enabled · 0 disabled/)).toBeInTheDocument();
+  });
+
+  it("renders Tools section with org switch in off state when agent.tools is empty", () => {
+    renderPanel({ tools: [] }, [], ["org"]);
+    // The "Tools" section heading (exact match, not the "Skills / Tools" heading)
+    const headings = screen.getAllByRole("heading", { name: /Tools/i });
+    const toolsHeading = headings.find(
+      (h) => h.textContent?.trim() === "Tools",
+    );
+    expect(toolsHeading).toBeInTheDocument();
+    const orgSwitch = screen.getByRole("switch", { name: /Org Structure/i });
+    expect(orgSwitch).toBeInTheDocument();
+    expect(orgSwitch).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("saves tools with org enabled after toggling the org switch", async () => {
+    const user = userEvent.setup();
+    const { onUpdate } = renderPanel({ tools: [] }, [], ["org"]);
+    await user.click(screen.getByRole("switch", { name: /Org Structure/i }));
+    const saveBtn = screen
+      .getAllByRole("button")
+      .find((b) => b.textContent?.trim() === "Save");
+    if (!saveBtn) throw new Error("Save button not found");
+    await user.click(saveBtn);
+    await waitFor(() => expect(onUpdate).toHaveBeenCalled());
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: expect.arrayContaining([
+          expect.objectContaining({ key: "org", enabled: true }),
+        ]),
+      }),
+    );
+  });
+
+  it("renders org switch in on state when agent.tools has org enabled", () => {
+    renderPanel({ tools: [{ key: "org", enabled: true }] }, [], ["org"]);
+    const orgSwitch = screen.getByRole("switch", { name: /Org Structure/i });
+    expect(orgSwitch).toHaveAttribute("aria-checked", "true");
   });
 });

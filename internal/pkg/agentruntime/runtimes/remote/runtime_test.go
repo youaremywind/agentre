@@ -720,6 +720,42 @@ func TestWatchClose_InjectsStopErrAndClosesEvents(t *testing.T) {
 	assert.ErrorIs(t, runResult.StopErr, ErrDaemonDisconnected)
 }
 
+// TestBuildRunParams_ForwardsMCPServers 钉死 buildRunParams 把 RunRequest.MCPServers
+// 透传到 wire.RunParams，且 JSON round-trip 保留该字段（含 Headers map）。
+// 修复 Edit 1–3 之前此测试会 FAIL（params.MCPServers 为 nil / 字段不存在）。
+func TestBuildRunParams_ForwardsMCPServers(t *testing.T) {
+	specs := []agentruntime.MCPServerSpec{{
+		Name:    "group",
+		URL:     "http://127.0.0.1:1/mcp/group/",
+		Headers: map[string]string{"Authorization": "Bearer t"},
+		Tools:   []string{"group_send"},
+	}}
+	params, err := buildRunParams(agentruntime.RunRequest{
+		Backend:    &agent_backend_entity.AgentBackend{},
+		SessionID:  9,
+		MCPServers: specs,
+	})
+	if err != nil {
+		t.Fatalf("buildRunParams: %v", err)
+	}
+	if len(params.MCPServers) != 1 || params.MCPServers[0].Name != "group" || params.MCPServers[0].Tools[0] != "group_send" {
+		t.Fatalf("buildRunParams dropped MCPServers: %+v", params.MCPServers)
+	}
+
+	// wire JSON round-trip preserves the field.
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out wire.RunParams
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.MCPServers) != 1 || out.MCPServers[0].Headers["Authorization"] != "Bearer t" {
+		t.Fatalf("MCPServers not preserved across wire JSON: %+v", out.MCPServers)
+	}
+}
+
 func TestGoal_DispatchesWireRPCsWithBackendMetadata(t *testing.T) {
 	_, cli, _, rt := setupRemote(t)
 	objective := "ship goal rpc"

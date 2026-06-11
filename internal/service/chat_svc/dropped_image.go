@@ -46,6 +46,7 @@ func readDroppedImage(path string) DroppedImageItem {
 	if info.Size() > maxDropImageBytes {
 		return degrade // 超限,不读取
 	}
+	//nolint:gosec // G304: path 来自用户主动拖入的 OS 文件(Wails OnFileDrop),非外部不可信输入
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return degrade

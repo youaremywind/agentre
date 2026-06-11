@@ -21,6 +21,12 @@ type AgentSkillItem struct {
 	Enabled bool   `json:"enabled"`
 }
 
+// AgentToolItem Agent 内置工具开关（key 对应 internal/pkg/agenttool 注册表）。
+type AgentToolItem struct {
+	Key     string `json:"key"`
+	Enabled bool   `json:"enabled"`
+}
+
 // Agent 一条 Agent 记录。
 type Agent struct {
 	ID             int64  `gorm:"column:id;primaryKey;autoIncrement"`
@@ -36,6 +42,7 @@ type Agent struct {
 	SortOrder      int    `gorm:"column:sort_order;type:int;not null;default:0"`
 	PromptJSON     string `gorm:"column:prompt_json;type:text;not null;default:'[]'"`
 	SkillsJSON     string `gorm:"column:skills_json;type:text;not null;default:'[]'"`
+	ToolsJSON      string `gorm:"column:tools_json;type:text;not null;default:'[]'"`
 	Status         int    `gorm:"column:status;type:int;not null;default:1"`
 	Pinned         bool   `gorm:"column:pinned;type:boolean;not null;default:0"`
 	Createtime     int64  `gorm:"column:createtime;type:bigint;not null;default:0"`
@@ -85,6 +92,36 @@ func (a *Agent) SetSkills(items []AgentSkillItem) {
 	}
 	b, _ := json.Marshal(items)
 	a.SkillsJSON = string(b)
+}
+
+func (a *Agent) GetTools() []AgentToolItem {
+	out := []AgentToolItem{}
+	if a == nil || a.ToolsJSON == "" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(a.ToolsJSON), &out)
+	if out == nil {
+		out = []AgentToolItem{}
+	}
+	return out
+}
+
+func (a *Agent) SetTools(items []AgentToolItem) {
+	if items == nil {
+		items = []AgentToolItem{}
+	}
+	b, _ := json.Marshal(items)
+	a.ToolsJSON = string(b)
+}
+
+// ToolEnabled 报告某内置工具是否开启。
+func (a *Agent) ToolEnabled(key string) bool {
+	for _, it := range a.GetTools() {
+		if it.Key == key {
+			return it.Enabled
+		}
+	}
+	return false
 }
 
 var allowedAvatarColors = map[string]struct{}{
@@ -145,6 +182,9 @@ func (a *Agent) Check(ctx context.Context) error {
 		return i18n.NewError(ctx, code.AgentInvalidPayload)
 	}
 	if !isValidJSONArray(a.SkillsJSON) {
+		return i18n.NewError(ctx, code.AgentInvalidPayload)
+	}
+	if !isValidJSONArray(a.ToolsJSON) {
 		return i18n.NewError(ctx, code.AgentInvalidPayload)
 	}
 	return nil

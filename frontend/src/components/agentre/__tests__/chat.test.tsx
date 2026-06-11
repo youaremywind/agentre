@@ -18,6 +18,19 @@ const sonnerMocks = vi.hoisted(() => ({
 
 vi.mock("sonner", () => sonnerMocks);
 
+// chat.tsx 现在通过 useFileDropZone → file-drop → OnFileDrop 间接依赖 wailsjs runtime。
+// happy-dom 下 window.runtime 不存在,故把 OnFileDrop/OnFileDropOff 桩成 no-op,其余保持真实。
+vi.mock("../../../../wailsjs/runtime/runtime", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../../wailsjs/runtime/runtime")
+  >("../../../../wailsjs/runtime/runtime");
+  return {
+    ...actual,
+    OnFileDrop: vi.fn(),
+    OnFileDropOff: vi.fn(),
+  };
+});
+
 import {
   ChatComposer,
   ChatTranscript,

@@ -1,0 +1,26 @@
+package chat_svc
+
+import (
+	"context"
+
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+)
+
+// TurnMCPProvider 按 (agent, session) 给 turn 注入额外 MCP server —— agent 级
+// 内置工具体系的接缝。bootstrap 注册 orgtool_svc 的实现;nil = 不注入。
+// 与群聊的 extras.mcpServers 叠加;在 runTurn 单点生效,单聊/群聊/Regenerate 全覆盖。
+type TurnMCPProvider func(ctx context.Context, a *agent_entity.Agent, sessionID int64) []agentruntime.MCPServerSpec
+
+var turnMCPProvider TurnMCPProvider
+
+// RegisterTurnMCPProvider bootstrap 接线入口。
+func RegisterTurnMCPProvider(p TurnMCPProvider) { turnMCPProvider = p }
+
+// appendTurnMCP runTurn 在组装 RunRequest 时调用;capOK = runner 声明 CapMCPTools。
+func appendTurnMCP(ctx context.Context, base []agentruntime.MCPServerSpec, a *agent_entity.Agent, sessionID int64, capOK bool) []agentruntime.MCPServerSpec {
+	if turnMCPProvider == nil || !capOK {
+		return base
+	}
+	return append(base, turnMCPProvider(ctx, a, sessionID)...)
+}

@@ -991,6 +991,76 @@ func TestClientStream_MapsToolLifecycle(t *testing.T) {
 	assert.Equal(t, EventDone, events[2].Kind)
 }
 
+func TestClientStream_CompletesUnknownToolItem(t *testing.T) {
+	// Given Codex app-server emits a WebSearch-like tool item whose type is not
+	// in the wrapper's built-in tool whitelist.
+	runner := &fakeAppServerRunner{t: t}
+	runner.handler = func(t *testing.T, h *fakeAppServerHandle) {
+		sc := bufio.NewScanner(h.stdinR)
+		respondRPC(h, readRPCReq(t, sc), map[string]any{})
+		_ = readRPCReq(t, sc)
+		respondRPC(h, readRPCReq(t, sc), map[string]any{"thread": map[string]any{"id": "thread-web"}})
+		respondRPC(h, readRPCReq(t, sc), map[string]any{"turn": map[string]any{"id": "turn-web", "status": "inProgress"}})
+		h.send(map[string]any{
+			"method": "item/started",
+			"params": map[string]any{
+				"threadId": "thread-web",
+				"turnId":   "turn-web",
+				"item": map[string]any{
+					"type":      "webSearch",
+					"id":        "search-1",
+					"query":     "codex web search",
+					"status":    "inProgress",
+					"arguments": map[string]any{"query": "codex web search"},
+				},
+			},
+		})
+		h.send(map[string]any{
+			"method": "item/completed",
+			"params": map[string]any{
+				"threadId": "thread-web",
+				"turnId":   "turn-web",
+				"item": map[string]any{
+					"type":      "webSearch",
+					"id":        "search-1",
+					"query":     "codex web search",
+					"status":    "completed",
+					"arguments": map[string]any{"query": "codex web search"},
+					"result": map[string]any{
+						"items": []map[string]any{{
+							"title": "Codex docs",
+							"url":   "https://example.test/codex",
+						}},
+					},
+				},
+			},
+		})
+		h.send(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-web", "turnId": "turn-web", "turn": map[string]any{"id": "turn-web", "status": "completed"}}})
+	}
+
+	client := New(WithAppServerRunnerForTesting(runner))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stream, err := client.Stream(ctx, "search")
+	require.NoError(t, err)
+
+	var events []Event
+	for stream.Next() {
+		events = append(events, stream.Event())
+	}
+	require.NoError(t, stream.Close(ctx))
+
+	require.Len(t, events, 3)
+	assert.Equal(t, EventPreToolUse, events[0].Kind)
+	assert.Equal(t, "search-1", events[0].Tool.ID)
+	assert.Equal(t, "webSearch", events[0].Tool.Name)
+	assert.JSONEq(t, `{"query":"codex web search"}`, string(events[0].Tool.Input))
+	assert.Equal(t, EventPostToolUse, events[1].Kind)
+	assert.Equal(t, "search-1", events[1].Tool.ID)
+	assert.JSONEq(t, `{"items":[{"title":"Codex docs","url":"https://example.test/codex"}]}`, string(events[1].Tool.Response))
+	assert.Equal(t, EventDone, events[2].Kind)
+}
+
 type fakeAppServerRunner struct {
 	t       *testing.T
 	handler func(*testing.T, *fakeAppServerHandle)

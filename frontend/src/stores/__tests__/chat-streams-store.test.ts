@@ -355,4 +355,72 @@ describe("chat-streams-store", () => {
       },
     });
   });
+
+  // ── org_approval(组织架构写工具审批)live 路径 —— 镜像 tool permission 两式 ──
+  it("appendLiveOrgApproval pushes a pending org_approval live block", () => {
+    const { openStream, appendLiveOrgApproval } =
+      useChatStreamsStore.getState();
+    openStream(baseStream(7));
+    appendLiveOrgApproval(7, {
+      requestId: "org-1",
+      toolName: "org_create_department",
+      toolInput: { name: "研发部" },
+      status: "pending",
+    });
+    const s = useChatStreamsStore.getState().streams.get(7)!;
+    expect(s.liveBlocks).toHaveLength(1);
+    expect(s.liveBlocks[0]).toMatchObject({
+      type: "org_approval",
+      orgApproval: {
+        requestId: "org-1",
+        toolName: "org_create_department",
+        status: "pending",
+      },
+    });
+  });
+
+  it("markOrgApprovalResolved updates status/result by requestId", () => {
+    const { openStream, appendLiveOrgApproval, markOrgApprovalResolved } =
+      useChatStreamsStore.getState();
+    openStream(baseStream(7));
+    appendLiveOrgApproval(7, {
+      requestId: "org-2",
+      toolName: "org_delete_agent",
+      toolInput: { id: 9 },
+      status: "pending",
+    });
+    markOrgApprovalResolved(7, {
+      requestId: "org-2",
+      toolName: "org_delete_agent",
+      status: "approved",
+      result: "已删除 Agent #9",
+    });
+    const block = useChatStreamsStore.getState().streams.get(7)!.liveBlocks[0];
+    expect(block.orgApproval).toMatchObject({
+      requestId: "org-2",
+      status: "approved",
+      result: "已删除 Agent #9",
+    });
+  });
+
+  it("markOrgApprovalResolved is a no-op for an unknown requestId", () => {
+    const { openStream, appendLiveOrgApproval, markOrgApprovalResolved } =
+      useChatStreamsStore.getState();
+    openStream(baseStream(7));
+    appendLiveOrgApproval(7, {
+      requestId: "org-3",
+      toolName: "org_update_agent",
+      status: "pending",
+    });
+    const before = useChatStreamsStore.getState().streams;
+    markOrgApprovalResolved(7, {
+      requestId: "does-not-exist",
+      toolName: "org_update_agent",
+      status: "denied",
+    });
+    // 未知 requestId 既不改块也不重建 Map(referential no-op)。
+    expect(useChatStreamsStore.getState().streams).toBe(before);
+    const block = useChatStreamsStore.getState().streams.get(7)!.liveBlocks[0];
+    expect(block.orgApproval).toMatchObject({ status: "pending" });
+  });
 });

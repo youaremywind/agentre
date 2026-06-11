@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAgentCheck(t *testing.T) {
@@ -70,4 +71,29 @@ func TestAgentHelpers(t *testing.T) {
 func TestAgent_PinnedField(t *testing.T) {
 	assert.True(t, (&Agent{Pinned: true}).Pinned)
 	assert.False(t, (&Agent{}).Pinned)
+}
+
+func TestAgentTools(t *testing.T) {
+	t.Run("空串/坏 JSON 返回空列表", func(t *testing.T) {
+		a := &Agent{}
+		require.Equal(t, []AgentToolItem{}, a.GetTools())
+		a.ToolsJSON = "{bad"
+		require.Equal(t, []AgentToolItem{}, a.GetTools())
+	})
+	t.Run("SetTools/GetTools round-trip + ToolEnabled", func(t *testing.T) {
+		a := &Agent{}
+		a.SetTools([]AgentToolItem{{Key: "org", Enabled: true}})
+		require.Equal(t, `[{"key":"org","enabled":true}]`, a.ToolsJSON)
+		require.True(t, a.ToolEnabled("org"))
+		require.False(t, a.ToolEnabled("other"))
+		a.SetTools([]AgentToolItem{{Key: "org", Enabled: false}})
+		require.False(t, a.ToolEnabled("org")) // 存在但已关闭
+		a.SetTools(nil)
+		require.Equal(t, `[]`, a.ToolsJSON)
+		require.False(t, a.ToolEnabled("org"))
+	})
+	t.Run("Check 校验 ToolsJSON 必须是 JSON 数组", func(t *testing.T) {
+		a := &Agent{Name: "x", DepartmentID: 1, AgentBackendID: 1, ToolsJSON: "{bad"}
+		require.Error(t, a.Check(context.Background()))
+	})
 }

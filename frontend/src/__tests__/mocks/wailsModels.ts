@@ -30,6 +30,29 @@ export const agent_backend_svc = {
   ResolveCLIPathRequest: ModelClass,
 };
 
+export const agent_svc = {
+  CreateAgentRequest: ModelClass,
+  UpdateAgentRequest: ModelClass,
+  DeleteAgentRequest: ModelClass,
+  MoveAgentRequest: ModelClass,
+  UploadAvatarRequest: ModelClass,
+  DeleteAvatarRequest: ModelClass,
+};
+
+export const department_svc = {
+  AgentSkillDTO: ModelClass,
+  AgentToolDTO: ModelClass,
+  CreateDepartmentRequest: ModelClass,
+  UpdateDepartmentRequest: ModelClass,
+  DeleteDepartmentRequest: ModelClass,
+  MoveDepartmentRequest: ModelClass,
+};
+
+export const orgtool_svc = {
+  AnswerOrgApprovalRequest: ModelClass,
+  AnswerOrgApprovalResponse: ModelClass,
+};
+
 export const httpgateway = {};
 
 export const chat_svc = {

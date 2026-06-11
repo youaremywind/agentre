@@ -39,7 +39,10 @@ import { TranscriptUIStateProvider } from "./transcript-ui-state";
 import type { AgentColor, AgentStatus } from "./types";
 import { statusConfig } from "./types";
 import type { ChatBlockData, RetryNotice } from "@/stores/chat-streams-store";
-import type { chat_svc } from "../../../wailsjs/go/models";
+import { ChatReadDroppedImages } from "../../../wailsjs/go/app/App";
+import { chat_svc } from "../../../wailsjs/go/models";
+import { resolveDroppedPaths } from "./chat-input/drop";
+import { useFileDropZone } from "./chat-input/use-file-drop";
 
 type ToolCallProps = React.ComponentProps<"div"> & {
   path?: string;
@@ -480,6 +483,46 @@ function ChatComposer({
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, [supportsImageInput]);
 
+  const dropRef = React.useRef<HTMLFormElement>(null);
+
+  const handleDroppedPaths = React.useCallback(
+    (paths: string[]) => {
+      void (async () => {
+        const { attachments, text } = await resolveDroppedPaths(paths, {
+          allowImages: !editing && supportsImageInput,
+          remainingImageSlots: MAX_CHAT_IMAGE_COUNT - images.length,
+          readImages: async (imagePaths) => {
+            const resp = await ChatReadDroppedImages(
+              chat_svc.ReadDroppedImagesRequest.createFrom({
+                paths: imagePaths,
+              }),
+            );
+            return (resp.items ?? []).map((it) => ({
+              path: it.path,
+              kind:
+                it.kind === "image" ? ("image" as const) : ("path" as const),
+              name: it.name,
+              mediaType: it.mediaType,
+              dataUrl: it.dataUrl,
+            }));
+          },
+        });
+        if (attachments.length > 0) {
+          setImages((prev) => [...prev, ...attachments]);
+          setImageError("");
+        }
+        if (text) inputRef.current?.insertText(text);
+      })();
+    },
+    [editing, supportsImageInput, images.length],
+  );
+
+  const { isDragOver } = useFileDropZone({
+    ref: dropRef,
+    enabled: true,
+    onPaths: handleDroppedPaths,
+  });
+
   function handleSend(text: string) {
     const trimmed = text.trim();
     if (!trimmed && images.length === 0) return;
@@ -567,8 +610,9 @@ function ChatComposer({
 
   return (
     <form
+      ref={dropRef}
       className={cn(
-        "w-full border-t border-border bg-background px-5 py-3.5",
+        "relative w-full border-t border-border bg-background px-5 py-3.5",
         className,
       )}
       onSubmit={handleFormSubmit}
@@ -576,6 +620,14 @@ function ChatComposer({
       onPasteCapture={handlePasteCapture}
       {...props}
     >
+      {isDragOver ? (
+        <div
+          className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border-2 border-dashed border-ring bg-background/85 text-sm font-medium text-foreground"
+          aria-hidden="true"
+        >
+          {t("chat.composer.dropHint")}
+        </div>
+      ) : null}
       <div
         className={cn(
           "flex w-full flex-col overflow-hidden rounded-md border bg-card shadow-xs transition-colors",

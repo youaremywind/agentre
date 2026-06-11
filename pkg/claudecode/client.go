@@ -144,6 +144,10 @@ func (c *Client) McpConfig() string { return c.mcpConfig }
 // 设置时为空切片）。供单测断言注入的 tool 名（如 mcp__group__group_send）进了 Client。
 func (c *Client) AllowedTools() []string { return c.allowedTools }
 
+// Env 返回 Client 当前持有的增量 env map（WithEnv 没设置时为 nil）。
+// 供单测断言 ccBuildClientOpts 注入的环境变量（如 MCP_TIMEOUT）进了 Client。
+func (c *Client) Env() map[string]string { return c.env }
+
 // Stream 一次 turn 的事件流 + 子进程句柄。
 type Stream struct {
 	proc *process

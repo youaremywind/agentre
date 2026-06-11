@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
@@ -187,10 +188,25 @@ func resolveLaunchMode(perTurn, backendDefault string) string {
 // 会下发 --model」这条不变量(spec §B token contract;Bug 1 防回归)。
 // binary 由 caller 决定:真路径走 ccSessionFactory 解析,测试可以传 stub 串。
 func ccBuildClientOpts(spec ccLaunchSpec, binary string) []claudecode.Option {
+	env := spec.Env
+	// 注入 MCP server 时拉长 CLI 的 MCP 工具调用超时:orgtool 写操作会同步挂起
+	// 等用户审批(approvalTimeout=4min),默认 60s 撑不住。值为毫秒。spike 实测见
+	// docs/superpowers/plans/2026-06-11-agent-org-tool.md Task 0。
+	if len(spec.Req.MCPServers) > 0 {
+		merged := make(map[string]string, len(env)+2)
+		maps.Copy(merged, env)
+		if _, ok := merged["MCP_TIMEOUT"]; !ok {
+			merged["MCP_TIMEOUT"] = "600000"
+		}
+		if _, ok := merged["MCP_TOOL_TIMEOUT"]; !ok {
+			merged["MCP_TOOL_TIMEOUT"] = "600000"
+		}
+		env = merged
+	}
 	opts := []claudecode.Option{
 		claudecode.WithBinary(binary),
 		claudecode.WithCwd(spec.Cwd),
-		claudecode.WithEnv(spec.Env),
+		claudecode.WithEnv(env),
 		claudecode.WithSystemPrompt(spec.Req.SystemPrompt),
 		// 启用 stdio control protocol:把 AskUserQuestion 这种交互式工具的
 		// permission gate 从 CLI 的 TUI 拉到 agentre UI;headless 下不开

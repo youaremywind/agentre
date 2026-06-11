@@ -54,6 +54,186 @@ describe("useChatSession", () => {
     expect(live?.assistantMessageId).toBe(42);
   });
 
+  // Bug: 中途重开运行中的会话时,pending org_approval 卡来自 LoadSession overlay
+  // (后端把内存 pending 块 overlay 进末条 assistant 消息投影 → 渲染走 messages 路径)。
+  // 用户点批准/拒绝后 resolved 事件只反扫 liveBlocks → no-op → 卡片永远 pending。
+  // 修复:reattach 时把 pending org_approval 块从消息副本剥离并搬进 liveBlocks
+  // (单一真相源),resolved 事件自然命中,且不与消息路径双卡。
+  it("moves overlay pending org_approval blocks into liveBlocks on reattach", async () => {
+    loadChatSession.mockResolvedValueOnce({
+      session: {
+        id: 9,
+        agentId: 1,
+        agentName: "Eng",
+        title: "x",
+        agentStatus: "running",
+        activeStream: "chat:event:9:42",
+        lastMessageAt: 0,
+        createtime: 0,
+      },
+      messages: [
+        { id: 40, sessionId: 9, role: "user", blocks: [], seq: 1 },
+        {
+          id: 42,
+          sessionId: 9,
+          role: "assistant",
+          blocks: [
+            { type: "text", text: "creating department..." },
+            {
+              type: "org_approval",
+              orgApproval: {
+                requestId: "org-1",
+                toolName: "org_create_department",
+                toolInput: { name: "研发部" },
+                status: "pending",
+              },
+            },
+          ],
+          seq: 2,
+        },
+      ],
+    });
+    const { result } = renderHook(() => useChatSession(9));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // ① 消息路径不再含该 pending 块(防双卡);其余块保留。
+    const lastMsg = result.current.messages.at(-1)!;
+    expect((lastMsg.blocks ?? []).some((b) => b.type === "org_approval")).toBe(
+      false,
+    );
+    expect((lastMsg.blocks ?? []).some((b) => b.type === "text")).toBe(true);
+
+    // ② live store 里出现该块,挂在重挂流上。
+    const live = useChatStreamsStore.getState().streams.get(9);
+    expect(live?.assistantMessageId).toBe(42);
+    expect(live?.liveBlocks).toHaveLength(1);
+    expect(live?.liveBlocks[0]).toMatchObject({
+      type: "org_approval",
+      orgApproval: { requestId: "org-1", status: "pending" },
+    });
+
+    // ③ resolved 事件现在命中 liveBlocks,卡片翻 approved。
+    act(() => {
+      useChatStreamsStore.getState().markOrgApprovalResolved(9, {
+        requestId: "org-1",
+        toolName: "org_create_department",
+        status: "approved",
+        result: "department created",
+      });
+    });
+    const updated = useChatStreamsStore.getState().streams.get(9)!
+      .liveBlocks[0];
+    expect(updated.orgApproval).toMatchObject({
+      status: "approved",
+      result: "department created",
+    });
+  });
+
+  // 已决议(resolved)的 org_approval 块是持久化历史,留在 messages 路径,不搬不剥。
+  it("leaves resolved org_approval blocks in messages untouched on reattach", async () => {
+    loadChatSession.mockResolvedValueOnce({
+      session: {
+        id: 9,
+        agentId: 1,
+        agentName: "Eng",
+        title: "x",
+        agentStatus: "running",
+        activeStream: "chat:event:9:42",
+        lastMessageAt: 0,
+        createtime: 0,
+      },
+      messages: [
+        {
+          id: 42,
+          sessionId: 9,
+          role: "assistant",
+          blocks: [
+            {
+              type: "org_approval",
+              orgApproval: {
+                requestId: "org-0",
+                toolName: "org_delete_agent",
+                status: "approved",
+                result: "done",
+              },
+            },
+          ],
+          seq: 1,
+        },
+      ],
+    });
+    const { result } = renderHook(() => useChatSession(9));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const lastMsg = result.current.messages.at(-1)!;
+    expect(
+      (lastMsg.blocks ?? []).some(
+        (b) =>
+          b.type === "org_approval" && b.orgApproval?.status === "approved",
+      ),
+    ).toBe(true);
+    expect(useChatStreamsStore.getState().streams.get(9)?.liveBlocks).toEqual(
+      [],
+    );
+  });
+
+  // 同 tab 已有活跃流且 liveBlocks 已含同 requestId(流事件路径已写入)时,
+  // mid-turn reload 返回的 overlay 块仍要从 messages 剥离,但不得重复注入。
+  it("dedupes overlay pending org_approval against an existing live block", async () => {
+    act(() => {
+      useChatStreamsStore.getState().openStream({
+        name: "chat:event:9:42",
+        sessionId: 9,
+        assistantMessageId: 42,
+        streamStartedAt: 123,
+      });
+      useChatStreamsStore.getState().appendLiveOrgApproval(9, {
+        requestId: "org-1",
+        toolName: "org_create_department",
+        status: "pending",
+      });
+    });
+    loadChatSession.mockResolvedValueOnce({
+      session: {
+        id: 9,
+        agentId: 1,
+        agentName: "Eng",
+        title: "x",
+        agentStatus: "running",
+        activeStream: "chat:event:9:42",
+        lastMessageAt: 0,
+        createtime: 0,
+      },
+      messages: [
+        {
+          id: 42,
+          sessionId: 9,
+          role: "assistant",
+          blocks: [
+            {
+              type: "org_approval",
+              orgApproval: {
+                requestId: "org-1",
+                toolName: "org_create_department",
+                status: "pending",
+              },
+            },
+          ],
+          seq: 1,
+        },
+      ],
+    });
+    const { result } = renderHook(() => useChatSession(9));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const lastMsg = result.current.messages.at(-1)!;
+    expect((lastMsg.blocks ?? []).some((b) => b.type === "org_approval")).toBe(
+      false,
+    );
+    const live = useChatStreamsStore.getState().streams.get(9);
+    expect(live?.liveBlocks).toHaveLength(1);
+  });
+
   it("does not reattach when activeStream is absent", async () => {
     loadChatSession.mockResolvedValueOnce({
       session: {

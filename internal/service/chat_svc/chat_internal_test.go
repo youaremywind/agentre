@@ -65,6 +65,30 @@ func TestToChatMessage_BlockTypes(t *testing.T) {
 	assert.Contains(t, cm.Blocks[4].Text, "Inspect files")
 }
 
+// TestToChatMessage_OrgApprovalBlock 验证 OrgApprovalBlock 经 toChatMessage 投影成
+// type="org_approval" + OrgApproval 字段保真。
+func TestToChatMessage_OrgApprovalBlock(t *testing.T) {
+	m := &chat_entity.Message{ID: 1, SessionID: 9, Role: "assistant"}
+	require.NoError(t, m.SetBlocks([]blocks.ContentBlock{
+		chatblocks.OrgApprovalBlock{
+			RequestID: "org-req-42",
+			ToolName:  "org_invite",
+			ToolInput: map[string]any{"user_id": "u-99"},
+			Status:    "pending",
+		},
+	}))
+
+	cm, err := toChatMessage(m)
+	require.NoError(t, err)
+	require.Len(t, cm.Blocks, 1)
+	assert.Equal(t, "org_approval", cm.Blocks[0].Type)
+	require.NotNil(t, cm.Blocks[0].OrgApproval)
+	assert.Equal(t, "org-req-42", cm.Blocks[0].OrgApproval.RequestID)
+	assert.Equal(t, "org_invite", cm.Blocks[0].OrgApproval.ToolName)
+	assert.Equal(t, "u-99", cm.Blocks[0].OrgApproval.ToolInput["user_id"])
+	assert.Equal(t, "pending", cm.Blocks[0].OrgApproval.Status)
+}
+
 // 历史:ToolResultMetaBlock 已整删,meta 字段改走 raw tool_result.Meta 字节透传
 // (StreamToolResult 事件的 toolResultMeta 字段),不再独立 block;原先的
 // TestToChatMessage_ToolResultWithMeta / OrphanToolResultMetaIsDropped 一并移除。
