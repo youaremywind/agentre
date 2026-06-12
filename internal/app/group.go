@@ -37,13 +37,31 @@ type GroupMessageItem struct {
 	RecipientMemberIDs []int64 `json:"recipientMemberIDs"`
 	ToUser             bool    `json:"toUser"`
 	Content            string  `json:"content"`
+	TaskID             int64   `json:"taskID"`
+	TaskEvent          string  `json:"taskEvent"`
 	Createtime         int64   `json:"createtime"`
+}
+
+// GroupTaskItem 任务卡条目;json 形状与 group_svc.GroupTaskEvent 一致(live 事件与 Load 同构)。
+type GroupTaskItem struct {
+	ID               int64  `json:"id"`
+	TaskNo           int    `json:"taskNo"`
+	Title            string `json:"title"`
+	Brief            string `json:"brief"`
+	CreatorMemberID  int64  `json:"creatorMemberID"`
+	AssigneeMemberID int64  `json:"assigneeMemberID"`
+	Status           string `json:"status"`
+	Result           string `json:"result"`
+	ParentTaskNo     int    `json:"parentTaskNo"`
+	Createtime       int64  `json:"createtime"`
+	Updatetime       int64  `json:"updatetime"`
 }
 
 type GroupDetailResponse struct {
 	Group    *GroupItem          `json:"group"`
 	Members  []*GroupMemberItem  `json:"members"`
 	Messages []*GroupMessageItem `json:"messages"`
+	Tasks    []*GroupTaskItem    `json:"tasks"`
 }
 
 type GroupCreateRequest struct {
@@ -51,6 +69,7 @@ type GroupCreateRequest struct {
 	HostAgentID    int64   `json:"hostAgentID"`
 	DepartmentID   int64   `json:"departmentID"`
 	ProjectID      int64   `json:"projectID"`
+	WorkflowID     int64   `json:"workflowID"`
 	MemberAgentIDs []int64 `json:"memberAgentIDs"`
 }
 
@@ -78,9 +97,16 @@ func toGroupDetail(d *group_svc.GroupDetail) *GroupDetailResponse {
 	}
 	msgs := make([]*GroupMessageItem, 0, len(d.Messages))
 	for _, m := range d.Messages {
-		msgs = append(msgs, &GroupMessageItem{ID: m.ID, Seq: m.Seq, SenderKind: m.SenderKind, SenderMemberID: m.SenderMemberID, RecipientMemberIDs: m.Recipients(), ToUser: m.ToUser, Content: m.Content, Createtime: m.Createtime})
+		msgs = append(msgs, &GroupMessageItem{ID: m.ID, Seq: m.Seq, SenderKind: m.SenderKind, SenderMemberID: m.SenderMemberID, RecipientMemberIDs: m.Recipients(), ToUser: m.ToUser, Content: m.Content, TaskID: m.TaskID, TaskEvent: m.TaskEvent, Createtime: m.Createtime})
 	}
-	return &GroupDetailResponse{Group: toGroupItem(d.Group), Members: members, Messages: msgs}
+	tasks := make([]*GroupTaskItem, 0, len(d.Tasks))
+	for _, t := range d.Tasks {
+		tasks = append(tasks, &GroupTaskItem{ID: t.ID, TaskNo: t.TaskNo, Title: t.Title, Brief: t.Brief,
+			CreatorMemberID: t.CreatorMemberID, AssigneeMemberID: t.AssigneeMemberID,
+			Status: t.Status, Result: t.Result, ParentTaskNo: t.ParentTaskNo,
+			Createtime: t.Createtime, Updatetime: t.Updatetime})
+	}
+	return &GroupDetailResponse{Group: toGroupItem(d.Group), Members: members, Messages: msgs, Tasks: tasks}
 }
 
 func (a *App) GroupList() ([]*GroupItem, error) {
@@ -96,7 +122,7 @@ func (a *App) GroupList() ([]*GroupItem, error) {
 }
 
 func (a *App) GroupCreate(req *GroupCreateRequest) (*GroupDetailResponse, error) {
-	d, err := group_svc.Default().CreateGroup(a.ctx, &group_svc.CreateGroupRequest{Title: req.Title, HostAgentID: req.HostAgentID, DepartmentID: req.DepartmentID, ProjectID: req.ProjectID, MemberAgentIDs: req.MemberAgentIDs})
+	d, err := group_svc.Default().CreateGroup(a.ctx, &group_svc.CreateGroupRequest{Title: req.Title, HostAgentID: req.HostAgentID, DepartmentID: req.DepartmentID, ProjectID: req.ProjectID, WorkflowID: req.WorkflowID, MemberAgentIDs: req.MemberAgentIDs})
 	if err != nil {
 		return nil, err
 	}
@@ -139,4 +165,9 @@ func (a *App) GroupSetPinned(id int64, pinned bool) error {
 }
 func (a *App) GroupDelete(id int64, deleteSessions bool) error {
 	return group_svc.Default().DeleteGroup(a.ctx, id, deleteSessions)
+}
+
+// AnswerGroupCreateApproval group_create 拉起团队的审批决策(批准/拒绝)。
+func (a *App) AnswerGroupCreateApproval(req *group_svc.AnswerGroupCreateApprovalRequest) (*group_svc.AnswerGroupCreateApprovalResponse, error) {
+	return group_svc.Default().AnswerGroupCreateApproval(a.ctx, req)
 }

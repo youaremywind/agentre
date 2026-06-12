@@ -50,7 +50,7 @@ func (s *orgtoolSvc) MCPHandler() http.Handler { return s.mcpHandlerInit() }
 func (s *orgtoolSvc) SetGatewayBaseURL(u string) { s.gatewayBaseURL = u }
 
 // BuildTurnMCP 实现 chat_svc.TurnMCPProvider:agent 开启 org 工具时返回注入 spec。
-func (s *orgtoolSvc) BuildTurnMCP(_ context.Context, a *agent_entity.Agent, sessionID int64) []agentruntime.MCPServerSpec {
+func (s *orgtoolSvc) BuildTurnMCP(_ context.Context, a *agent_entity.Agent, sessionID int64, _ int64) []agentruntime.MCPServerSpec {
 	if a == nil || !a.ToolEnabled(agenttool.KeyOrg) || s.gatewayBaseURL == "" {
 		return nil
 	}

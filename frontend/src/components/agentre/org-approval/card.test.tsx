@@ -4,10 +4,24 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 
 import { OrgApprovalCard } from "./card";
 import type { OrgApprovalData } from "@/stores/chat-streams-store";
-import { AnswerOrgApproval } from "../../../../wailsjs/go/app/App";
+import {
+  AnswerGroupCreateApproval,
+  AnswerOrgApproval,
+} from "../../../../wailsjs/go/app/App";
 
 vi.mock("../../../../wailsjs/go/app/App", () => ({
   AnswerOrgApproval: vi.fn().mockResolvedValue(undefined),
+  AnswerGroupCreateApproval: vi.fn().mockResolvedValue(undefined),
+}));
+
+// group_create 批准落地后要刷新侧栏群列表;mock 掉 store 只断言 reload 被调。
+const mockGroupListReload = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
+vi.mock("@/stores/group-list-store", () => ({
+  useGroupListStore: {
+    getState: () => ({ reload: mockGroupListReload }),
+  },
 }));
 
 describe("OrgApprovalCard", () => {
@@ -107,5 +121,102 @@ describe("OrgApprovalCard", () => {
     );
     expect(screen.getByText("Expired")).toBeDefined();
     expect(screen.queryByText("Approve")).toBeNull();
+  });
+
+  describe("group_create", () => {
+    const groupCreatePending = (
+      overrides: Partial<OrgApprovalData> = {},
+    ): OrgApprovalData => ({
+      requestId: "gc-1",
+      toolName: "group_create",
+      toolInput: {
+        title: "新功能开发组",
+        memberNames: ["开发"],
+        brief: "按设计稿重构",
+      },
+      status: "pending",
+      ...overrides,
+    });
+
+    it("routes group_create answers to AnswerGroupCreateApproval (not AnswerOrgApproval)", async () => {
+      const user = userEvent.setup();
+      render(
+        <OrgApprovalCard approval={groupCreatePending()} sessionId={42} />,
+      );
+      await user.click(screen.getByText("Approve"));
+      await waitFor(() => {
+        expect(AnswerGroupCreateApproval).toHaveBeenCalledTimes(1);
+      });
+      expect(AnswerGroupCreateApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: 42,
+          requestId: "gc-1",
+          allow: true,
+        }),
+      );
+      expect(AnswerOrgApproval).not.toHaveBeenCalled();
+    });
+
+    it("routes group_create rejections to AnswerGroupCreateApproval with allow:false", async () => {
+      const user = userEvent.setup();
+      render(
+        <OrgApprovalCard approval={groupCreatePending()} sessionId={42} />,
+      );
+      await user.click(screen.getByText("Reject"));
+      await waitFor(() => {
+        expect(AnswerGroupCreateApproval).toHaveBeenCalledTimes(1);
+      });
+      expect(AnswerGroupCreateApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: 42,
+          requestId: "gc-1",
+          allow: false,
+        }),
+      );
+      expect(AnswerOrgApproval).not.toHaveBeenCalled();
+    });
+
+    it("keeps non-group_create answers on AnswerOrgApproval", async () => {
+      const user = userEvent.setup();
+      render(<OrgApprovalCard approval={pending()} sessionId={42} />);
+      await user.click(screen.getByText("Approve"));
+      await waitFor(() => {
+        expect(AnswerOrgApproval).toHaveBeenCalledTimes(1);
+      });
+      expect(AnswerGroupCreateApproval).not.toHaveBeenCalled();
+    });
+
+    it("reloads the group list when a group_create approval resolves approved", () => {
+      render(
+        <OrgApprovalCard
+          approval={groupCreatePending({
+            status: "approved",
+            result: "group created: id=12 title=新功能开发组",
+          })}
+          sessionId={42}
+        />,
+      );
+      expect(mockGroupListReload).toHaveBeenCalled();
+    });
+
+    it("does not reload the group list while pending or for non-group_create approvals", () => {
+      render(
+        <OrgApprovalCard approval={groupCreatePending()} sessionId={42} />,
+      );
+      render(
+        <OrgApprovalCard
+          approval={pending({ status: "approved", result: "done" })}
+          sessionId={42}
+        />,
+      );
+      expect(mockGroupListReload).not.toHaveBeenCalled();
+    });
+
+    it("shows the i18n label for group_create", () => {
+      render(
+        <OrgApprovalCard approval={groupCreatePending()} sessionId={42} />,
+      );
+      expect(screen.getByText("Create group chat")).toBeDefined();
+    });
   });
 });

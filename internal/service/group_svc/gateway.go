@@ -6,6 +6,7 @@ import (
 
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc"
+	chatblocks "github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
 )
 
 //go:generate mockgen -source gateway.go -destination mock_group_svc/mock_gateway.go
@@ -20,6 +21,10 @@ type ChatGateway interface {
 	// 的 ACTIVE 会话经 ListAgents 的 IncludingGroups 变体残留在 agent 侧栏)。
 	DeleteSession(ctx context.Context, sessionID int64) error
 	AgentBackendHasCapability(ctx context.Context, agentID int64, wantCap capability.Capability) (bool, error)
+	// BeginGroupCreateApproval / FinishGroupCreateApproval 把 group_create 的审批卡
+	// 路由到发起 agent 的单聊流(复用 chat_svc 的 org_approval block 管线,无新 UI 形态)。
+	BeginGroupCreateApproval(ctx context.Context, sessionID int64, blk *chatblocks.OrgApprovalBlock) error
+	FinishGroupCreateApproval(ctx context.Context, sessionID int64, requestID, status, result string) error
 }
 
 // chatSvcGateway 委托给 chat_svc 默认单例。
@@ -48,4 +53,12 @@ func (chatSvcGateway) DeleteSession(ctx context.Context, sessionID int64) error 
 
 func (chatSvcGateway) AgentBackendHasCapability(ctx context.Context, agentID int64, wantCap capability.Capability) (bool, error) {
 	return chat_svc.Chat().AgentBackendHasCapability(ctx, agentID, wantCap)
+}
+
+func (chatSvcGateway) BeginGroupCreateApproval(ctx context.Context, sessionID int64, blk *chatblocks.OrgApprovalBlock) error {
+	return chat_svc.Chat().BeginOrgApproval(ctx, sessionID, blk)
+}
+
+func (chatSvcGateway) FinishGroupCreateApproval(ctx context.Context, sessionID int64, requestID, status, result string) error {
+	return chat_svc.Chat().FinishOrgApproval(ctx, sessionID, requestID, status, result)
 }

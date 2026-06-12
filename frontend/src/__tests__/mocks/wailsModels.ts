@@ -53,6 +53,11 @@ export const orgtool_svc = {
   AnswerOrgApprovalResponse: ModelClass,
 };
 
+export const group_svc = {
+  AnswerGroupCreateApprovalRequest: ModelClass,
+  AnswerGroupCreateApprovalResponse: ModelClass,
+};
+
 export const httpgateway = {};
 
 export const chat_svc = {

@@ -56,11 +56,86 @@ func TestGroupSvc_CreateGroup_AddsHostMember(t *testing.T) {
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(&group_entity.Group{ID: 5}, nil)
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
 		msgRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTestWithNames(gw, map[int64]string{1: "主持人"})
 		detail, err := svc.CreateGroup(ctx, &group_svc.CreateGroupRequest{Title: "支付小队", HostAgentID: 1})
 		So(err, ShouldBeNil)
 		So(detail.Group.ID, ShouldEqual, 5)
+	})
+}
+
+func TestCreateGroup_PersistsWorkflowID(t *testing.T) {
+	Convey("建群带 WorkflowID → 落到 groups.workflow_id", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		msgRepo := mock_group_repo.NewMockGroupMessageRepo(ctrl)
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+		group_repo.RegisterMessage(msgRepo)
+		group_repo.RegisterTask(taskRepo)
+		agentRepo := mock_agent_repo.NewMockAgentRepo(ctrl)
+		agent_repo.RegisterAgent(agentRepo)
+		agentRepo.EXPECT().Find(gomock.Any(), gomock.Any()).Return(&agent_entity.Agent{Status: consts.ACTIVE}, nil).AnyTimes()
+
+		gw.EXPECT().AgentBackendHasCapability(gomock.Any(), int64(1), capability.CapMCPTools).Return(true, nil)
+		groupRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, g *group_entity.Group) error {
+				So(g.WorkflowID, ShouldEqual, 3) // ← 请求的 WorkflowID 必须落到实体
+				g.ID = 5
+				return nil
+			})
+		memberRepo.EXPECT().FindByGroupAndAgent(gomock.Any(), int64(5), int64(1)).Return(nil, nil)
+		memberRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+		// LoadGroup tail
+		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(&group_entity.Group{ID: 5, WorkflowID: 3}, nil)
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
+		msgRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
+
+		svc := group_svc.NewForTestWithNames(gw, map[int64]string{1: "主持人"})
+		detail, err := svc.CreateGroup(ctx, &group_svc.CreateGroupRequest{Title: "支付小队", HostAgentID: 1, WorkflowID: 3})
+		So(err, ShouldBeNil)
+		So(detail.Group.WorkflowID, ShouldEqual, 3)
+	})
+}
+
+func TestLoadGroup_IncludesTasks(t *testing.T) {
+	Convey("LoadGroup 返回 Tasks(任务 tab 与历史卡片状态回写的数据源)", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		msgRepo := mock_group_repo.NewMockGroupMessageRepo(ctrl)
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+		group_repo.RegisterMessage(msgRepo)
+		group_repo.RegisterTask(taskRepo)
+
+		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(&group_entity.Group{ID: 5, Status: consts.ACTIVE}, nil)
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
+		msgRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(
+			[]*group_entity.GroupTask{{ID: 77, TaskNo: 1, Title: "写测试", Status: group_entity.TaskStatusOpen}}, nil)
+
+		svc := group_svc.NewForTest(gw)
+		detail, err := svc.LoadGroup(ctx, 5)
+		So(err, ShouldBeNil)
+		So(detail.Tasks, ShouldHaveLength, 1)
+		So(detail.Tasks[0].ID, ShouldEqual, 77)
+		So(detail.Tasks[0].TaskNo, ShouldEqual, 1)
 	})
 }
 
@@ -235,16 +310,24 @@ func TestGroupSvc_RemoveGroupMember(t *testing.T) {
 			defer ctrl.Finish()
 
 			gw := mock_group_svc.NewMockChatGateway(ctrl)
+			groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
 			memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+			group_repo.RegisterGroup(groupRepo)
 			group_repo.RegisterMember(memberRepo)
 
 			memberRepo.EXPECT().Find(gomock.Any(), int64(42)).Return(
-				&group_entity.GroupMember{ID: 42, Status: group_entity.MemberActive}, nil)
+				&group_entity.GroupMember{ID: 42, GroupID: 7, Status: group_entity.MemberActive}, nil)
 			memberRepo.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, m *group_entity.GroupMember) error {
 					So(m.Status, ShouldEqual, group_entity.MemberLeft)
 					return nil
 				})
+			// 离群级联取消会读群+任务列表(无任务 → 无级联副作用)。
+			groupRepo.EXPECT().Find(gomock.Any(), int64(7)).Return(
+				&group_entity.Group{ID: 7, Status: consts.ACTIVE}, nil).AnyTimes()
+			taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+			group_repo.RegisterTask(taskRepo)
+			taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(7)).Return(nil, nil).AnyTimes()
 
 			svc := group_svc.NewForTest(gw)
 			So(svc.RemoveGroupMember(ctx, 42), ShouldBeNil)
@@ -312,6 +395,9 @@ func TestGroupSvc_CreateGroup_AddsInitialMembers(t *testing.T) {
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(&group_entity.Group{ID: 5}, nil)
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
 		msgRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTest(gw)
 		_, err := svc.CreateGroup(ctx, &group_svc.CreateGroupRequest{
@@ -381,6 +467,9 @@ func TestGroupSvc_CreateGroup_AddsInitialMembers(t *testing.T) {
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(&group_entity.Group{ID: 5}, nil).AnyTimes()
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
 		msgRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTest(gw)
 		_, err := svc.CreateGroup(ctx, &group_svc.CreateGroupRequest{
@@ -422,6 +511,9 @@ func TestGroupSvc_CreateGroup_AddsInitialMembers(t *testing.T) {
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(&group_entity.Group{ID: 5}, nil)
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
 		msgRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil)
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTest(gw)
 		_, err := svc.CreateGroup(ctx, &group_svc.CreateGroupRequest{
@@ -432,7 +524,7 @@ func TestGroupSvc_CreateGroup_AddsInitialMembers(t *testing.T) {
 }
 
 func TestGroupSvc_HandleInvite(t *testing.T) {
-	Convey("主持人邀请部门内 agent → 入群 + 落 system 消息 + 返回结果", t, func() {
+	Convey("主持人邀请可用 agent → 入群 + 落 system 消息 + 返回结果", t, func() {
 		ctx := context.Background()
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
@@ -454,8 +546,8 @@ func TestGroupSvc_HandleInvite(t *testing.T) {
 			&group_entity.Group{ID: 5, DepartmentID: 42, Status: consts.ACTIVE}, nil)
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(
 			[]*group_entity.GroupMember{{ID: 100, AgentID: 1, Role: group_entity.RoleHost}}, nil).AnyTimes()
-		// 部门 42 的招募池含 agent 2(Bob)。
-		agentRepo.EXPECT().ListByDepartment(gomock.Any(), int64(42)).Return(
+		// 招募池=全部 active agent(spec §7 修订 06-03 部门池决策)。
+		agentRepo.EXPECT().List(gomock.Any()).Return(
 			[]*agent_entity.Agent{{ID: 2, Name: "Bob", Status: consts.ACTIVE}}, nil)
 		gw.EXPECT().AgentBackendHasCapability(gomock.Any(), int64(2), capability.CapMCPTools).Return(true, nil)
 		// ensureMember(2) → 新建。
@@ -497,7 +589,45 @@ func TestGroupSvc_HandleInvite(t *testing.T) {
 		So(httpErr.Code, ShouldEqual, code.GroupInviteForbidden)
 	})
 
-	Convey("被邀请人不在部门招募池 → 跳过,返回空", t, func() {
+	Convey("跨部门邀请:被邀请 agent 部门与群不同 → 仍入群成功", t, func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		gw := mock_group_svc.NewMockChatGateway(ctrl)
+		groupRepo := mock_group_repo.NewMockGroupRepo(ctrl)
+		memberRepo := mock_group_repo.NewMockGroupMemberRepo(ctrl)
+		msgRepo := mock_group_repo.NewMockGroupMessageRepo(ctrl)
+		agentRepo := mock_agent_repo.NewMockAgentRepo(ctrl)
+		group_repo.RegisterGroup(groupRepo)
+		group_repo.RegisterMember(memberRepo)
+		group_repo.RegisterMessage(msgRepo)
+		agent_repo.RegisterAgent(agentRepo)
+
+		memberRepo.EXPECT().Find(gomock.Any(), int64(100)).Return(
+			&group_entity.GroupMember{ID: 100, GroupID: 5, AgentID: 1, Role: group_entity.RoleHost, Status: group_entity.MemberActive}, nil)
+		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(
+			&group_entity.Group{ID: 5, DepartmentID: 42, Status: consts.ACTIVE}, nil)
+		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(
+			[]*group_entity.GroupMember{{ID: 100, AgentID: 1, Role: group_entity.RoleHost}}, nil).AnyTimes()
+		// Dana 属于部门 7(≠群的 42):部门仅组织单位,跨部门招人直接成立。
+		agentRepo.EXPECT().List(gomock.Any()).Return(
+			[]*agent_entity.Agent{{ID: 3, Name: "Dana", DepartmentID: 7, Status: consts.ACTIVE}}, nil)
+		gw.EXPECT().AgentBackendHasCapability(gomock.Any(), int64(3), capability.CapMCPTools).Return(true, nil)
+		memberRepo.EXPECT().FindByGroupAndAgent(gomock.Any(), int64(5), int64(3)).Return(nil, nil)
+		memberRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+		msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil)
+		msgRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+		svc := group_svc.NewForTestWithNames(gw, map[int64]string{3: "Dana"})
+		results, err := svc.HandleInvite(ctx, 100, []string{"Dana"}, nil, "跨部门支援")
+		So(err, ShouldBeNil)
+		So(len(results), ShouldEqual, 1)
+		So(results[0].AgentID, ShouldEqual, 3)
+		So(results[0].Name, ShouldEqual, "Dana")
+	})
+
+	Convey("被邀请人不在招募池 → 跳过,返回空", t, func() {
 		ctx := context.Background()
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
@@ -516,7 +646,7 @@ func TestGroupSvc_HandleInvite(t *testing.T) {
 			&group_entity.Group{ID: 5, DepartmentID: 42, Status: consts.ACTIVE}, nil)
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(
 			[]*group_entity.GroupMember{{ID: 100, AgentID: 1, Role: group_entity.RoleHost}}, nil).AnyTimes()
-		agentRepo.EXPECT().ListByDepartment(gomock.Any(), int64(42)).Return(
+		agentRepo.EXPECT().List(gomock.Any()).Return(
 			[]*agent_entity.Agent{{ID: 2, Name: "Bob", Status: consts.ACTIVE}}, nil)
 
 		svc := group_svc.NewForTest(gw)

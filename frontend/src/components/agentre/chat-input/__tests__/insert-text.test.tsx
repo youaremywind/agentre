@@ -11,7 +11,14 @@ describe("AIChatInput.insertText", () => {
   it("把文本插入编辑器当前位置", () => {
     const handleRef = createRef<AIChatInputHandle>();
     const editorRef: RefObject<Editor | null> = { current: null };
-    render(<AIChatInput ref={handleRef} editorRef={editorRef} onSubmit={() => {}} autoFocus />);
+    render(
+      <AIChatInput
+        ref={handleRef}
+        editorRef={editorRef}
+        onSubmit={() => {}}
+        autoFocus
+      />,
+    );
 
     act(() => {
       handleRef.current!.insertText(`/Users/a/b.txt `);

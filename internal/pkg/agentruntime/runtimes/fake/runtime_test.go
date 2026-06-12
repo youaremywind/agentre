@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -182,10 +184,234 @@ func TestRun_SkipsGroupSendWithoutTool(t *testing.T) {
 	}
 }
 
+// 建群指令:三段冒号分隔(title:成员逗号分隔:brief),取指令所在行;缺段/空段 → !ok。
+func TestParseGroupCreateDirective(t *testing.T) {
+	title, members, brief, ok := parseGroupCreateDirective("(来自 用户)\ne2e-group-create:拉起群:E2E Member:e2e-brief 建群冒烟")
+	require.True(t, ok)
+	assert.Equal(t, "拉起群", title)
+	assert.Equal(t, []string{"E2E Member"}, members)
+	assert.Equal(t, "e2e-brief 建群冒烟", brief)
+
+	title, members, brief, ok = parseGroupCreateDirective("e2e-group-create:多人群: A , B ,:brief")
+	require.True(t, ok)
+	assert.Equal(t, "多人群", title)
+	assert.Equal(t, []string{"A", "B"}, members) // 空段剔除,前后空白裁剪
+	assert.Equal(t, "brief", brief)
+
+	for _, bad := range []string{
+		"无指令文本",
+		"e2e-group-create:只有两段:成员",
+		"e2e-group-create::E2E Member:brief", // 空 title
+		"e2e-group-create:群: ,:brief",       // 成员全空
+		"e2e-group-create:群:成员:",            // 空 brief
+	} {
+		_, _, _, ok := parseGroupCreateDirective(bad)
+		assert.False(t, ok, "input=%q", bad)
+	}
+}
+
+// 单聊轮:用户指令 e2e-group-create:<title>:<members>:<brief> + 注入 group_create tool
+// → fake 调一次 group_create(挂起等审批由 svc 侧负责,这里 server 即时应答)。
+func TestRun_PostsGroupCreateOnDirective(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	srv, snapshot := taskCaptureServer(t)
+
+	r := New()
+	events, _, err := r.Run(ctx, agentruntime.RunRequest{
+		SessionID: 21,
+		UserText:  "e2e-group-create:拉起群:E2E Member:e2e-brief 建群冒烟",
+		MCPServers: []agentruntime.MCPServerSpec{{
+			Name:    "group",
+			URL:     srv.URL + "/mcp/group/",
+			Headers: map[string]string{"Authorization": "Bearer tok"},
+			Tools:   []string{"group_create"},
+		}},
+	})
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining
+	}
+
+	calls := snapshot()
+	require.Len(t, calls["group_create"], 1)
+	args := calls["group_create"][0]
+	assert.Equal(t, "拉起群", args["title"])
+	assert.Equal(t, []any{"E2E Member"}, args["memberNames"])
+	assert.Equal(t, "e2e-brief 建群冒烟", args["brief"])
+	assert.Empty(t, calls["group_send"]) // 单聊注入只有 group_create,绝不误发 group_send
+}
+
+// 群成员轮(注入 group_send 等,但无 group_create)即便回显文本含指令,也绝不调 group_create
+// —— 守已有群聊/任务链路不被新接缝串扰。
+func TestRun_SkipsGroupCreateWithoutTool(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	srv, snapshot := taskCaptureServer(t)
+
+	r := New()
+	events, _, err := r.Run(ctx, agentruntime.RunRequest{
+		SessionID:  22,
+		UserText:   "(来自 用户)\ne2e-group-create:拉起群:E2E Member:brief",
+		MCPServers: taskToolsSpec(srv.URL),
+	})
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining
+	}
+
+	assert.Empty(t, snapshot()["group_create"])
+}
+
+// 注入了 group_create 但 UserText 无指令(普通单聊轮)→ 绝不调 group_create
+// —— 对称 TestRun_SkipsTaskCallsWithoutPatterns,守 smoke-chat 这类普通单聊轮不被误触发。
+func TestRun_SkipsGroupCreateWhenNoDirective(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	srv, snapshot := taskCaptureServer(t)
+
+	r := New()
+	events, _, err := r.Run(ctx, agentruntime.RunRequest{
+		SessionID: 23,
+		UserText:  "ping",
+		MCPServers: []agentruntime.MCPServerSpec{{
+			Name:    "group",
+			URL:     srv.URL + "/mcp/group/",
+			Headers: map[string]string{"Authorization": "Bearer tok"},
+			Tools:   []string{"group_create"},
+		}},
+	})
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining
+	}
+
+	assert.Empty(t, snapshot()["group_create"])
+}
+
 func TestCapabilities_DeclaresMCPTools(t *testing.T) {
 	// 群聊门控(group_svc.backendSupportsGroup)要求后端声明 CapMCPTools;
 	// fake 不声明的话,e2e 里建群入口一个可选 agent 都没有,群聊流程无法验证。
 	caps := New().Capabilities()
 	assert.True(t, caps.Has(capability.CapMCPTools))
 	assert.True(t, caps.Has(capability.CapAbort))
+}
+
+// taskCaptureServer 收集本轮 fake 发出的全部 tools/call,按 tool 名归档参数。
+func taskCaptureServer(t *testing.T) (*httptest.Server, func() map[string][]map[string]any) {
+	t.Helper()
+	var mu sync.Mutex
+	calls := map[string][]map[string]any{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var rpc struct {
+			Params struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
+		}
+		require.NoError(t, json.Unmarshal(b, &rpc))
+		mu.Lock()
+		calls[rpc.Params.Name] = append(calls[rpc.Params.Name], rpc.Params.Arguments)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() map[string][]map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		out := map[string][]map[string]any{}
+		for k, v := range calls {
+			out[k] = append([]map[string]any(nil), v...)
+		}
+		return out
+	}
+}
+
+func taskToolsSpec(url string) []agentruntime.MCPServerSpec {
+	return []agentruntime.MCPServerSpec{{
+		Name:    "group",
+		URL:     url + "/mcp/group/",
+		Headers: map[string]string{"Authorization": "Bearer tok"},
+		Tools:   []string{"group_send", "group_task_create", "group_task_complete", "group_task_cancel"},
+	}}
+}
+
+// 主持人轮:用户指令 e2e-task:<assignee>:<title> → fake 调 group_task_create 派活
+// (brief 为确定性派生文本),group_send 照常发(回显冒泡进群)。
+func TestRun_PostsTaskCreateOnDirective(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	srv, snapshot := taskCaptureServer(t)
+
+	r := New()
+	events, _, err := r.Run(ctx, agentruntime.RunRequest{
+		SessionID:  11,
+		UserText:   "(来自 用户)\ne2e-task:E2E Member:重构 UI",
+		MCPServers: taskToolsSpec(srv.URL),
+	})
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining
+	}
+
+	calls := snapshot()
+	require.Len(t, calls["group_task_create"], 1)
+	args := calls["group_task_create"][0]
+	assert.Equal(t, "E2E Member", args["assignee"])
+	assert.Equal(t, "重构 UI", args["title"])
+	assert.Equal(t, "e2e-brief: 重构 UI", args["brief"])
+	assert.Len(t, calls["group_send"], 1)         // 既有回显行为不受影响
+	assert.Empty(t, calls["group_task_complete"]) // 指令轮绝不交付
+}
+
+// 成员轮:收到派活抬头「任务 #N：」→ fake 调 group_task_complete 交付,
+// result 带 TaskResultPrefix(DB oracle 据此断言)。
+func TestRun_PostsTaskCompleteOnAssignedTask(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	srv, snapshot := taskCaptureServer(t)
+
+	r := New()
+	events, _, err := r.Run(ctx, agentruntime.RunRequest{
+		SessionID:  12,
+		UserText:   "(来自 CEO 助手)\n任务 #3：重构 UI\ne2e-brief: 重构 UI",
+		MCPServers: taskToolsSpec(srv.URL),
+	})
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining
+	}
+
+	calls := snapshot()
+	require.Len(t, calls["group_task_complete"], 1)
+	args := calls["group_task_complete"][0]
+	assert.Equal(t, float64(3), args["taskId"]) // JSON 数字解码为 float64
+	result, _ := args["result"].(string)
+	assert.True(t, strings.HasPrefix(result, TaskResultPrefix), "result=%q", result)
+	assert.Empty(t, calls["group_task_create"])
+}
+
+// 无指令、无派活抬头(含「任务 #N 已完成」回执)→ 绝不碰 task tool,只 group_send。
+// 守主持人收 completed 后的末轮自然收敛 + 普通群聊轮(group-chat.spec)行为不变。
+func TestRun_SkipsTaskCallsWithoutPatterns(t *testing.T) {
+	for _, userText := range []string{
+		"(来自 用户)\ngroup ping",
+		"(来自 E2E Member)\n任务 #3 已完成\ne2e-fake-result: task #3",
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		srv, snapshot := taskCaptureServer(t)
+
+		r := New()
+		events, _, err := r.Run(ctx, agentruntime.RunRequest{
+			SessionID:  13,
+			UserText:   userText,
+			MCPServers: taskToolsSpec(srv.URL),
+		})
+		require.NoError(t, err)
+		for range events { //nolint:revive // draining
+		}
+
+		calls := snapshot()
+		assert.Empty(t, calls["group_task_create"], "userText=%q", userText)
+		assert.Empty(t, calls["group_task_complete"], "userText=%q", userText)
+		assert.Len(t, calls["group_send"], 1, "userText=%q", userText)
+		cancel()
+	}
 }

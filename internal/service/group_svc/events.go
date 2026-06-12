@@ -12,6 +12,8 @@ type groupMessageEvent struct {
 	RecipientMemberIDs []int64 `json:"recipientMemberIDs"`
 	ToUser             bool    `json:"toUser"`
 	Content            string  `json:"content"`
+	TaskID             int64   `json:"taskID"`
+	TaskEvent          string  `json:"taskEvent"`
 	Createtime         int64   `json:"createtime"`
 }
 
@@ -33,6 +35,8 @@ func toGroupMessageEvent(m *group_entity.GroupMessage) groupMessageEvent {
 		RecipientMemberIDs: m.Recipients(),
 		ToUser:             m.ToUser,
 		Content:            m.Content,
+		TaskID:             m.TaskID,
+		TaskEvent:          m.TaskEvent,
 		Createtime:         m.Createtime,
 	}
 }
@@ -44,5 +48,29 @@ func toGroupMemberEvent(m *group_entity.GroupMember) GroupMemberEvent {
 		BackingSessionID: m.BackingSessionID,
 		Role:             m.Role,
 		Status:           m.Status,
+	}
+}
+
+// GroupTaskEvent 是推给前端的任务事件载荷; json 形状须与 app.GroupTaskItem 一致(Task 13 加)。
+type GroupTaskEvent struct {
+	ID               int64  `json:"id"`
+	TaskNo           int    `json:"taskNo"`
+	Title            string `json:"title"`
+	Brief            string `json:"brief"`
+	CreatorMemberID  int64  `json:"creatorMemberID"`
+	AssigneeMemberID int64  `json:"assigneeMemberID"`
+	Status           string `json:"status"`
+	Result           string `json:"result"`
+	ParentTaskNo     int    `json:"parentTaskNo"`
+	Createtime       int64  `json:"createtime"`
+	Updatetime       int64  `json:"updatetime"`
+}
+
+func toGroupTaskEvent(t *group_entity.GroupTask) GroupTaskEvent {
+	return GroupTaskEvent{
+		ID: t.ID, TaskNo: t.TaskNo, Title: t.Title, Brief: t.Brief,
+		CreatorMemberID: t.CreatorMemberID, AssigneeMemberID: t.AssigneeMemberID,
+		Status: t.Status, Result: t.Result, ParentTaskNo: t.ParentTaskNo,
+		Createtime: t.Createtime, Updatetime: t.Updatetime,
 	}
 }

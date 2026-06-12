@@ -47,20 +47,20 @@ title               TEXT NOT NULL         -- 短标题
 brief               TEXT NOT NULL         -- 任务说明,验收标准写在这里
 creator_member_id   BIGINT NOT NULL       -- 建卡成员(本期任务卡只由成员经 MCP 创建)
 assignee_member_id  BIGINT NOT NULL       -- 执行成员
-status              TEXT NOT NULL         -- open / done / cancelled
+status              TEXT NOT NULL         -- open / done / canceled
 result              TEXT NOT NULL DEFAULT '' -- 交付物,done 时必填(改了什么、怎么自测的)
-parent_task_id      BIGINT NOT NULL DEFAULT 0 -- 验证类任务回指被验证任务,溯源用
+parent_task_no      INT NOT NULL DEFAULT 0 -- 验证类任务回指被验证任务的群内编号(#N,非 DB id),溯源用
 createtime / updatetime
 UNIQUE(group_id, task_no)
 ```
 
-状态机刻意小:`open → done / cancelled`。
+状态机刻意小:`open → done / canceled`。
 
 - 不做 `in_progress`:eager 调度下 assignee 立刻起轮,「在跑」由 roster run state 表达。
-- 不做 `verified` 状态:验收 = 主持人另建验证任务(`parent_task_id` 回指),软门。
+- 不做 `verified` 状态:验收 = 主持人另建验证任务(`parent_task_no` 回指),软门。
 - 打回 = 新建任务;不可重开已 done 的卡。
 
-充血实体 `group_task_entity.GroupTask`:`Check`(title/assignee 必填、status 枚举)、
+充血实体 `group_entity.GroupTask`(任务卡属 group 域,与 GroupMember/GroupMessage 同包):`Check`(title/assignee 必填、status 枚举)、
 `IsOpen()`、`CanComplete(memberID)`(仅 assignee)、`CanCancel(memberID, isHost)`(creator 或主持人)。
 
 ### 3.2 新表 `workflows`(流程/剧本库)+ `groups` 加一列
@@ -84,7 +84,7 @@ workflow_id BIGINT NOT NULL DEFAULT 0  -- 可选绑定;0 = 不绑定流程
 
 ```
 task_id     BIGINT NOT NULL DEFAULT 0
-task_event  TEXT   NOT NULL DEFAULT ''   -- '' / created / completed / cancelled
+task_event  TEXT   NOT NULL DEFAULT ''   -- '' / created / completed / canceled
 ```
 
 任务事件**以消息形式进群流**,复用全部现有投递管线(seq、recipient、FIFO、kick);
@@ -96,15 +96,17 @@ task_event  TEXT   NOT NULL DEFAULT ''   -- '' / created / completed / cancelled
 
 | tool | 参数 | 权限 | 行为 |
 | ---- | ---- | ---- | ---- |
-| `group_task_create` | `assignee, title, brief, parent_task_id?` | 任意成员(支持「开发直接派测试」) | 分配 task_no 落卡 + 落一条 `task_event=created` 消息投递给 assignee(天然触发其轮次),返回 task_id |
-| `group_task_complete` | `task_id, result` | 仅 assignee;`result` 必填 = 软验收门 | 卡置 done + 落 `completed` 消息投递给 creator |
-| `group_task_cancel` | `task_id, reason` | creator 或主持人 | 卡置 cancelled + 落 `cancelled` 消息投递给 assignee 与 creator |
+| `group_task_create` | `assignee, title, brief, parentTaskId?` | 任意成员(支持「开发直接派测试」);assignee 不能是自己(防自循环,返回专用错误 `GroupTaskSelfAssign` 提示模型直接执行) | 分配 task_no 落卡 + 落一条 `task_event=created` 消息投递给 assignee(天然触发其轮次),返回任务编号(#N) |
+| `group_task_complete` | `taskId, result` | 仅 assignee;`result` 必填 = 软验收门 | 卡置 done + 落 `completed` 消息投递给 creator |
+| `group_task_cancel` | `taskId, reason` | creator 或主持人 | 卡置 canceled + 落 `canceled` 消息投递给 assignee 与 creator |
+
+`taskId` / `parentTaskId` 参数语义均为**群内任务编号(#N)**,不是 `group_tasks.id`。
 
 **不做 `group_task_list` tool**:每次起轮在 system prompt suffix 注入快照——成员看到
 「你名下未完成任务」,主持人额外看到「全群未完成任务」。`buildGroupSystemPrompt`
 每轮重建,零成本,且 LLM 不会忘记查。
 
-错误码:`GroupTaskNotFound` / `GroupTaskForbidden` / `GroupTaskClosed` / `GroupTaskResultRequired`。
+错误码:`GroupTaskNotFound` / `GroupTaskForbidden` / `GroupTaskClosed` / `GroupTaskResultRequired` / `GroupTaskSelfAssign`。
 
 ## 5. 消息联动与调度语义
 
@@ -114,7 +116,7 @@ task_event  TEXT   NOT NULL DEFAULT ''   -- '' / created / completed / cancelled
   creator 已离群时走既有 fallback 链(回触发来源/最近发言者/用户)。
 - **无互斥**:多任务可并行 open;同目录写冲突由主持人判断,提示词写明
   「可能改同一片代码的任务请串行派」。
-- **成员离群** → 其名下 open 任务自动 cancelled + 落 system 消息(`RemoveGroupMember` 级联)。
+- **成员离群** → 其名下 open 任务自动 canceled + 落 system 消息(`RemoveGroupMember` 级联)。
 - **StopGroup/PauseGroup 不动任务状态**:停的是轮次,卡还在;恢复后快照仍在提示里。
 - **round_count 语义不变**;task 消息与普通消息同样计轮。
 - 与 `IngestAgentMessage` 共用 per-group `ingestMu` 串行化「task_no 分配 + seq + 落库 + 入队」。
@@ -122,7 +124,7 @@ task_event  TEXT   NOT NULL DEFAULT ''   -- '' / created / completed / cancelled
 ## 6. 编排提示强化(`buildGroupSystemPrompt`)
 
 - **主持人段**:标准动作环——理解需求 → 拆解 → `group_task_create` 派活(可能冲突的写任务
-  串行派) → 收 completed → 派验证任务(测试/审计可并行,`parent_task_id` 回指) →
+  串行派) → 收 completed → 派验证任务(测试/审计可并行,`parentTaskId` 回指) →
   全部通过后汇总 @用户;发现问题 → 新任务打回。
 - **成员段**:收到任务 → 在项目目录执行 → **自测** → `group_task_complete`
   (result 写清改动文件 + 自测情况);需要协作可自己 `group_task_create` 或 `group_send`。
@@ -215,8 +217,11 @@ LLM 直接消费。约定:
   不新增角色实体。
 - **`group_invite` 招募池放宽**(修订 2026-06-03 spec 的部门池决策):从「群绑定部门」
   放宽为**全部 active 且 backend 支持群聊的 agent**——部门只是组织单位,跨部门流程
-  中途招人(走到测试环节才拉 QA)直接成立。tool description 引导「优先同部门,跨部门
-  说明理由(`reason` 参数已有)」;8 人上限、能力门控、system 消息可见性不变。(随 PR1。)
+  中途招人(走到测试环节才拉 QA)直接成立。招募池含子 agent(挂在 agent 汇报线下的)——
+  与建群弹窗/CreateGroup 同口径;是否将子 agent 排除出群聊为开放问题,留后续产品决策。
+  tool description 引导「优先同部门,跨部门
+  说明理由(`reason` 参数已有)」——注:roster 不携带部门信息,模型实际无法区分同/跨部门,
+  该提示为软引导(或后续在 roster 行加部门);8 人上限、能力门控、system 消息可见性不变。(随 PR1。)
   动态招募是组队的主路径:建群只需拉主持人 + 起步成员,缺谁让主持人按流程招。
 
 ### 7.1 Agent 自主拉起团队(`group_create`)
@@ -276,7 +281,7 @@ LLM 直接消费。约定:
 ## 9. 测试策略(严格 TDD)
 
 - entity:`Check` / `CanComplete` / `CanCancel` 行为测试。
-- repo:sqlmock(Create/Update/Find/ListByGroup/NextTaskNo)。
+- repo:sqlmock(Create/Update/FindByGroupAndNo/ListByGroup/NextTaskNo)。
 - svc(mockgen 注入 repo mock):建卡即投递、complete 鉴权(非 assignee 拒绝)、
   result 必填、cancel 权限、assignee 离群级联取消、关单后操作拒绝。
 - scheduler:task 消息走 FIFO/kick 与普通消息一致(现有测试模式)。

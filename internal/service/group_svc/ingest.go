@@ -48,7 +48,7 @@ func (s *groupSvc) IngestAgentMessage(ctx context.Context, memberID int64, body 
 	if err := group_repo.Group().Update(ctx, g); err != nil {
 		logger.Ctx(ctx).Warn("group_svc.IngestAgentMessage: round_count update failed", zap.Int64("groupId", g.ID), zap.Error(err))
 	}
-	if _, err := s.persistMessage(ctx, g, group_entity.SenderKindAgent, sender.ID, body, recipientIDs, toUser, 0); err != nil {
+	if _, err := s.persistMessage(ctx, g, group_entity.SenderKindAgent, sender.ID, body, recipientIDs, toUser, 0, 0, ""); err != nil {
 		logger.Ctx(ctx).Warn("group_svc.IngestAgentMessage: persist failed", zap.Error(err))
 	}
 	s.enqueueDeliveries(g.ID, recipientIDs, body, s.names(ctx, sender.AgentID), sender.ID)

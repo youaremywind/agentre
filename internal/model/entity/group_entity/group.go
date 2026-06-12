@@ -1,4 +1,4 @@
-// Package group_entity 维护群聊编排的充血实体(Group / GroupMember / GroupMessage)。
+// Package group_entity 维护群聊编排的充血实体(Group / GroupMember / GroupMessage / GroupTask)。
 package group_entity
 
 import (
@@ -30,8 +30,10 @@ type Group struct {
 	RoundCount   int    `gorm:"column:round_count;type:int;not null;default:0"`
 	Status       int    `gorm:"column:status;type:int;not null;default:1"`
 	Pinned       bool   `gorm:"column:pinned;type:boolean;not null;default:0"`
-	Createtime   int64  `gorm:"column:createtime;type:bigint;not null;default:0"`
-	Updatetime   int64  `gorm:"column:updatetime;type:bigint;not null;default:0"`
+	// WorkflowID 可选绑定的协作流程(剧本库),0=不绑定。
+	WorkflowID int64 `gorm:"column:workflow_id;type:bigint;not null;default:0"`
+	Createtime int64 `gorm:"column:createtime;type:bigint;not null;default:0"`
+	Updatetime int64 `gorm:"column:updatetime;type:bigint;not null;default:0"`
 }
 
 func (*Group) TableName() string { return "groups" }

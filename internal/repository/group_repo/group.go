@@ -1,4 +1,4 @@
-// Package group_repo 提供群聊 Group / Member / Message 的持久化访问。
+// Package group_repo 提供群聊 Group / Member / Message / Task 的持久化访问。
 package group_repo
 
 import (

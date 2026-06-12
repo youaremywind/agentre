@@ -32,9 +32,9 @@ func TestResolveMentionNames_NoAutoRecruit(t *testing.T) {
 		// s.names(成员列表)走 Find;主持人 agent 1 → "Coord"。
 		agentRepo.EXPECT().Find(gomock.Any(), gomock.Any()).Return(
 			&agent_entity.Agent{Name: "Coord", Status: consts.ACTIVE}, nil).AnyTimes()
-		// 招募(若仍在)会查部门池找到 Stranger,并建 member(Create 赋 ID=999)。
+		// 招募(若仍在)会查招募池(全部 active agent)找到 Stranger,并建 member(Create 赋 ID=999)。
 		// 退役后这些都不该影响结果(ids 仍为空)。AnyTimes 放行,让断言落在 ids 上。
-		agentRepo.EXPECT().ListByDepartment(gomock.Any(), gomock.Any()).Return(
+		agentRepo.EXPECT().List(gomock.Any()).Return(
 			[]*agent_entity.Agent{{ID: 2, Name: "Stranger", Status: consts.ACTIVE}}, nil).AnyTimes()
 		memberRepo.EXPECT().FindByGroupAndAgent(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 		memberRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(

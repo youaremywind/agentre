@@ -13,7 +13,10 @@ import (
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
 	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
 	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/repository/group_repo/mock_group_repo"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc"
+	chatblocks "github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
 )
 
 // fakeRosterGW 是内部测试用的最小 ChatGateway(避免 internal 测试 import mock_group_svc
@@ -38,6 +41,12 @@ func (fakeRosterGW) DeleteSession(context.Context, int64) error {
 func (fakeRosterGW) AgentBackendHasCapability(context.Context, int64, capability.Capability) (bool, error) {
 	return true, nil
 }
+func (fakeRosterGW) BeginGroupCreateApproval(context.Context, int64, *chatblocks.OrgApprovalBlock) error {
+	return nil
+}
+func (fakeRosterGW) FinishGroupCreateApproval(context.Context, int64, string, string, string) error {
+	return nil
+}
 
 func TestBuildGroupMCP_HostGetsInvite(t *testing.T) {
 	Convey("主持人 spec.Tools 含 group_invite, 普通成员不含", t, func() {
@@ -49,6 +58,11 @@ func TestBuildGroupMCP_HostGetsInvite(t *testing.T) {
 		So(host[0].Tools, ShouldContain, "group_invite")
 		So(member[0].Tools, ShouldContain, "group_send")
 		So(member[0].Tools, ShouldNotContain, "group_invite")
+		// 任务三件套对所有成员放行(跨成员派活/交接一律走任务卡)。
+		for _, tool := range []string{"group_task_create", "group_task_complete", "group_task_cancel"} {
+			So(host[0].Tools, ShouldContain, tool)
+			So(member[0].Tools, ShouldContain, tool)
+		}
 	})
 }
 
@@ -63,6 +77,10 @@ func TestBuildGroupSystemPrompt_ReplyToSourceGuidance(t *testing.T) {
 		agent_repo.RegisterAgent(agentRepo)
 		agentRepo.EXPECT().Find(gomock.Any(), gomock.Any()).Return(
 			&agent_entity.Agent{Status: consts.ACTIVE}, nil).AnyTimes()
+		// buildGroupSystemPrompt → openTaskSnapshot 读任务卡(本测试无任务)。
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 		s := newGroupSvc(fakeRosterGW{}, nil)
 		g := &group_entity.Group{ID: 5, Title: "队"}
@@ -78,14 +96,14 @@ func TestBuildGroupSystemPrompt_ReplyToSourceGuidance(t *testing.T) {
 }
 
 func TestBuildGroupSystemPrompt_HostRoster(t *testing.T) {
-	Convey("主持人 prompt 含 group_invite 用法 + 可招募 roster(部门内未进群的支持 agent)", t, func() {
+	Convey("主持人 prompt 含 group_invite 用法(可跨部门) + 可招募 roster(全部 active 中未进群的支持 agent)", t, func() {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		agentRepo := mock_agent_repo.NewMockAgentRepo(ctrl)
 		agent_repo.RegisterAgent(agentRepo)
 
-		// 部门 42:Bob(已进群) + Carol(未进群,可招募)。
-		agentRepo.EXPECT().ListByDepartment(gomock.Any(), int64(42)).Return(
+		// 招募池=全部 active agent:Bob(已进群) + Carol(未进群,可招募)。
+		agentRepo.EXPECT().List(gomock.Any()).Return(
 			[]*agent_entity.Agent{
 				{ID: 2, Name: "Bob", Status: consts.ACTIVE},
 				{ID: 3, Name: "Carol", Status: consts.ACTIVE},
@@ -93,6 +111,10 @@ func TestBuildGroupSystemPrompt_HostRoster(t *testing.T) {
 		// s.names(当前成员列表)走 agent_repo.Find。
 		agentRepo.EXPECT().Find(gomock.Any(), gomock.Any()).Return(
 			&agent_entity.Agent{Status: consts.ACTIVE}, nil).AnyTimes()
+		// buildGroupSystemPrompt → openTaskSnapshot 读任务卡(本测试无任务)。
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 		s := newGroupSvc(fakeRosterGW{}, nil)
 		g := &group_entity.Group{ID: 5, Title: "队", DepartmentID: 42, HostAgentID: 1}
@@ -103,7 +125,13 @@ func TestBuildGroupSystemPrompt_HostRoster(t *testing.T) {
 		coordPrompt := s.buildGroupSystemPrompt(g, members, members[0])
 		memberPrompt := s.buildGroupSystemPrompt(g, members, members[1])
 		So(coordPrompt, ShouldContainSubstring, "group_invite")
-		So(coordPrompt, ShouldContainSubstring, "Carol") // 可招募
+		So(coordPrompt, ShouldContainSubstring, "可跨部门")      // 招募池放宽措辞
+		So(coordPrompt, ShouldContainSubstring, "可招募：Carol") // 可招募(去掉「同事」)
 		So(memberPrompt, ShouldNotContainSubstring, "group_invite")
+
+		// 修订 06-03:无部门(DepartmentID==0)的群同样可招募(早退已删)。
+		noDeptPrompt := s.buildGroupSystemPrompt(
+			&group_entity.Group{ID: 5, Title: "队", HostAgentID: 1}, members, members[0])
+		So(noDeptPrompt, ShouldContainSubstring, "Carol")
 	})
 }

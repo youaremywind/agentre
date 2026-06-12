@@ -5,8 +5,12 @@ import { Check, ShieldAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { OrgApprovalData } from "@/stores/chat-streams-store";
-import { AnswerOrgApproval } from "../../../../wailsjs/go/app/App";
-import { orgtool_svc } from "../../../../wailsjs/go/models";
+import { useGroupListStore } from "@/stores/group-list-store";
+import {
+  AnswerGroupCreateApproval,
+  AnswerOrgApproval,
+} from "../../../../wailsjs/go/app/App";
+import { group_svc, orgtool_svc } from "../../../../wailsjs/go/models";
 
 // OrgApprovalCard 渲染组织架构写工具(org_create_department / org_update_agent ...)
 // 的审批卡。视觉对齐 canonical-tool/tool-permission/card.tsx,但走独立组件,
@@ -27,20 +31,40 @@ export const OrgApprovalCard: React.FC<{
   const isPending = approval.status === "pending";
   const isApproved = approval.status === "approved";
 
+  // group_create 批准落地后,侧栏群列表要立刻出现新群(fake/e2e 不产 tool block,
+  // 刷新只能挂在审批卡上);reload 自带并发去重,历史卡重挂载多刷一次无害。
+  React.useEffect(() => {
+    if (approval.toolName === "group_create" && isApproved) {
+      void useGroupListStore.getState().reload();
+    }
+  }, [approval.toolName, isApproved]);
+
   const answer = async (allow: boolean) => {
     if (!approval.requestId || submitting) return;
     setError(null);
     setSubmitting(true);
     try {
-      await AnswerOrgApproval(
-        orgtool_svc.AnswerOrgApprovalRequest.createFrom({
-          sessionId,
-          requestId: approval.requestId,
-          allow,
-        }),
-      );
+      // group_create 的审批应答归 group_svc(waiters 在那边注册),
+      // 其余 org_* 写工具仍走 orgtool_svc。
+      if (approval.toolName === "group_create") {
+        await AnswerGroupCreateApproval(
+          group_svc.AnswerGroupCreateApprovalRequest.createFrom({
+            sessionId,
+            requestId: approval.requestId,
+            allow,
+          }),
+        );
+      } else {
+        await AnswerOrgApproval(
+          orgtool_svc.AnswerOrgApprovalRequest.createFrom({
+            sessionId,
+            requestId: approval.requestId,
+            allow,
+          }),
+        );
+      }
     } catch {
-      // AnswerOrgApproval 失败:切回可重试态并把错误文案露出来(对齐 tool-permission
+      // 应答失败(AnswerOrgApproval / AnswerGroupCreateApproval):切回可重试态并把错误文案露出来(对齐 tool-permission
       // 卡的内联 error 呈现,不用 toast)。决议落库与唤醒挂起 MCP 调用由后端保证。
       setError(t("orgApproval.submitFailed"));
       setSubmitting(false);

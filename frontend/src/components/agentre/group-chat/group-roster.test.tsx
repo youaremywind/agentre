@@ -36,6 +36,9 @@ describe("GroupRoster status dot", () => {
         onOpenMember={() => {}}
         onInvite={() => {}}
         onDelete={() => {}}
+        tasks={[]}
+        onAnchorTask={vi.fn()}
+        onOpenMemberById={vi.fn()}
       />,
     );
     // 状态点是 size-1.5 的圆点(头像是更大的圆,不会命中)。
@@ -64,6 +67,9 @@ describe("GroupRoster project", () => {
         onOpenMember={() => {}}
         onInvite={() => {}}
         onDelete={() => {}}
+        tasks={[]}
+        onAnchorTask={vi.fn()}
+        onOpenMemberById={vi.fn()}
       />,
     );
     openSettings();
@@ -83,6 +89,9 @@ describe("GroupRoster project", () => {
         onOpenMember={() => {}}
         onInvite={() => {}}
         onDelete={() => {}}
+        tasks={[]}
+        onAnchorTask={vi.fn()}
+        onOpenMemberById={vi.fn()}
       />,
     );
     openSettings();
@@ -103,6 +112,9 @@ describe("GroupRoster delete", () => {
         onOpenMember={() => {}}
         onInvite={() => {}}
         onDelete={onDelete}
+        tasks={[]}
+        onAnchorTask={vi.fn()}
+        onOpenMemberById={vi.fn()}
       />,
     );
     // 删除入口在 Settings tab。

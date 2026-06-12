@@ -17,7 +17,11 @@ describe("classifyDroppedPaths", () => {
       "/a/archive.tar.gz",
     ]);
     expect(imageCandidates).toEqual(["/a/x.PNG", "/a/y.jpeg"]);
-    expect(plainPaths).toEqual(["/a/doc.pdf", "/a/project", "/a/archive.tar.gz"]);
+    expect(plainPaths).toEqual([
+      "/a/doc.pdf",
+      "/a/project",
+      "/a/archive.tar.gz",
+    ]);
   });
 });
 
@@ -59,7 +63,11 @@ describe("resolveDroppedPaths", () => {
       readImages: async (p) => p.map(imageItem),
     });
     expect(res.attachments).toEqual([
-      { dataUrl: "data:image/png;base64,AAAA", mediaType: "image/png", name: "x.png" },
+      {
+        dataUrl: "data:image/png;base64,AAAA",
+        mediaType: "image/png",
+        name: "x.png",
+      },
     ]);
     expect(res.text).toBe(`/a/doc.pdf `);
   });
@@ -68,18 +76,22 @@ describe("resolveDroppedPaths", () => {
     const res = await resolveDroppedPaths(["/a/x.png"], {
       allowImages: true,
       remainingImageSlots: 4,
-      readImages: async (p) => p.map((path) => ({ path, kind: "path" as const })),
+      readImages: async (p) =>
+        p.map((path) => ({ path, kind: "path" as const })),
     });
     expect(res.attachments).toHaveLength(0);
     expect(res.text).toBe(`/a/x.png `);
   });
 
   it("配额溢出的图片降级为路径", async () => {
-    const res = await resolveDroppedPaths(["/a/1.png", "/a/2.png", "/a/3.png"], {
-      allowImages: true,
-      remainingImageSlots: 2,
-      readImages: async (p) => p.map(imageItem),
-    });
+    const res = await resolveDroppedPaths(
+      ["/a/1.png", "/a/2.png", "/a/3.png"],
+      {
+        allowImages: true,
+        remainingImageSlots: 2,
+        readImages: async (p) => p.map(imageItem),
+      },
+    );
     expect(res.attachments).toHaveLength(2);
     expect(res.text).toBe(`/a/3.png `);
   });

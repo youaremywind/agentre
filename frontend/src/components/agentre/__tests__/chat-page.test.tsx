@@ -66,6 +66,8 @@ const appMocks = vi.hoisted(() => ({
     .fn()
     .mockResolvedValue({ sessions: [], total: 0, hasMore: false }),
   GroupList: vi.fn().mockResolvedValue([]),
+  GroupCreate: vi.fn().mockResolvedValue({ group: { id: 0, title: "" } }),
+  WorkflowList: vi.fn().mockResolvedValue({ items: [] }),
   SetAgentPinned: vi.fn().mockResolvedValue({ id: 0, pinned: false }),
   GroupSetPinned: vi.fn().mockResolvedValue(undefined),
 }));

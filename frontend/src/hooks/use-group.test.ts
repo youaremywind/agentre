@@ -41,6 +41,7 @@ describe("useGroup", () => {
           toUser: false,
         },
       ],
+      tasks: [],
     });
   });
 
@@ -120,6 +121,52 @@ describe("useGroup", () => {
     });
     await waitFor(() =>
       expect(result.current.detail?.members[0].backingSessionID).toBe(77),
+    );
+  });
+
+  it("upserts a task on a task_updated event (创建 + 状态翻转)", async () => {
+    let handler: ((p: unknown) => void) | undefined;
+    (EventsOn as ReturnType<typeof vi.fn>).mockImplementation(
+      (_e: string, h: (p: unknown) => void) => {
+        handler = h;
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => useGroup(5));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    handler?.({
+      kind: "task_updated",
+      task: {
+        id: 9,
+        taskNo: 1,
+        title: "重构设置页",
+        brief: "按设计稿",
+        creatorMemberID: 1,
+        assigneeMemberID: 2,
+        status: "open",
+        result: "",
+        parentTaskNo: 0,
+      },
+    });
+    await waitFor(() => expect(result.current.detail?.tasks).toHaveLength(1));
+
+    handler?.({
+      kind: "task_updated",
+      task: {
+        id: 9,
+        taskNo: 1,
+        title: "重构设置页",
+        brief: "按设计稿",
+        creatorMemberID: 1,
+        assigneeMemberID: 2,
+        status: "done",
+        result: "改完自测通过",
+        parentTaskNo: 0,
+      },
+    });
+    await waitFor(() =>
+      expect(result.current.detail?.tasks?.[0].status).toBe("done"),
     );
   });
 });

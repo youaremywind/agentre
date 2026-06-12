@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 
@@ -68,6 +68,33 @@ vi.mock("../../../hooks/use-group", () => ({
           toUser: false,
           content: "**前端** 加入了群聊",
           createtime: 0,
+        },
+        {
+          id: 4,
+          seq: 4,
+          senderKind: "agent",
+          senderMemberID: 1,
+          recipientMemberIDs: [2],
+          toUser: false,
+          content: "(来自 后端 的任务 #1) 重构设置页:按设计稿",
+          taskID: 9,
+          taskEvent: "created",
+          createtime: 0,
+        },
+      ],
+      tasks: [
+        {
+          id: 9,
+          taskNo: 1,
+          title: "重构设置页",
+          brief: "按设计稿",
+          creatorMemberID: 1,
+          assigneeMemberID: 2,
+          status: "open",
+          result: "",
+          parentTaskNo: 0,
+          createtime: 0,
+          updatetime: 0,
         },
       ],
     },
@@ -172,8 +199,14 @@ describe("GroupChat", () => {
   });
 
   it("markdown 正文里的 <mention> 渲染成 chip,点击跳转成员会话", () => {
-    renderGroupChat();
-    fireEvent.click(screen.getByRole("button", { name: "@前端" }));
+    const { container } = renderGroupChat();
+    // message id=2 是含 @mention 的 markdown 消息;task card 也有 @前端 chip,
+    // 须限定在 msg-2 的行内找,避免 getByRole 命中多个。
+    const msgRow = container.querySelector('[data-message-id="2"]');
+    if (!msgRow) throw new Error("message row 2 not found");
+    fireEvent.click(
+      within(msgRow as HTMLElement).getByRole("button", { name: "@前端" }),
+    );
 
     const state = useChatTabsStore.getState();
     const active = state.tabs.find((tab) => tab.id === state.activeTabId);
@@ -192,11 +225,63 @@ describe("GroupChat", () => {
 
   it("switches right panel to settings tab showing the bound project", () => {
     renderGroupChat();
-    fireEvent.click(screen.getByText(/Settings|设置/));
+    fireEvent.click(screen.getByRole("button", { name: /^Settings$|^设置$/ }));
     // settings tab 现在展示群绑定项目(可点击跳转),取代了原先未接线的「工作目录」。
     expect(
       screen.getByRole("button", { name: "Agentre-desktop" }),
     ).toBeInTheDocument();
+  });
+
+  it("任务事件消息渲染为任务卡(标题可见,原文抬头不直出)", () => {
+    renderGroupChat();
+    expect(screen.getByTestId("group-task-card")).toBeInTheDocument();
+    expect(screen.queryByText(/来自 后端 的任务/)).toBeNull();
+  });
+
+  it("roster 任务 tab:badge 显示 open 计数,点开列出任务行", () => {
+    renderGroupChat();
+    const tasksTab = screen.getByRole("button", { name: /Tasks|任务/ });
+    expect(tasksTab.textContent).toContain("1"); // open 计数 badge
+    fireEvent.click(tasksTab);
+    // 「进行中」此时出现两处:transcript 卡片的 pill + 任务列表的分组标题。
+    expect(
+      screen.getAllByText(/In progress|进行中/).length,
+    ).toBeGreaterThanOrEqual(2);
+    // 行主体(#1 + 标题)与 transcript 卡片同时在 DOM —— 标题出现两次。
+    expect(screen.getAllByText("重构设置页").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("点任务行,transcript 锚定到对应任务卡(scrollIntoView)", () => {
+    // jsdom 没有 scrollIntoView;spyOn + mockRestore,避免改原型泄漏给后续用例。
+    const spy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+    renderGroupChat();
+    fireEvent.click(screen.getByRole("button", { name: /Tasks|任务/ }));
+    // 点列表行主体(行内 #1 文本属于行 button)。
+    const rowNo = screen
+      .getAllByText("#1")
+      .find((el) => el.closest("button")?.textContent?.includes("前端"));
+    if (!rowNo) throw new Error("task list row #1 not found");
+    fireEvent.click(rowNo);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("点任务行尾 ›,打开 assignee 的成员会话 tab", () => {
+    renderGroupChat();
+    fireEvent.click(screen.getByRole("button", { name: /Tasks|任务/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Open assignee|打开执行成员/ }),
+    );
+    const state = useChatTabsStore.getState();
+    const active = state.tabs.find((tab) => tab.id === state.activeTabId);
+    expect(active?.meta).toEqual({
+      kind: "groupSession",
+      groupId: 5,
+      sessionId: 12,
+      title: "前端",
+    });
   });
 
   it("非贴底时显示「回到底部」按钮，点击拉回底部", () => {

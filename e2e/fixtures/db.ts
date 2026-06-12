@@ -56,6 +56,92 @@ export function agentGroupMessageCount(): number {
   }
 }
 
+// Count group_tasks rows, optionally filtered by status ('open' | 'done' | 'canceled').
+// Read-only — proves the task card actually landed/flipped in the source of truth.
+export function groupTaskCount(status?: "open" | "done" | "canceled"): number {
+  const db = new DatabaseSync(dbPath(), { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    const row = (
+      status
+        ? db.prepare("SELECT COUNT(*) AS n FROM group_tasks WHERE status = ?").get(status)
+        : db.prepare("SELECT COUNT(*) AS n FROM group_tasks").get()
+    ) as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
+// Count done group_tasks whose result was written by the fake's group_task_complete
+// (TaskResultPrefix). Proves the completion round-trip carried the deliverable, not just
+// a status flip.
+export function fakeDeliveredTaskCount(): number {
+  const db = new DatabaseSync(dbPath(), { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM group_tasks WHERE status = 'done' AND result LIKE 'e2e-fake-result:%'",
+      )
+      .get() as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
+// Count groups with the given title (group_create chain oracle). Specs use a timestamped unique
+// title, so baseline+1 pins the group THIS test case created, independent of seeded/other groups.
+export function groupCountByTitle(title: string): number {
+  const db = new DatabaseSync(dbPath(), { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    const row = db
+      .prepare("SELECT COUNT(*) AS n FROM groups WHERE title = ?")
+      .get(title) as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
+// Count active members of the group with the given title. Proves group_create resolved member
+// names into real memberships (host + named members), not just an empty shell group.
+export function groupMemberCountByTitle(title: string): number {
+  const db = new DatabaseSync(dbPath(), { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM group_members m JOIN groups g ON g.id = m.group_id " +
+          "WHERE g.title = ? AND m.status = 'active'",
+      )
+      .get(title) as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
+// Count group_messages of the titled group whose content contains the given substring. Used to
+// verify the system "自会话拉起" message and the brief delivery both landed in the transcript.
+export function groupMessageCountByTitleAndContent(title: string, contentLike: string): number {
+  const db = new DatabaseSync(dbPath(), { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM group_messages msg JOIN groups g ON g.id = msg.group_id " +
+          "WHERE g.title = ? AND msg.content LIKE '%' || ? || '%'",
+      )
+      .get(title, contentLike) as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
 // Count persisted assistant chat_messages whose text echoes the fake reply prefix. Read-only,
 // independent of the UI — proves an agent turn's reply actually hit disk (used to corroborate
 // rehydration after a reload). The fake's text lands in blocks_json, so match the raw column.

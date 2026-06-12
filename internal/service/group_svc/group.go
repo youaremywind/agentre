@@ -22,6 +22,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/pkg/code"
 	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
 	"github.com/agentre-ai/agentre/internal/repository/group_repo"
+	"github.com/agentre-ai/agentre/internal/repository/workflow_repo"
 )
 
 // Emitter 群事件出口(由 app 层注入 → wailsruntime.EventsEmit)。
@@ -50,8 +51,22 @@ type GroupSvc interface {
 	RemoveGroupMember(ctx context.Context, memberID int64) error
 	SendGroupMessage(ctx context.Context, req *SendGroupMessageRequest) error
 	IngestAgentMessage(ctx context.Context, memberID int64, body string, mentions []string) error
-	// HandleInvite 是 group_invite MCP tool 的服务端入口:主持人把部门池内 agent 拉进群。
+	// HandleInvite 是 group_invite MCP tool 的服务端入口:主持人把可用 agent 拉进群(可跨部门)。
 	HandleInvite(ctx context.Context, callerMemberID int64, names []string, ids []int64, reason string) ([]InviteResult, error)
+	// HandleTaskCreate 是 group_task_create MCP tool 的服务端入口:建卡即派活。
+	HandleTaskCreate(ctx context.Context, callerMemberID int64, assigneeName, title, brief string, parentTaskNo int) (*group_entity.GroupTask, error)
+	// HandleTaskComplete 是 group_task_complete MCP tool 的服务端入口:仅执行人可交付,
+	// result 必填(软验收门),completed 消息投回建卡人。
+	HandleTaskComplete(ctx context.Context, callerMemberID int64, taskNo int, result string) (*group_entity.GroupTask, error)
+	// HandleTaskCancel 是 group_task_cancel MCP tool 的服务端入口:仅建卡人或主持人可取消。
+	HandleTaskCancel(ctx context.Context, callerMemberID int64, taskNo int, reason string) (*group_entity.GroupTask, error)
+	// HandleGroupCreate 是 group_create MCP tool 的服务端入口:单聊轮经审批门拉起团队
+	// (发起者=主持人,项目继承发起会话)。拒绝/超时编码为返回文本(nil err),error 仅内部故障。
+	HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string) (string, error)
+	// AnswerGroupCreateApproval 前端审批决议入口:唤醒挂起的 group_create 调用。
+	AnswerGroupCreateApproval(ctx context.Context, req *AnswerGroupCreateApprovalRequest) (*AnswerGroupCreateApprovalResponse, error)
+	// BuildCreateTurnMCP 实现 chat_svc.TurnMCPProvider:给普通单聊轮注入 group_create(群成员轮跳过)。
+	BuildCreateTurnMCP(ctx context.Context, a *agent_entity.Agent, sessionID, groupID int64) []agentruntime.MCPServerSpec
 	StopGroup(ctx context.Context, id int64) error
 	PauseGroup(ctx context.Context, id int64) error
 	ResumeGroup(ctx context.Context, id int64) error
@@ -76,6 +91,9 @@ type groupSvc struct {
 	ingestLocks    *sync.Map                                       // groupID -> *sync.Mutex(串行化 IngestAgentMessage 临界区)
 	mcp            *groupMCP                                       // group_send MCP server，注册到 gateway
 	gatewayBaseURL string                                          // 本机 gateway base，由 bootstrap 注入
+
+	createWaiters   sync.Map      // requestID(string) → chan bool;挂起的 group_create 等审批决议
+	approvalTimeout time.Duration // group_create 审批超时(默认 4min,对齐 orgtool 的 CLI 硬顶余量)
 }
 
 var defaultGroup GroupSvc = newGroupSvc(chatSvcGateway{}, NoopEmitter{})
@@ -98,10 +116,29 @@ func newGroupSvc(gw ChatGateway, e Emitter) *groupSvc {
 		ingestLocks: &sync.Map{},
 		mcp:         newGroupMCP(nil),
 		// gatewayBaseURL set later via SetGatewayBaseURL
+		approvalTimeout: 4 * time.Minute, // spike 实测 CLI 硬顶 ~285s,留 25s 余量(对齐 orgtool)
 	}
 	// 绑定 MCP ingest 回调(仅取方法值, 不调用) → group_send tool 路由到 IngestAgentMessage。
 	s.mcp.ingest = s.IngestAgentMessage
 	s.mcp.invite = s.HandleInvite
+	// 任务三件套:mcp 层只拿 task_no / err(与实体解耦),路由到 HandleTask*。
+	s.mcp.taskCreate = func(ctx context.Context, memberID int64, assignee, title, brief string, parentTaskNo int) (int, error) {
+		t, err := s.HandleTaskCreate(ctx, memberID, assignee, title, brief, parentTaskNo)
+		if err != nil {
+			return 0, err
+		}
+		return t.TaskNo, nil
+	}
+	s.mcp.taskComplete = func(ctx context.Context, memberID int64, taskNo int, result string) error {
+		_, err := s.HandleTaskComplete(ctx, memberID, taskNo, result)
+		return err
+	}
+	s.mcp.taskCancel = func(ctx context.Context, memberID int64, taskNo int, reason string) error {
+		_, err := s.HandleTaskCancel(ctx, memberID, taskNo, reason)
+		return err
+	}
+	// group_create:单聊轮经审批门拉起团队(spec §7.1)。
+	s.mcp.groupCreate = s.HandleGroupCreate
 	// group_send 鉴权:无状态 token 验签通过后, 再按 DB 成员资格判定是否仍可发言。
 	s.mcp.authz = s.memberCanPost
 	return s
@@ -154,6 +191,7 @@ func (s *groupSvc) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*G
 		HostAgentID:  req.HostAgentID,
 		DepartmentID: req.DepartmentID,
 		ProjectID:    req.ProjectID,
+		WorkflowID:   req.WorkflowID,
 		RunStatus:    group_entity.RunIdle,
 		Status:       consts.ACTIVE,
 	}
@@ -164,7 +202,7 @@ func (s *groupSvc) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*G
 		return nil, i18n.NewError(ctx, code.GroupBackendUnsupported)
 	}
 	if g.DepartmentID == 0 {
-		// 从主持人 agent 派生部门:决定 group_invite 的可招募池(部门内 agent)。
+		// 从主持人 agent 派生部门:仅作组织归属展示,不再限制 group_invite 招募池(spec §7 修订 06-03)。
 		host, err := agent_repo.Agent().Find(ctx, req.HostAgentID)
 		if err != nil {
 			return nil, err
@@ -202,7 +240,7 @@ func (s *groupSvc) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*G
 	return s.LoadGroup(ctx, g.ID)
 }
 
-// HandleInvite 是 group_invite MCP tool 的服务端入口:主持人把部门招募池内的 agent 拉进群。
+// HandleInvite 是 group_invite MCP tool 的服务端入口:主持人把招募池内的 agent 拉进群(可跨部门)。
 // callerMemberID=调用成员(必须是主持人); names/ids 二选一指定被邀请 agent; reason 仅日志。
 // 逐个经 backendSupportsGroup + maxMembers 门控,幂等 ensureMember,落 system "X 加入了群聊"。
 func (s *groupSvc) HandleInvite(ctx context.Context, callerMemberID int64, names []string, ids []int64, reason string) ([]InviteResult, error) {
@@ -222,7 +260,8 @@ func (s *groupSvc) HandleInvite(ctx context.Context, callerMemberID int64, names
 	if err != nil || g == nil {
 		return nil, i18n.NewError(ctx, code.GroupNotFound)
 	}
-	pool, err := agent_repo.Agent().ListByDepartment(ctx, g.DepartmentID)
+	// 招募池=全部 active 且后端支持群聊的 agent(部门仅组织单位,跨部门招人直接成立,spec §7)。
+	pool, err := agent_repo.Agent().List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +312,7 @@ func (s *groupSvc) HandleInvite(ctx context.Context, callerMemberID int64, names
 			continue
 		}
 		memberCount++
-		if _, err := s.persistMessage(ctx, g, group_entity.SenderKindSystem, 0, a.Name+" 加入了群聊", nil, false, 0); err != nil {
+		if _, err := s.persistMessage(ctx, g, group_entity.SenderKindSystem, 0, a.Name+" 加入了群聊", nil, false, 0, 0, ""); err != nil {
 			logger.Ctx(ctx).Warn("group_svc.HandleInvite: system message persist failed", zap.Error(err))
 		}
 		results = append(results, InviteResult{AgentID: a.ID, Name: a.Name})
@@ -348,11 +387,22 @@ func (s *groupSvc) LoadGroup(ctx context.Context, id int64) (*GroupDetail, error
 	if err != nil {
 		return nil, err
 	}
+	// 任务卡:仓储未装配(NewForTest 体系)/查询失败 → 降级跳过(与 openTaskSnapshot 同策略),仅留日志。
+	var tasks []*group_entity.GroupTask
+	if repo := group_repo.Task(); repo != nil {
+		rows, err := repo.ListByGroup(ctx, id)
+		if err != nil {
+			logger.Ctx(ctx).Warn("group_svc.LoadGroup: list tasks failed", zap.Error(err))
+		} else {
+			tasks = rows
+		}
+	}
 	return &GroupDetail{
 		Group:           g,
 		Members:         members,
 		Messages:        msgs,
 		MemberRunStates: s.memberRunStates(id, members),
+		Tasks:           tasks,
 	}, nil
 }
 
@@ -400,6 +450,13 @@ func (s *groupSvc) RemoveGroupMember(ctx context.Context, memberID int64) error 
 	if err := group_repo.Member().Update(ctx, m); err != nil {
 		return err
 	}
+	// 离群级联:其名下 open 任务全部取消(spec §5)。与消息管线共用 per-group 锁。
+	func() {
+		mu := s.ingestMu(m.GroupID)
+		mu.Lock()
+		defer mu.Unlock()
+		s.cancelTasksOfLeftMember(ctx, m.GroupID, m.ID)
+	}()
 	// 无需显式吊销 token:status=left 后 memberCanPost 即拒绝其 group_send(按 DB 现状实时鉴权)。
 	// 软删该成员的 backing session, 否则它以 group_id>0 的 ACTIVE 会话残留, 经 ListAgents 的
 	// IncludingGroups 变体继续出现在该 agent 侧栏。best-effort: 删除失败不回滚离群(主效果已生效)。
@@ -440,7 +497,7 @@ func (s *groupSvc) SendGroupMessage(ctx context.Context, req *SendGroupMessageRe
 			}
 		}
 	}
-	if _, err := s.persistMessage(ctx, g, group_entity.SenderKindUser, 0, req.Text, recipientIDs, toUser, 0); err != nil {
+	if _, err := s.persistMessage(ctx, g, group_entity.SenderKindUser, 0, req.Text, recipientIDs, toUser, 0, 0, ""); err != nil {
 		return err
 	}
 	// 用户发言重置 round_count(仅 UI 计数)
@@ -461,7 +518,7 @@ func (s *groupSvc) resolveRecipientsFromRequest(req *SendGroupMessageRequest) ([
 	return req.RecipientMemberIDs, req.ToUser
 }
 
-func (s *groupSvc) persistMessage(ctx context.Context, g *group_entity.Group, kind string, senderMemberID int64, content string, recipients []int64, toUser bool, sourceMsgID int64) (*group_entity.GroupMessage, error) {
+func (s *groupSvc) persistMessage(ctx context.Context, g *group_entity.Group, kind string, senderMemberID int64, content string, recipients []int64, toUser bool, sourceMsgID int64, taskID int64, taskEvent string) (*group_entity.GroupMessage, error) {
 	seq, err := group_repo.Message().NextSeq(ctx, g.ID)
 	if err != nil {
 		return nil, err
@@ -474,6 +531,8 @@ func (s *groupSvc) persistMessage(ctx context.Context, g *group_entity.Group, ki
 		ToUser:          toUser,
 		Content:         content,
 		SourceMessageID: sourceMsgID,
+		TaskID:          taskID,
+		TaskEvent:       taskEvent,
 		Createtime:      s.now(),
 	}
 	m.SetRecipients(recipients)
@@ -523,8 +582,9 @@ func NewGroupMCPForTestWithAuthz(
 // buildGroupMCP 为某成员投递签发一次性 token, 返回注入到 RunRequest.MCPServers 的 group MCP server。
 func (s *groupSvc) buildGroupMCP(g *group_entity.Group, m *group_entity.GroupMember) []agentruntime.MCPServerSpec {
 	tok := s.mcp.MintToken(g.ID, m.ID)
-	// 所有成员可 group_send; 仅主持人 turn 额外注入 group_invite(招募部门同事)。
-	tools := []string{"group_send"}
+	// 所有成员可 group_send + 任务三件套(跨成员派活/交接一律走任务卡);
+	// 仅主持人 turn 额外注入 group_invite(招募可用 agent,可跨部门)。
+	tools := []string{"group_send", "group_task_create", "group_task_complete", "group_task_cancel"}
 	if m.IsHost() {
 		tools = append(tools, "group_invite")
 	}
@@ -536,8 +596,10 @@ func (s *groupSvc) buildGroupMCP(g *group_entity.Group, m *group_entity.GroupMem
 	}}
 }
 
-// buildGroupSystemPrompt 拼接注入到成员 turn 的群聊 system prompt 后缀(角色 + roster + tool 用法 + worktree 引导)。
+// buildGroupSystemPrompt 拼接注入到成员 turn 的群聊 system prompt 后缀
+// (角色 + roster + tool 用法 + 任务协作纪律 + SOP + 未完成任务快照 + 交付物约定 + worktree 引导)。
 func (s *groupSvc) buildGroupSystemPrompt(g *group_entity.Group, members []*group_entity.GroupMember, me *group_entity.GroupMember) string {
+	bg := context.Background()
 	var b strings.Builder
 	role := "成员"
 	if me.IsHost() {
@@ -546,27 +608,81 @@ func (s *groupSvc) buildGroupSystemPrompt(g *group_entity.Group, members []*grou
 	fmt.Fprintf(&b, "\n\n## 群聊「%s」\n你是本群的%s。", g.Title, role)
 	b.WriteString("\n当前成员：")
 	for _, m := range members {
-		fmt.Fprintf(&b, "\n- %s（%s）", s.names(context.Background(), m.AgentID), m.Role)
+		fmt.Fprintf(&b, "\n- %s（%s）", s.names(bg, m.AgentID), m.Role)
 	}
 	b.WriteString("\n\n你只会收到 @ 到你的消息。要发言请调用 `group_send` 工具：body=正文，mentions=收件成员显示名数组（@用户 = 回复人类）。一个回合可多次调用、可分别对不同人发不同内容。**不调用 group_send 的内容不会进群**。")
 	b.WriteString("\n回复路由：消息抬头「(来自 X)」标明来源，回复时默认 mentions 该来源——来源是用户时用 mentions:[\"用户\"]。除非任务确实需要协作，不要主动 @ 其他成员；任务完成直接向来源汇报，不要转发给主持人或其他成员。")
+
+	b.WriteString("\n\n### 任务协作")
+	b.WriteString("\n跨成员派活/交接一律用任务卡：`group_task_create`(assignee=成员显示名, title, brief 含验收标准, parentTaskId 可选回指) 建卡即派活；做完自己的任务调用 `group_task_complete`(taskId, result)——result 必须写清改动/产出与自测情况。`group_task_cancel`(taskId, reason) 仅建卡人或主持人可调；打回返工=新建任务卡。任务卡的完成汇报只走 group_task_complete，不要再额外 group_send 重复汇报。")
+	b.WriteString("\n过程交付物（PRD 草稿/设计说明/测试报告等不进版本库的交接物）写到 `.agentre/handoff/" + strconv.FormatInt(g.ID, 10) + "/task-<编号>-<slug>.md`（自行 mkdir -p；首次写入前把 `.agentre/` 追加进 `.git/info/exclude`）；正式产物（代码、要进 repo 的文档）照常放仓库正常位置。brief/result 引用文件路径，不要贴全文。")
+
 	if me.IsHost() {
-		b.WriteString("\n作为主持人，调用 `group_invite` 工具邀请本部门同事进群：agentNames 填显示名数组（或 agentIds 填 id），reason 可选。")
-		if roster := s.recruitableRoster(context.Background(), g, members); roster != "" {
-			b.WriteString("\n可招募同事：" + roster)
+		b.WriteString("\n\n### 主持人编排")
+		b.WriteString("\n标准动作环：理解需求 → 拆解 → group_task_create 派活（可能改同一片代码的任务串行派）→ 收到 completed 后派验证任务（测试/审查可并行，parentTaskId 回指被验证任务）→ 全部通过后 group_send @用户 汇总；发现问题 → 新任务卡打回。")
+		if g.WorkflowID > 0 {
+			if repo := workflow_repo.Workflow(); repo != nil {
+				if wf, err := repo.Find(bg, g.WorkflowID); err == nil && wf.IsActive() && strings.TrimSpace(wf.Content) != "" {
+					b.WriteString("\n\n### 团队协作流程（按此编排，用户首条消息可临时覆盖）\n" + strings.TrimSpace(wf.Content))
+				}
+			}
 		}
+		b.WriteString("\n作为主持人，调用 `group_invite` 工具邀请 Agent 进群（可跨部门）：agentNames 填显示名数组（或 agentIds 填 id），reason 写明跨部门理由。")
+		if roster := s.recruitableRoster(bg, members); roster != "" {
+			b.WriteString("\n可招募：" + roster)
+		}
+	} else {
+		b.WriteString("\n\n收到任务后：在项目目录执行 → 自测 → group_task_complete 交付；需要协作可自行 group_task_create 或 group_send。")
 	}
+
+	if snapshot := s.openTaskSnapshot(bg, g, members, me); snapshot != "" {
+		b.WriteString("\n\n### 未完成任务\n" + snapshot)
+	}
+
 	b.WriteString("\n若你要修改文件且可能与他人并发，请先 `git worktree add` 在自己的工作树里作业。")
 	return b.String()
 }
 
-// recruitableRoster 列出部门内、尚未进群、且后端支持 CapMCPTools 的 agent(名字·id),
-// 供主持人 system prompt 提示可 group_invite 的对象。空字符串=没有可招募对象。
-func (s *groupSvc) recruitableRoster(ctx context.Context, g *group_entity.Group, members []*group_entity.GroupMember) string {
-	if g.DepartmentID == 0 {
+// openTaskSnapshot 渲染未完成任务快照:主持人看全群,成员只看与自己相关的
+// (自己是 assignee/creator,spec §4)。仓储未装配(NewForTest 体系)/查询失败 → 静默跳过。
+func (s *groupSvc) openTaskSnapshot(ctx context.Context, g *group_entity.Group, members []*group_entity.GroupMember, me *group_entity.GroupMember) string {
+	repo := group_repo.Task()
+	if repo == nil {
 		return ""
 	}
-	pool, err := agent_repo.Agent().ListByDepartment(ctx, g.DepartmentID)
+	tasks, err := repo.ListByGroup(ctx, g.ID)
+	if err != nil {
+		return ""
+	}
+	nameOf := func(memberID int64) string {
+		for _, m := range members {
+			if m.ID == memberID {
+				return s.names(ctx, m.AgentID)
+			}
+		}
+		return "?"
+	}
+	var lines []string
+	for _, t := range tasks {
+		if !t.IsOpen() {
+			continue
+		}
+		if !me.IsHost() && t.AssigneeMemberID != me.ID && t.CreatorMemberID != me.ID {
+			continue
+		}
+		line := fmt.Sprintf("#%d %s → %s", t.TaskNo, t.Title, nameOf(t.AssigneeMemberID))
+		if t.ParentTaskNo > 0 {
+			line += fmt.Sprintf("（验证 #%d）", t.ParentTaskNo)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// recruitableRoster 列出全部 active、尚未进群、且后端支持 CapMCPTools 的 agent(名字·id),
+// 供主持人 system prompt 提示可 group_invite 的对象(可跨部门)。空字符串=没有可招募对象。
+func (s *groupSvc) recruitableRoster(ctx context.Context, members []*group_entity.GroupMember) string {
+	pool, err := agent_repo.Agent().List(ctx)
 	if err != nil {
 		return ""
 	}

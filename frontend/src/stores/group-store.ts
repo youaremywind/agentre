@@ -34,6 +34,10 @@ type GroupActions = {
     memberId: number,
     runState: string,
   ) => void;
+  // upsertTask 落一条任务卡:已存在(按 id)则原位替换 —— task_updated 事件既送
+  // 新建也送状态翻转,upsert 让两者共用一条路径;群详情未加载时丢弃(打开群时
+  // GroupLoad 会带全量 tasks)。
+  upsertTask: (groupId: number, task: app.GroupTaskItem) => void;
 };
 
 export const useGroupStore = create<GroupState & GroupActions>((set) => ({
@@ -91,6 +95,21 @@ export const useGroupStore = create<GroupState & GroupActions>((set) => ({
       members[idx] = { ...members[idx], runState };
       const next = new Map(state.details);
       next.set(groupId, { ...cur, members });
+      return { details: next };
+    }),
+
+  upsertTask: (groupId, task) =>
+    set((state) => {
+      const cur = state.details.get(groupId);
+      if (!cur) return state;
+      const tasks = cur.tasks ?? [];
+      const idx = tasks.findIndex((t) => t.id === task.id);
+      const nextTasks =
+        idx < 0
+          ? [...tasks, task]
+          : tasks.map((t, i) => (i === idx ? task : t));
+      const next = new Map(state.details);
+      next.set(groupId, { ...cur, tasks: nextTasks });
       return { details: next };
     }),
 }));

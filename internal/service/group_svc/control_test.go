@@ -265,6 +265,10 @@ func TestRemoveGroupMember_RevokesViaAuthz(t *testing.T) {
 		memberRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
 		groupRepo.EXPECT().Find(gomock.Any(), int64(7)).Return(
 			&group_entity.Group{ID: 7, Status: consts.ACTIVE}, nil).AnyTimes()
+		// 离群级联取消会读任务列表(无任务 → 无级联副作用)。
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(7)).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTest(gw)
 		tok := group_svc.MintTokenForTest(svc, 7, 42)
@@ -293,6 +297,12 @@ func TestRemoveGroupMember_DeletesBackingSession(t *testing.T) {
 		memberRepo.EXPECT().Find(gomock.Any(), int64(42)).Return(m, nil).AnyTimes()
 		memberRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
 		gw.EXPECT().DeleteSession(gomock.Any(), int64(88)).Return(nil)
+		// 离群级联取消会读群+任务列表(无任务 → 无级联副作用)。
+		groupRepo.EXPECT().Find(gomock.Any(), int64(7)).Return(
+			&group_entity.Group{ID: 7, Status: consts.ACTIVE}, nil).AnyTimes()
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(7)).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTest(gw)
 		So(svc.RemoveGroupMember(ctx, 42), ShouldBeNil)
@@ -312,6 +322,12 @@ func TestRemoveGroupMember_DeletesBackingSession(t *testing.T) {
 		memberRepo.EXPECT().Find(gomock.Any(), int64(42)).Return(m, nil).AnyTimes()
 		memberRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
 		// gw.DeleteSession 不应被调用(BackingSessionID=0)。
+		// 离群级联取消会读群+任务列表(无任务 → 无级联副作用)。
+		groupRepo.EXPECT().Find(gomock.Any(), int64(7)).Return(
+			&group_entity.Group{ID: 7, Status: consts.ACTIVE}, nil).AnyTimes()
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(7)).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTest(gw)
 		So(svc.RemoveGroupMember(ctx, 42), ShouldBeNil)

@@ -10,6 +10,8 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
 	"github.com/agentre-ai/agentre/internal/repository/group_repo"
 	"github.com/agentre-ai/agentre/internal/repository/group_repo/mock_group_repo"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc"
@@ -49,6 +51,14 @@ func newFallbackHarness(t *testing.T, ctrl *gomock.Controller, history []*group_
 	}
 	msgRepo.EXPECT().NextSeq(gomock.Any(), int64(5)).Return(1, nil).AnyTimes()
 	msgRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(history, nil).AnyTimes()
+	// launchDelivery → buildGroupSystemPrompt → openTaskSnapshot 读任务卡(本 harness 无任务)。
+	taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+	group_repo.RegisterTask(taskRepo)
+	taskRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
+	// 主持人 prompt → recruitableRoster 读招募池(全部 active agent;本 harness 无可招募对象)。
+	agentRepo := mock_agent_repo.NewMockAgentRepo(ctrl)
+	agent_repo.RegisterAgent(agentRepo)
+	agentRepo.EXPECT().List(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	h := &fallbackHarness{
 		sent:    make(chan int64, 8),

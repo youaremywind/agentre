@@ -2433,7 +2433,7 @@ func (s *chatSvc) runTurn(
 		ProviderSessionID: sess.ProviderSessionID,
 		Compact:           compact,
 		ForkAnchor:        forkAnchor,
-		MCPServers:        appendTurnMCP(ctx, extras.mcpServers, a, sess.ID, runner.Capabilities().Has(capability.CapMCPTools)),
+		MCPServers:        appendTurnMCP(ctx, extras.mcpServers, a, sess.ID, sess.GroupID, runner.Capabilities().Has(capability.CapMCPTools)),
 	}
 	if userMsg != nil {
 		req.UserText = textOfMessage(userMsg)

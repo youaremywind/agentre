@@ -9,6 +9,8 @@ type CreateGroupRequest struct {
 	HostAgentID  int64
 	DepartmentID int64
 	ProjectID    int64
+	// WorkflowID 可选绑定的协作流程(剧本库),0=不绑定;主持人每轮注入最新内容。
+	WorkflowID int64
 	// MemberAgentIDs 建群时一并拉入的初始成员（主持人之外）。每个都经 backendSupportsGroup
 	// 门控 + 幂等（ensureMember）。
 	MemberAgentIDs []int64
@@ -22,6 +24,8 @@ type GroupDetail struct {
 	// 由调度器在跑集合派生 —— 区别于 GroupMember.Status 的"成员身份"(active/left)。
 	// 让 roster 在打开群时(中途/重载)能立刻显示哪个成员正在跑,而不只是"是不是成员"。
 	MemberRunStates map[int64]string
+	// Tasks 全部任务卡(任务 tab 与历史卡片状态回写的数据源)。
+	Tasks []*group_entity.GroupTask
 }
 
 type SendGroupMessageRequest struct {

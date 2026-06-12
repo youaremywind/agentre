@@ -21,6 +21,7 @@ export const Greet = vi.fn((name: string) =>
 export const AnswerUserQuestion = vi.fn(() => Promise.resolve({}));
 export const AnswerToolPermission = vi.fn(() => Promise.resolve({}));
 export const AnswerOrgApproval = vi.fn(() => Promise.resolve({}));
+export const AnswerGroupCreateApproval = vi.fn(() => Promise.resolve({}));
 export const ResolvePlanAction = vi.fn(() => Promise.resolve({}));
 
 export const Info = vi.fn(() =>
@@ -240,4 +241,18 @@ export const ConfirmQuit = windowBackedMock("ConfirmQuit", () =>
 export const ChatReadDroppedImages = windowBackedMock(
   "ChatReadDroppedImages",
   () => Promise.resolve({ items: [] }),
+);
+
+// Workflow bindings
+export const WorkflowList = windowBackedMock("WorkflowList", () =>
+  Promise.resolve({ items: [] }),
+);
+export const WorkflowCreate = windowBackedMock("WorkflowCreate", () =>
+  Promise.resolve({ item: null }),
+);
+export const WorkflowUpdate = windowBackedMock("WorkflowUpdate", () =>
+  Promise.resolve({ item: null }),
+);
+export const WorkflowDelete = windowBackedMock("WorkflowDelete", () =>
+  Promise.resolve({}),
 );

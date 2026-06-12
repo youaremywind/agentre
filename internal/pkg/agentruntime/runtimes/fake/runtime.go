@@ -12,7 +12,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
@@ -21,6 +24,21 @@ import (
 
 // ReplyPrefix 是所有假回复的前缀,前端据此断言并与用户消息区分。
 const ReplyPrefix = "e2e-fake-reply: "
+
+// TaskDirectivePrefix 触发建任务卡的用户指令:e2e-task:<assignee显示名>:<title>。
+// e2e spec 用它驱动主持人轮确定性建卡(真实场景这是 LLM 的判断,fake 用文本模式顶替)。
+const TaskDirectivePrefix = "e2e-task:"
+
+// TaskResultPrefix 是 fake 交付任务时 result 的前缀,DB oracle 据此锁定 fake 写入的行。
+const TaskResultPrefix = "e2e-fake-result: "
+
+// GroupCreateDirectivePrefix 触发单聊建群的用户指令:
+// e2e-group-create:<title>:<成员名逗号分隔>:<brief>。
+const GroupCreateDirectivePrefix = "e2e-group-create:"
+
+// taskAssignedRe 匹配派活消息抬头「任务 #N：」(HandleTaskCreate 的 content 格式;
+// 完成回执是「任务 #N 已完成」、取消是「任务 #N 已取消」,编号后无全角冒号,不会误匹配)。
+var taskAssignedRe = regexp.MustCompile(`任务 #(\d+)：`)
 
 // Runtime 实现 agentruntime.Runtime。
 type Runtime struct{}
@@ -70,11 +88,48 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		// 群成员 turn:像真 CLI 一样,把本轮回复经注入的 group MCP server 调 group_send
 		// 冒泡进群转录区(IngestAgentMessage → group_messages)。无注入(单聊 / 非群)→ 跳过,
 		// 行为不变。ctx 取消时上面的循环已提前 return,不会走到这里。
-		if spec, ok := findGroupSendServer(req.MCPServers); ok {
-			if err := postGroupSend(ctx, spec, reply); err != nil {
+		// mentions=["用户"] 回人类来源(ingest 后无 agent 收件人 → 本轮自然收敛,不触发 agent 互投)。
+		if spec, ok := findGroupToolServer(req.MCPServers, "group_send"); ok {
+			if err := postToolCall(ctx, spec, "group_send", map[string]any{
+				"body":     reply,
+				"mentions": []string{"用户"},
+			}); err != nil {
 				// 尽力而为:发失败不报 ErrorEvent(避免误把 backing session 标成出错),
 				// 只写日志;群气泡缺失会被 e2e spec 当作显式失败信号抓到。
 				fmt.Fprintf(os.Stderr, "fake: group_send failed: %v\n", err)
+			}
+		}
+		// 任务接缝(spec §9):主持人收到 e2e-task 指令 → 建卡派活;成员收到派活抬头 → 交付。
+		// 与 group_send 一样尽力而为:失败只写 stderr,缺卡/缺交付由 e2e spec 显式抓红。
+		if spec, ok := findGroupToolServer(req.MCPServers, "group_task_create"); ok {
+			if assignee, title, found := parseTaskDirective(req.UserText); found {
+				if err := postToolCall(ctx, spec, "group_task_create", map[string]any{
+					"assignee": assignee, "title": title, "brief": "e2e-brief: " + title,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "fake: group_task_create failed: %v\n", err)
+				}
+			}
+		}
+		if spec, ok := findGroupToolServer(req.MCPServers, "group_task_complete"); ok {
+			if m := taskAssignedRe.FindStringSubmatch(req.UserText); m != nil {
+				no, _ := strconv.Atoi(m[1])
+				if err := postToolCall(ctx, spec, "group_task_complete", map[string]any{
+					"taskId": no, "result": TaskResultPrefix + "task #" + m[1],
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "fake: group_task_complete failed: %v\n", err)
+				}
+			}
+		}
+		// 建群接缝(spec §7.1):单聊注入 group_create 时,按指令调 tool;
+		// 该调用会挂起直到用户在 UI 批准(e2e spec 负责点批准);run ctx 取消
+		// (停止会话)会同步中断该 HTTP 请求,失败只写 stderr。
+		if spec, ok := findGroupToolServer(req.MCPServers, "group_create"); ok {
+			if title, members, brief, found := parseGroupCreateDirective(req.UserText); found {
+				if err := postToolCall(ctx, spec, "group_create", map[string]any{
+					"title": title, "memberNames": members, "brief": brief,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "fake: group_create failed: %v\n", err)
+				}
 			}
 		}
 		select {
@@ -86,33 +141,71 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 	return out, result, nil
 }
 
-// findGroupSendServer 返回首个广告 group_send tool 的注入 MCP server(群成员 turn 才有)。
-func findGroupSendServer(specs []agentruntime.MCPServerSpec) (agentruntime.MCPServerSpec, bool) {
+// findGroupToolServer 返回首个广告 tool 的注入 MCP server(无 → !ok)。
+func findGroupToolServer(specs []agentruntime.MCPServerSpec, tool string) (agentruntime.MCPServerSpec, bool) {
 	for _, s := range specs {
-		for _, t := range s.Tools {
-			if t == "group_send" {
-				return s, true
-			}
+		if slices.Contains(s.Tools, tool) {
+			return s, true
 		}
 	}
 	return agentruntime.MCPServerSpec{}, false
 }
 
-// postGroupSend 对注入的 group MCP server 发一次无状态 tools/call(group_send),body=回显文本,
-// mentions=["用户"] 回人类来源(ingest 后无 agent 收件人 → 本轮自然收敛,不触发 agent 互投)。
+// parseTaskDirective 从 UserText 中解出 e2e-task:<assignee>:<title>(取指令所在行,
+// 缺段/空段 → !ok)。
+func parseTaskDirective(text string) (assignee, title string, ok bool) {
+	idx := strings.Index(text, TaskDirectivePrefix)
+	if idx < 0 {
+		return "", "", false
+	}
+	rest := text[idx+len(TaskDirectivePrefix):]
+	if i := strings.IndexByte(rest, '\n'); i >= 0 {
+		rest = rest[:i]
+	}
+	assignee, title, found := strings.Cut(rest, ":")
+	assignee, title = strings.TrimSpace(assignee), strings.TrimSpace(title)
+	if !found || assignee == "" || title == "" {
+		return "", "", false
+	}
+	return assignee, title, true
+}
+
+// parseGroupCreateDirective 解析建群指令(取指令所在行;三段冒号分隔,成员逗号分隔;
+// 缺段/空段 → !ok)。title 不支持含冒号(SplitN 三段切分);e2e 指令是测试接缝,
+// 标题用时间戳即可。
+func parseGroupCreateDirective(text string) (title string, members []string, brief string, ok bool) {
+	idx := strings.Index(text, GroupCreateDirectivePrefix)
+	if idx < 0 {
+		return "", nil, "", false
+	}
+	rest := text[idx+len(GroupCreateDirectivePrefix):]
+	if i := strings.IndexByte(rest, '\n'); i >= 0 {
+		rest = rest[:i]
+	}
+	parts := strings.SplitN(rest, ":", 3)
+	if len(parts) != 3 {
+		return "", nil, "", false
+	}
+	title, brief = strings.TrimSpace(parts[0]), strings.TrimSpace(parts[2])
+	for _, m := range strings.Split(parts[1], ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			members = append(members, m)
+		}
+	}
+	if title == "" || len(members) == 0 || brief == "" {
+		return "", nil, "", false
+	}
+	return title, members, brief, true
+}
+
+// postToolCall 对注入的 group MCP server 发一次无状态 tools/call(原 postGroupSend 泛化)。
 // handler 的 tools/call 分支无状态,无需先做 initialize 握手。
-func postGroupSend(ctx context.Context, spec agentruntime.MCPServerSpec, body string) error {
+func postToolCall(ctx context.Context, spec agentruntime.MCPServerSpec, tool string, args map[string]any) error {
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
-		"params": map[string]any{
-			"name": "group_send",
-			"arguments": map[string]any{
-				"body":     body,
-				"mentions": []string{"用户"},
-			},
-		},
+		"params":  map[string]any{"name": tool, "arguments": args},
 	}
 	buf, err := json.Marshal(payload)
 	if err != nil {
@@ -133,7 +226,7 @@ func postGroupSend(ctx context.Context, spec agentruntime.MCPServerSpec, body st
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("group_send: unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("%s: unexpected status %d", tool, resp.StatusCode)
 	}
 	return nil
 }

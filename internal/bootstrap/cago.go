@@ -25,6 +25,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/repository/llm_provider_repo"
 	"github.com/agentre-ai/agentre/internal/repository/project_location_repo"
 	"github.com/agentre-ai/agentre/internal/repository/project_repo"
+	"github.com/agentre-ai/agentre/internal/repository/workflow_repo"
 	"github.com/agentre-ai/agentre/internal/service/agent_backend_svc"
 	"github.com/agentre-ai/agentre/internal/service/app_settings_svc"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc"
@@ -109,6 +110,8 @@ func Init(ctx context.Context) (*Runtime, error) {
 	group_repo.RegisterGroup(group_repo.NewGroup())
 	group_repo.RegisterMember(group_repo.NewMember())
 	group_repo.RegisterMessage(group_repo.NewMessage())
+	group_repo.RegisterTask(group_repo.NewTask())
+	workflow_repo.RegisterWorkflow(workflow_repo.NewWorkflow())
 	project_svc.SetDefault(project_svc.New())
 	issue_repo.RegisterIssue(issue_repo.NewIssue())
 	issue_repo.RegisterLabel(issue_repo.NewLabel())
@@ -156,6 +159,8 @@ func Init(ctx context.Context) (*Runtime, error) {
 	gw.RegisterMCP("/mcp/org/", orgtool_svc.Default().MCPHandler())
 	orgtool_svc.Default().SetGatewayBaseURL(gw.BaseURL())
 	chat_svc.RegisterTurnMCPProvider(orgtool_svc.Default().BuildTurnMCP)
+	// group_create:单聊轮注入(群成员轮在 provider 内按 groupID 跳过)。
+	chat_svc.RegisterTurnMCPProvider(group_svc.Default().BuildCreateTurnMCP)
 
 	// 注入平台原生通知实现，供前端 App.ShowNotification 调用。
 	notification_svc.RegisterNotifier(sysnotify.New())

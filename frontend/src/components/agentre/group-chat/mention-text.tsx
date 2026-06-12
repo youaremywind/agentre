@@ -96,4 +96,4 @@ function mentionMarkdownDecorator(
   };
 }
 
-export { MentionText, mentionMarkdownDecorator };
+export { MentionChip, MentionText, mentionMarkdownDecorator };

@@ -2,19 +2,22 @@ import * as React from "react";
 import { ChevronRight, Trash2, UserPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { AgentAvatar } from "../primitives";
 
 import { GroupDeleteDialog } from "./group-delete-dialog";
+import { GroupTaskList } from "./group-task-list";
 import { agentColorForMember } from "./group-transcript";
 
 import type { app } from "../../../../wailsjs/go/models";
 
 type GroupMemberItem = app.GroupMemberItem;
+type GroupTaskItem = app.GroupTaskItem;
 
-type RosterTab = "members" | "settings";
+type RosterTab = "members" | "tasks" | "settings";
 
 export type GroupRosterProps = {
   members: GroupMemberItem[];
@@ -28,6 +31,12 @@ export type GroupRosterProps = {
   onOpenMember: (member: GroupMemberItem) => void;
   onInvite: () => void;
   onDelete: (deleteSessions: boolean) => void;
+  /** 群任务卡(实时,LoadGroup + task_updated 驱动)。 */
+  tasks: GroupTaskItem[];
+  /** 任务行点击:transcript 锚定到该任务的派活卡。 */
+  onAnchorTask: (task: GroupTaskItem) => void;
+  /** 任务行尾 ›:按 member id 跳成员会话(复用 openMemberById)。 */
+  onOpenMemberById: (memberId: number) => void;
 };
 
 // 状态点按运行态(running/idle)着色,而不是成员身份(active/left)。在跑→绿,
@@ -93,6 +102,9 @@ function GroupRoster({
   onOpenMember,
   onInvite,
   onDelete,
+  tasks,
+  onAnchorTask,
+  onOpenMemberById,
 }: GroupRosterProps) {
   const { t } = useTranslation();
   const [tab, setTab] = React.useState<RosterTab>("members");
@@ -100,6 +112,8 @@ function GroupRoster({
 
   const hosts = members.filter((m) => m.role === "host");
   const regulars = members.filter((m) => m.role !== "host");
+
+  const openTaskCount = tasks.filter((tk) => tk.status === "open").length;
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-l border-border bg-card">
@@ -112,6 +126,23 @@ function GroupRoster({
           onClick={() => setTab("members")}
         >
           {t("group.tabs.members")}
+        </Button>
+        <Button
+          type="button"
+          variant={tab === "tasks" ? "secondary" : "ghost"}
+          size="sm"
+          className="flex-1"
+          onClick={() => setTab("tasks")}
+        >
+          {t("group.tabs.tasks")}
+          {openTaskCount > 0 ? (
+            <Badge
+              variant="secondary"
+              className="ml-1 h-4 min-w-4 px-1 font-mono text-2xs"
+            >
+              {openTaskCount}
+            </Badge>
+          ) : null}
         </Button>
         <Button
           type="button"
@@ -167,6 +198,13 @@ function GroupRoster({
             {t("group.roster.invite")}
           </Button>
         </div>
+      ) : tab === "tasks" ? (
+        <GroupTaskList
+          tasks={tasks}
+          memberName={memberName}
+          onAnchorTask={onAnchorTask}
+          onOpenMember={onOpenMemberById}
+        />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
           <div>

@@ -73,6 +73,32 @@ function GroupChat({ groupId }: { groupId: number }) {
     [detail?.messages],
   );
 
+  const tasks = React.useMemo(() => detail?.tasks ?? [], [detail?.tasks]);
+
+  // taskById:taskID → 实时任务实体,transcript 卡片按它取状态(随 task_updated 翻转)。
+  const taskById = React.useMemo(() => {
+    const map = new Map<number, app.GroupTaskItem>();
+    for (const tk of tasks) map.set(tk.id, tk);
+    return map;
+  }, [tasks]);
+
+  // createdMessageIdByTaskNo:#N → 派活卡(created 消息)的消息 id。任务 tab 点行
+  // 与卡片回指链接都锚到这条消息。
+  const createdMessageIdByTaskNo = React.useMemo(() => {
+    const idByTaskId = new Map<number, number>();
+    for (const m of messages) {
+      if (m.taskEvent === "created" && !idByTaskId.has(m.taskID)) {
+        idByTaskId.set(m.taskID, m.id);
+      }
+    }
+    const map = new Map<number, number>();
+    for (const tk of tasks) {
+      const mid = idByTaskId.get(tk.id);
+      if (mid != null) map.set(tk.taskNo, mid);
+    }
+    return map;
+  }, [messages, tasks]);
+
   const {
     ref: scrollRef,
     atBottom,
@@ -120,6 +146,25 @@ function GroupChat({ groupId }: { groupId: number }) {
   function openMember(member: GroupMemberItem) {
     openMemberById(member.id);
   }
+
+  // scrollToMessage:群 transcript 无虚拟化,原生 DOM 锚定即可(行/卡带 data-message-id)。
+  const scrollToMessage = React.useCallback(
+    (messageId: number) => {
+      const el = scrollRef.current?.querySelector(
+        `[data-message-id="${messageId}"]`,
+      );
+      el?.scrollIntoView({ block: "center" });
+    },
+    [scrollRef],
+  );
+
+  const anchorTaskNo = React.useCallback(
+    (taskNo: number) => {
+      const mid = createdMessageIdByTaskNo.get(taskNo);
+      if (mid != null) scrollToMessage(mid);
+    },
+    [createdMessageIdByTaskNo, scrollToMessage],
+  );
 
   // handleDelete: 删除该群(deleteSessions 决定是否一并删关联会话),然后让删除在 UI 立即可见 ——
   // reload 群列表(Group().List 过滤 status=ACTIVE → 群消失)+ reload 会话列表(deleteSessions=true
@@ -296,6 +341,9 @@ function GroupChat({ groupId }: { groupId: number }) {
               memberName={memberName}
               renderBody={renderMessageBody}
               renderSystemBody={renderSystemBody}
+              taskById={taskById}
+              onJumpMember={openMemberById}
+              onJumpTaskNo={anchorTaskNo}
             />
             {!atBottom ? (
               <Button
@@ -332,6 +380,9 @@ function GroupChat({ groupId }: { groupId: number }) {
           console.warn("[group] invite picker not wired");
         }}
         onDelete={(deleteSessions) => void handleDelete(deleteSessions)}
+        tasks={tasks}
+        onAnchorTask={(tk) => anchorTaskNo(tk.taskNo)}
+        onOpenMemberById={openMemberById}
       />
     </div>
   );

@@ -17,6 +17,7 @@ import buildingCommunityIcon from "@iconify-icons/tabler/building-community";
 import layoutKanbanIcon from "@iconify-icons/tabler/layout-kanban";
 import messageCircleIcon from "@iconify-icons/tabler/message-circle";
 import settingsIcon from "@iconify-icons/tabler/settings";
+import routeIcon from "@iconify-icons/tabler/route-2";
 import webhookIcon from "@iconify-icons/tabler/webhook";
 
 import {
@@ -33,6 +34,7 @@ import {
   IssuesPage,
   OrgChartPage,
   PaletteScopeBridge,
+  WorkflowsPage,
   ProjectsPage,
   QuitConfirmDialog,
   ShortcutsProvider,
@@ -90,6 +92,11 @@ const navItems: NavItem[] = [
     icon: buildingCommunityIcon,
   },
   {
+    path: "/workflows",
+    labelKey: "nav.workflows",
+    icon: routeIcon,
+  },
+  {
     path: "/hooks",
     labelKey: "nav.hooks",
     icon: webhookIcon,
@@ -108,6 +115,7 @@ const pageBreadcrumbKeys: Record<string, string> = {
   "/hooks": "nav.hooks",
   "/issues": "nav.issues",
   "/org": "nav.org",
+  "/workflows": "nav.workflows",
   "/settings": "nav.settings",
 };
 
@@ -873,6 +881,7 @@ function App() {
           <Route path="/issues" element={<IssuesPage />} />
           <Route path="/hooks" element={<HooksPage />} />
           <Route path="/org" element={<OrgChartPage />} />
+          <Route path="/workflows" element={<WorkflowsPage />} />
           <Route path="/settings" element={<SettingsRoute />} />
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Route>

@@ -191,7 +191,7 @@ type RunParams struct {
 	CollaborationMode string               `json:"collaborationMode,omitempty"`
 	// MCPServers 注入给 runtime 的 MCP tool server（群聊/org 工具等）。漏传会让
 	// 远程后端的 launch-time MCP 注入失效，故必须随 wire 过线。
-	MCPServers        []agentruntime.MCPServerSpec `json:"mcpServers,omitempty"`
+	MCPServers []agentruntime.MCPServerSpec `json:"mcpServers,omitempty"`
 	// LLMProviderKey 是 desktop 端关联的 provider stable key（UUID）。
 	// daemon 用它做 ProviderLookup（FindByKey），不需要 desktop 越线传 APIKey。
 	LLMProviderKey string `json:"llmProviderKey,omitempty"`

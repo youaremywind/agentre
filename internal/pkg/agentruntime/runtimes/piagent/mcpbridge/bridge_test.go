@@ -11,7 +11,8 @@ import (
 )
 
 func TestRenderConfig_WritesServerListWithHeadersAndTools(t *testing.T) {
-	t.Setenv("AGENTRE_DATA_DIR", t.TempDir())
+	dataDir := t.TempDir()
+	t.Setenv("AGENTRE_DATA_DIR", dataDir)
 	specs := []agentruntime.MCPServerSpec{{
 		Name:    "group",
 		URL:     "http://127.0.0.1:52401/mcp/group/",
@@ -22,7 +23,8 @@ func TestRenderConfig_WritesServerListWithHeadersAndTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderConfig: %v", err)
 	}
-	raw, err := os.ReadFile(path)
+	assertConfigPathUnderDataDir(t, dataDir, path)
+	raw, err := os.ReadFile(path) //nolint:gosec // path is returned by RenderConfig and constrained to the test temp data dir.
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
@@ -39,9 +41,6 @@ func TestRenderConfig_WritesServerListWithHeadersAndTools(t *testing.T) {
 	}
 	if len(cfg.Servers) != 1 || cfg.Servers[0].Name != "group" || cfg.Servers[0].Headers["Authorization"] != "Bearer tok" || cfg.Servers[0].Tools[0] != "group_send" {
 		t.Fatalf("unexpected config: %s", raw)
-	}
-	if !strings.Contains(path, filepath.Join("piagent", "ext", "cfg")) {
-		t.Fatalf("config path not under piagent/ext/cfg: %s", path)
 	}
 }
 
@@ -64,12 +63,14 @@ func TestMaterialize_IdempotentHashedPath(t *testing.T) {
 }
 
 func TestRenderConfig_EmptySpecs(t *testing.T) {
-	t.Setenv("AGENTRE_DATA_DIR", t.TempDir())
+	dataDir := t.TempDir()
+	t.Setenv("AGENTRE_DATA_DIR", dataDir)
 	path, err := RenderConfig(nil, 7)
 	if err != nil {
 		t.Fatalf("RenderConfig(nil): %v", err)
 	}
-	raw, err := os.ReadFile(path)
+	assertConfigPathUnderDataDir(t, dataDir, path)
+	raw, err := os.ReadFile(path) //nolint:gosec // path is returned by RenderConfig and constrained to the test temp data dir.
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -93,5 +94,15 @@ func TestRemoveConfig_DeletesAndIdempotent(t *testing.T) {
 	// 文件不存在时再删一次：幂等，不报错。
 	if err := RemoveConfig(7); err != nil {
 		t.Fatalf("RemoveConfig not idempotent: %v", err)
+	}
+}
+
+func assertConfigPathUnderDataDir(t *testing.T, dataDir, path string) {
+	t.Helper()
+
+	wantDir := filepath.Join(dataDir, "piagent", "ext", "cfg")
+	rel, err := filepath.Rel(wantDir, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." || filepath.IsAbs(rel) {
+		t.Fatalf("config path not under %s: %s", wantDir, path)
 	}
 }

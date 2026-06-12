@@ -9,6 +9,8 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
 	"github.com/agentre-ai/agentre/internal/repository/group_repo"
 	"github.com/agentre-ai/agentre/internal/repository/group_repo/mock_group_repo"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc"
@@ -53,6 +55,10 @@ func TestSendGroupMessage_ResolvesMentionsAndPersists(t *testing.T) {
 		ch12 := make(chan chat_svc.TurnResult, 1)
 		gw.EXPECT().ObserveTurn(int64(12)).Return((<-chan chat_svc.TurnResult)(ch12), func() {}).AnyTimes()
 		gw.EXPECT().Send(gomock.Any(), gomock.Any()).Return(&chat_svc.SendResponse{}, nil).AnyTimes()
+		// launchDelivery → buildGroupSystemPrompt → openTaskSnapshot 读任务卡(本测试无任务)。
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTestWithNames(gw, map[int64]string{1: "林队", 2: "后端"})
 		err := svc.SendGroupMessage(ctx, &group_svc.SendGroupMessageRequest{GroupID: 5, Text: "麻烦后端看下", RecipientMemberIDs: []int64{2}})
@@ -92,6 +98,14 @@ func TestSendGroupMessage_DefaultsToHost(t *testing.T) {
 		ch11 := make(chan chat_svc.TurnResult, 1)
 		gw.EXPECT().ObserveTurn(int64(11)).Return((<-chan chat_svc.TurnResult)(ch11), func() {}).AnyTimes()
 		gw.EXPECT().Send(gomock.Any(), gomock.Any()).Return(&chat_svc.SendResponse{}, nil).AnyTimes()
+		// launchDelivery → buildGroupSystemPrompt → openTaskSnapshot 读任务卡(本测试无任务)。
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		// 主持人 prompt → recruitableRoster 读招募池(全部 active agent;本测试无可招募对象)。
+		agentRepo := mock_agent_repo.NewMockAgentRepo(ctrl)
+		agent_repo.RegisterAgent(agentRepo)
+		agentRepo.EXPECT().List(gomock.Any()).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTestWithNames(gw, map[int64]string{1: "林队", 2: "后端"})
 		err := svc.SendGroupMessage(ctx, &group_svc.SendGroupMessageRequest{GroupID: 5, Text: "随便聊聊"})

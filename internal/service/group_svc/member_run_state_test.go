@@ -10,6 +10,8 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
+	"github.com/agentre-ai/agentre/internal/repository/agent_repo/mock_agent_repo"
 	"github.com/agentre-ai/agentre/internal/repository/group_repo"
 	"github.com/agentre-ai/agentre/internal/repository/group_repo/mock_group_repo"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc"
@@ -64,6 +66,14 @@ func TestScheduler_EmitsMemberRunStateRunningThenIdle(t *testing.T) {
 		group_repo.RegisterGroup(groupRepo)
 		group_repo.RegisterMember(memberRepo)
 		group_repo.RegisterMessage(msgRepo)
+		// launchDelivery → buildGroupSystemPrompt → openTaskSnapshot 读任务卡(本测试无任务)。
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		// 主持人 prompt → recruitableRoster 读招募池(全部 active agent;本测试无可招募对象)。
+		agentRepo := mock_agent_repo.NewMockAgentRepo(ctrl)
+		agent_repo.RegisterAgent(agentRepo)
+		agentRepo.EXPECT().List(gomock.Any()).Return(nil, nil).AnyTimes()
 
 		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunRunning, Status: consts.ACTIVE}
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
@@ -141,6 +151,14 @@ func TestScheduler_MemberRunStateAlsoEmitsGlobalWithBackingSession(t *testing.T)
 		group_repo.RegisterGroup(groupRepo)
 		group_repo.RegisterMember(memberRepo)
 		group_repo.RegisterMessage(msgRepo)
+		// launchDelivery → buildGroupSystemPrompt → openTaskSnapshot 读任务卡(本测试无任务)。
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		// 主持人 prompt → recruitableRoster 读招募池(全部 active agent;本测试无可招募对象)。
+		agentRepo := mock_agent_repo.NewMockAgentRepo(ctrl)
+		agent_repo.RegisterAgent(agentRepo)
+		agentRepo.EXPECT().List(gomock.Any()).Return(nil, nil).AnyTimes()
 
 		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunRunning, Status: consts.ACTIVE}
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
@@ -204,6 +222,14 @@ func TestStopGroup_EmitsIdleForInflightMembers(t *testing.T) {
 		group_repo.RegisterGroup(groupRepo)
 		group_repo.RegisterMember(memberRepo)
 		group_repo.RegisterMessage(msgRepo)
+		// launchDelivery → buildGroupSystemPrompt → openTaskSnapshot 读任务卡(本测试无任务)。
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		// 主持人 prompt → recruitableRoster 读招募池(全部 active agent;本测试无可招募对象)。
+		agentRepo := mock_agent_repo.NewMockAgentRepo(ctrl)
+		agent_repo.RegisterAgent(agentRepo)
+		agentRepo.EXPECT().List(gomock.Any()).Return(nil, nil).AnyTimes()
 
 		g := &group_entity.Group{ID: 5, RunStatus: group_entity.RunRunning, Status: consts.ACTIVE}
 		groupRepo.EXPECT().Find(gomock.Any(), int64(5)).Return(g, nil).AnyTimes()
@@ -298,6 +324,9 @@ func TestLoadGroup_MemberRunStatesReflectInflight(t *testing.T) {
 		}
 		memberRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(members, nil).AnyTimes()
 		msgRepo.EXPECT().ListByGroup(gomock.Any(), int64(5)).Return(nil, nil).AnyTimes()
+		taskRepo := mock_group_repo.NewMockGroupTaskRepo(ctrl)
+		group_repo.RegisterTask(taskRepo)
+		taskRepo.EXPECT().ListByGroup(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 		svc := group_svc.NewForTestWithNames(gw, map[int64]string{1: "林队", 2: "后端"})
 		group_svc.MarkInflightForTest(svc, 5, 2)

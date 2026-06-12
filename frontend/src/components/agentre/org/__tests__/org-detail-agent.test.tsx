@@ -118,7 +118,10 @@ describe("OrgDetailAgent", () => {
     ).toBeInTheDocument();
     expect(
       screen.getAllByRole("radio", { name: /Avatar color agent-/ }),
-    ).toHaveLength(10);
+    ).toHaveLength(16);
+    expect(
+      screen.getByRole("radio", { name: "Avatar color agent-16" }),
+    ).toBeInTheDocument();
     // 头像编辑入口仍用于选择图标 / 字母备用头像。
     expect(screen.getAllByLabelText("Change avatar").length).toBeGreaterThan(0);
   });

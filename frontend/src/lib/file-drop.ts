@@ -28,7 +28,10 @@ function ensureListening(): void {
 
 // registerDropZone 注册 composer 的 drop 目标 + 回调,并打上 Wails useDropTarget
 // 所需的 CSS 标记。返回注销函数(最后一个注销时卸掉全局监听)。
-export function registerDropZone(el: HTMLElement, handler: DropHandler): () => void {
+export function registerDropZone(
+  el: HTMLElement,
+  handler: DropHandler,
+): () => void {
   registry.set(el, handler);
   el.style.setProperty("--wails-drop-target", "drop");
   ensureListening();

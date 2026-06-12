@@ -11,6 +11,13 @@ const (
 	SenderKindSystem = "system" // 系统行(X 加入 / 工具审批冒泡)
 )
 
+// 任务事件消息(task_event != "" 的 group_message 前端渲染为任务卡气泡,spec §3.3)。
+const (
+	TaskEventCreated   = "created"
+	TaskEventCompleted = "completed"
+	TaskEventCanceled  = "canceled"
+)
+
 // GroupMessage 群内一条消息(始终存原文)。
 type GroupMessage struct {
 	ID                 int64  `gorm:"column:id;primaryKey;autoIncrement"`
@@ -22,6 +29,8 @@ type GroupMessage struct {
 	ToUser             bool   `gorm:"column:to_user;type:integer;not null;default:false"`
 	Content            string `gorm:"column:content;type:text;not null;default:''"`
 	SourceMessageID    int64  `gorm:"column:source_message_id;type:bigint;not null;default:0"`
+	TaskID             int64  `gorm:"column:task_id;type:bigint;not null;default:0"`
+	TaskEvent          string `gorm:"column:task_event;type:text;not null;default:''"`
 	Createtime         int64  `gorm:"column:createtime;type:bigint;not null;default:0"`
 }
 

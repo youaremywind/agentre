@@ -11,10 +11,11 @@ package mock_group_svc
 
 import (
 	context "context"
-	capability "github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
-	chat_svc "github.com/agentre-ai/agentre/internal/service/chat_svc"
 	reflect "reflect"
 
+	capability "github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	chat_svc "github.com/agentre-ai/agentre/internal/service/chat_svc"
+	blocks "github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -57,6 +58,20 @@ func (mr *MockChatGatewayMockRecorder) AgentBackendHasCapability(ctx, agentID, w
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AgentBackendHasCapability", reflect.TypeOf((*MockChatGateway)(nil).AgentBackendHasCapability), ctx, agentID, wantCap)
 }
 
+// BeginGroupCreateApproval mocks base method.
+func (m *MockChatGateway) BeginGroupCreateApproval(ctx context.Context, sessionID int64, blk *blocks.OrgApprovalBlock) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BeginGroupCreateApproval", ctx, sessionID, blk)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// BeginGroupCreateApproval indicates an expected call of BeginGroupCreateApproval.
+func (mr *MockChatGatewayMockRecorder) BeginGroupCreateApproval(ctx, sessionID, blk any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BeginGroupCreateApproval", reflect.TypeOf((*MockChatGateway)(nil).BeginGroupCreateApproval), ctx, sessionID, blk)
+}
+
 // DeleteSession mocks base method.
 func (m *MockChatGateway) DeleteSession(ctx context.Context, sessionID int64) error {
 	m.ctrl.T.Helper()
@@ -84,6 +99,20 @@ func (m *MockChatGateway) EnsureSession(ctx context.Context, req *chat_svc.Ensur
 func (mr *MockChatGatewayMockRecorder) EnsureSession(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureSession", reflect.TypeOf((*MockChatGateway)(nil).EnsureSession), ctx, req)
+}
+
+// FinishGroupCreateApproval mocks base method.
+func (m *MockChatGateway) FinishGroupCreateApproval(ctx context.Context, sessionID int64, requestID, status, result string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FinishGroupCreateApproval", ctx, sessionID, requestID, status, result)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FinishGroupCreateApproval indicates an expected call of FinishGroupCreateApproval.
+func (mr *MockChatGatewayMockRecorder) FinishGroupCreateApproval(ctx, sessionID, requestID, status, result any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinishGroupCreateApproval", reflect.TypeOf((*MockChatGateway)(nil).FinishGroupCreateApproval), ctx, sessionID, requestID, status, result)
 }
 
 // ObserveTurn mocks base method.

@@ -17,6 +17,8 @@ type GroupLiveEvent = {
   // member_run_state 事件:某成员运行态(running/idle)变更。memberID 是 group_members.id。
   memberID?: number;
   runState?: string;
+  // task_updated 事件:任务创建或状态翻转,载荷与 app.GroupTaskItem 同构(后端有断言钉死)。
+  task?: app.GroupTaskItem;
 };
 
 // useGroup 负责单个群的「拉一次详情 + 订阅 live 事件」。详情统一落到
@@ -28,6 +30,7 @@ export function useGroup(groupId: number) {
   const patchMember = useGroupStore((s) => s.patchMember);
   const patchMemberRunState = useGroupStore((s) => s.patchMemberRunState);
   const patchRunStatus = useGroupStore((s) => s.patchRunStatus);
+  const upsertTask = useGroupStore((s) => s.upsertTask);
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
@@ -71,6 +74,9 @@ export function useGroup(groupId: number) {
       if (payload.kind === "run_status" && payload.runStatus) {
         patchRunStatus(groupId, payload.runStatus);
       }
+      if (payload.kind === "task_updated" && payload.task) {
+        upsertTask(groupId, payload.task);
+      }
     });
     return () => EventsOff(evt);
   }, [
@@ -80,6 +86,7 @@ export function useGroup(groupId: number) {
     patchMember,
     patchMemberRunState,
     patchRunStatus,
+    upsertTask,
   ]);
 
   return { detail, loading, reload };

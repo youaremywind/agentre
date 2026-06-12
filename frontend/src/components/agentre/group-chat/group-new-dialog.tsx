@@ -26,7 +26,7 @@ import { useGroupListStore } from "@/stores/group-list-store";
 import { useNewChatContextStore } from "@/stores/new-chat-context-store";
 
 import { AgentMultiPicker, type PickableAgent } from "./agent-multi-picker";
-import { GroupCreate } from "../../../../wailsjs/go/app/App";
+import { GroupCreate, WorkflowList } from "../../../../wailsjs/go/app/App";
 
 export type GroupNewDialogProps = {
   open: boolean;
@@ -57,6 +57,10 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
   const [hostID, setHostID] = React.useState(0);
   const [projectID, setProjectID] = React.useState(0);
   const [memberIDs, setMemberIDs] = React.useState<number[]>([]);
+  const [workflowID, setWorkflowID] = React.useState(0);
+  const [workflowOptions, setWorkflowOptions] = React.useState<
+    { id: number; name: string }[]
+  >([]);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -67,7 +71,18 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
       setHostID(0);
       setProjectID(projectContext?.projectID ?? 0);
       setMemberIDs([]);
+      setWorkflowID(0);
       setError(null);
+      WorkflowList()
+        .then((resp) =>
+          setWorkflowOptions(
+            (resp?.items ?? []).map((i: { id: number; name: string }) => ({
+              id: i.id,
+              name: i.name,
+            })),
+          ),
+        )
+        .catch(() => setWorkflowOptions([]));
     }
   }, [open, projectContext]);
 
@@ -82,6 +97,7 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
         hostAgentID: hostID,
         departmentID: 0,
         projectID,
+        workflowID,
         memberAgentIDs: memberIDs,
       });
       await useGroupListStore.getState().reload();
@@ -167,6 +183,34 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
                 ))}
               </SelectContent>
             </Select>
+          </label>
+
+          <label className="flex flex-col gap-1.5 text-xs">
+            <span className="font-medium text-foreground">
+              {t("group.new.workflow")}
+            </span>
+            <Select
+              value={String(workflowID)}
+              onValueChange={(v) => setWorkflowID(Number(v))}
+            >
+              <SelectTrigger
+                aria-label={t("group.new.workflow")}
+                className="h-9 text-xs"
+              >
+                <SelectValue placeholder={t("group.new.workflowNone")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">{t("group.new.workflowNone")}</SelectItem>
+                {workflowOptions.map((w) => (
+                  <SelectItem key={w.id} value={String(w.id)}>
+                    {w.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="text-2xs text-muted-foreground">
+              {t("group.new.workflowHint")}
+            </span>
           </label>
 
           <div className="flex flex-col gap-1.5 text-xs">

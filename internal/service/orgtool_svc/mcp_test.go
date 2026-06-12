@@ -224,7 +224,7 @@ func TestOrgMCP_BuildTurnMCP(t *testing.T) {
 		s.SetGatewayBaseURL("http://127.0.0.1:52401")
 
 		Convey("org 开关 ON → 返回 1 个 spec(URL/header token/7 个 Tools)", func() {
-			specs := s.BuildTurnMCP(context.Background(), orgEnabledAgent(7), 99)
+			specs := s.BuildTurnMCP(context.Background(), orgEnabledAgent(7), 99, 0)
 			So(len(specs), ShouldEqual, 1)
 			So(specs[0].Name, ShouldEqual, "org")
 			So(specs[0].URL, ShouldEqual, "http://127.0.0.1:52401/mcp/org/")
@@ -238,16 +238,16 @@ func TestOrgMCP_BuildTurnMCP(t *testing.T) {
 		})
 
 		Convey("org 开关 OFF → nil", func() {
-			So(s.BuildTurnMCP(context.Background(), orgDisabledAgent(7), 99), ShouldBeNil)
+			So(s.BuildTurnMCP(context.Background(), orgDisabledAgent(7), 99, 0), ShouldBeNil)
 		})
 
 		Convey("agent 为 nil → nil", func() {
-			So(s.BuildTurnMCP(context.Background(), nil, 99), ShouldBeNil)
+			So(s.BuildTurnMCP(context.Background(), nil, 99, 0), ShouldBeNil)
 		})
 	})
 
 	Convey("gatewayBaseURL 未配置 → nil(即使开关 ON)", t, func() {
 		s := newTestSvc(nil, nil) // 没 SetGatewayBaseURL
-		So(s.BuildTurnMCP(context.Background(), orgEnabledAgent(7), 99), ShouldBeNil)
+		So(s.BuildTurnMCP(context.Background(), orgEnabledAgent(7), 99, 0), ShouldBeNil)
 	})
 }
