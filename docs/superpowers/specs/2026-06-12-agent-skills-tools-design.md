@@ -190,11 +190,19 @@ type CatalogItem = {
 - 门控：`useBackendCapabilities(backendId).has("skills")` → 技能区或门控说明；工具区沿用 `CapMCPTools`。
 - 文案 i18n：弹窗/区块/来源徽标进 `common.json`；pack name/description/skills 来自后端（动态，不进 `t()`）；工具沿用既有 `org.agent.tools.*`。
 
-## 5. per-agent 隔离证据 + caveat（实现须知）
+## 5. per-agent 独立怎么成立 + caveat（实现须知）
 
-- claudecode 子进程 LRU 按 `sessionKey(req.SessionID)` 缓存（`runtime.go:83,426`）；一 session = 一 agent；群成员各自 `BackingSessionID`（`scheduler.go:305-330`）→ 每 agent 独立子进程。
-- `--settings`/`--mcp-config` 在 `ccBuildClientOpts`（`session.go:246-250`）spawn 时下发 → 每 agent 子进程拿自己的 `enabledPlugins`。与已上线的 org 工具（per-agent `MCPServers`→`--mcp-config`）**同模式，已验证**。
-- **caveat**：cache-hit 复用不重下发（`runtime.go:448-453`）→ 改授权下次 spawn 生效。无 per-call gateway，纯 launch-time。
+同后端的多个 agent 共用**一份** `~/.claude/` 安装与 `settings.json`，但 agentre **从不改那个共享文件**——而是在**每次 spawn 子进程时**单独给它传一份 `--settings` 覆盖。两层分开：「装了什么」（目录）由共享安装决定；「该 agent 实际拿到什么」（授权）由它自己的 `enabledPlugins` 覆盖决定。
+
+- 一 chat-session = 一 claude 子进程（LRU 按 `sessionKey(req.SessionID)`，`runtime.go:83,426`）；群成员各自 `BackingSessionID`（`scheduler.go:305-330`）→ **每 agent 独立子进程**。
+- 注入**全量** `enabledPlugins` map（每个已装 plugin→是否授予，含 false）→ 该 agent 技能集**只由自己的覆盖决定**，与用户全局 `settings.json` 开了什么无关。
+- 并发互不干扰示例（同后端两 agent 同时跑）：
+  ```
+  后端工程师 → claude … --settings '{"enabledPlugins":{"superpowers@…":true ,"frontend-design@…":false}}'
+  前端工程师 → claude … --settings '{"enabledPlugins":{"superpowers@…":false,"frontend-design@…":true }}'
+  ```
+- 与已上线 org 工具（per-agent `MCPServers`→`--mcp-config`，`session.go:246-250`）**同模式，已验证**（实测关 superpowers→14 skill 整包消失，§2）。
+- **caveat**：launch-time 生效，cache-hit 复用不重下发（`runtime.go:448-453`）→ 改授权**下次 spawn** 生效（新会话即时；活跃缓存会话下次重启）。无 per-call gateway，纯 launch-time。
 
 ## 6. 测试（严格 TDD，Red → Green → Refactor）
 

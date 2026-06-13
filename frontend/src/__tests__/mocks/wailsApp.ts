@@ -121,6 +121,9 @@ export const UploadAgentAvatar = windowBackedMock("UploadAgentAvatar", () =>
 export const DeleteAgentAvatar = windowBackedMock("DeleteAgentAvatar", () =>
   Promise.resolve({}),
 );
+export const ListAgentSkillPacks = windowBackedMock("ListAgentSkillPacks", () =>
+  Promise.resolve({ packs: [] }),
+);
 
 // Chat and project bindings
 export const ListChatAgents = windowBackedMock("ListChatAgents", () =>

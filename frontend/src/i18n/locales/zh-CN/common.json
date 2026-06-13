@@ -1795,18 +1795,52 @@
       "reportsTo": "汇报给",
       "savedAt": "已保存 · {{time}}",
       "skills": {
-        "empty": "暂无技能。可在 Update 时通过设置 skills 添加。",
-        "item": "技能 {{label}}",
-        "list": "技能列表",
+        "sectionTitle": "技能 · SKILL PACKS",
+        "enabledCount": "{{count}} 已启用",
+        "add": "添加技能",
+        "empty": "未授予技能包",
+        "personalNote": "始终可用 · 个人技能（~/.claude/skills）不可单独开关",
         "summary": "{{enabled}} 启用 · {{disabled}} 禁用",
-        "title": "技能 / 工具"
+        "title": "技能"
+      },
+      "skillsGate": {
+        "pill": "backend 不支持",
+        "title": "当前 backend 不支持技能",
+        "description": "技能是 Claude Code 原生能力 · 切换到 Claude Code 后端即可启用并配置"
+      },
+      "skillPicker": {
+        "title": "添加技能 · Skill Packs",
+        "subtitle": "一个包 = 一组 skill，按 agent 授权",
+        "searchPlaceholder": "搜索技能包 / 描述…",
+        "personalNote": "个人技能（~/.claude/skills）始终可用，CLI 不支持单独开关"
       },
       "tools": {
         "title": "工具",
+        "sectionTitle": "工具 · TOOLS",
+        "enabledCount": "{{count}} 已启用",
+        "add": "添加工具",
         "empty": "暂无可用工具",
-        "list": "工具开关",
+        "approval": "需审批",
         "names": { "org": "组织架构" },
         "descriptions": { "org": "允许该 Agent 查询并管理部门与成员（写操作需你审批）" }
+      },
+      "toolPicker": {
+        "title": "添加工具",
+        "subtitle": "工具调用经 MCP 注入 · 写操作需审批",
+        "searchPlaceholder": "搜索工具 / 描述…"
+      },
+      "skillCatalog": {
+        "group": {
+          "recommended": "推荐 · AGENTRE 精选",
+          "installed": "已安装 · 发现自此后端",
+          "available": "可安装 · MARKETPLACE"
+        },
+        "badge": {
+          "recommended": "推荐",
+          "installed": "已装",
+          "needInstall": "需先安装"
+        },
+        "needInstall": "需先安装"
       },
       "systemPrompt": "系统提示词",
       "systemPromptHint": "风格 / 语气 / 边界都写进 system prompt — 不另设字段。",
@@ -2305,5 +2339,17 @@
     "badge": "建设中",
     "planning": "规划中",
     "progressLabel": "设计进度"
+  },
+  "capability": {
+    "picker": {
+      "rescan": "重新扫描",
+      "done": "完成",
+      "loading": "加载中…",
+      "empty": "暂无可用项",
+      "searchEmpty": "无匹配项",
+      "selected": "已选 {{count}} 项 · 保存后下次起新会话生效",
+      "remove": "移除 {{name}}",
+      "close": "关闭"
+    }
   }
 }

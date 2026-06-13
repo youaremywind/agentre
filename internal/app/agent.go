@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/agentre-ai/agentre/internal/service/agent_svc"
+	"github.com/agentre-ai/agentre/internal/service/skill_svc"
 )
 
 // CreateAgent 新建 Agent。
@@ -37,4 +38,9 @@ func (a *App) DeleteAgentAvatar(req *agent_svc.DeleteAvatarRequest) (*agent_svc.
 // SetAgentPinned 置顶/取消置顶某 Agent（侧栏混排列表浮顶）。
 func (a *App) SetAgentPinned(req *agent_svc.SetPinnedRequest) (*agent_svc.SetPinnedResponse, error) {
 	return agent_svc.Agent().SetPinned(a.ctx, req)
+}
+
+// ListAgentSkillPacks 返回某 agent 可见的技能包目录(推荐 + 发现 + 已授权)。
+func (a *App) ListAgentSkillPacks(agentID int64, refresh bool) (skill_svc.SkillCatalogDTO, error) {
+	return skill_svc.Default().ListAgentSkillPacks(a.ctx, agentID, refresh)
 }

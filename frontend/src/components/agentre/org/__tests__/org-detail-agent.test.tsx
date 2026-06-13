@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OrgDetailAgent } from "../org-detail-agent";
 import type { OrgAgent, OrgDepartment } from "../types";
@@ -22,8 +22,8 @@ const agent = (overrides: Partial<OrgAgent> = {}): OrgAgent =>
     sortOrder: 1,
     prompt: ["你是 Eva。", "负责工程。"],
     skills: [
-      { label: "read_file", enabled: true },
-      { label: "write_file", enabled: false },
+      { id: "superpowers@m", enabled: true },
+      { id: "frontend-design@m", enabled: true },
     ],
     createtime: 0,
     updatetime: 0,
@@ -97,6 +97,33 @@ function renderPanel(
   );
   return { onUpdate, onDelete, onUploadAvatar, onDeleteAvatar };
 }
+
+function withCaps(caps: string[]) {
+  // 面板渲染即调 GetBackendCapabilities（经 useBackendCapabilities）。
+  // 该 binding 走真实 wailsjs App.js（读 window.go.app.App.*），故测试
+  // 把返回挂到 window.go 上覆盖默认空能力（与 chat-panel 等既有模式一致）。
+  window.go = {
+    app: {
+      App: {
+        GetBackendCapabilities: vi.fn().mockResolvedValue({
+          capabilities: caps,
+          permissionModeMeta: null,
+        }),
+        ListAgentSkillPacks: vi.fn().mockResolvedValue({ packs: [] }),
+      },
+    },
+  };
+}
+
+beforeEach(() => {
+  // 默认空能力 + 空技能目录，保证未显式 withCaps 的面板测试也能渲染
+  // （否则真实 App.js 在 window.go 缺失时抛 Cannot read 'app'）。
+  withCaps([]);
+});
+
+afterEach(() => {
+  delete window.go;
+});
 
 describe("OrgDetailAgent", () => {
   it("does not render role or initials inputs", () => {
@@ -223,31 +250,61 @@ describe("OrgDetailAgent", () => {
     expect(onUploadAvatar).not.toHaveBeenCalled();
   });
 
-  it("toggles skill enabled state and updates counter", async () => {
-    const user = userEvent.setup();
-    renderPanel();
-    expect(screen.getByText(/1 enabled · 1 disabled/)).toBeInTheDocument();
-    await user.click(screen.getByRole("switch", { name: /write_file/ }));
-    expect(screen.getByText(/2 enabled · 0 disabled/)).toBeInTheDocument();
+  it("shows the skills section for a claudecode backend (CapSkills)", async () => {
+    withCaps(["skills", "mcp_tools"]);
+    renderPanel({ agentBackendId: 5 }, [
+      backend({ id: 5, type: "claudecode" }),
+    ]);
+    expect(await screen.findByText("Skills · Skill Packs")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add Skill" }),
+    ).toBeInTheDocument();
   });
 
-  it("renders Tools section with org switch in off state when agent.tools is empty", () => {
-    renderPanel({ tools: [] }, [], ["org"]);
-    // The "Tools" section heading (exact match, not the "Skills / Tools" heading)
-    const headings = screen.getAllByRole("heading", { name: /Tools/i });
-    const toolsHeading = headings.find(
-      (h) => h.textContent?.trim() === "Tools",
+  it("shows the gating box for a non-claudecode backend", async () => {
+    withCaps(["mcp_tools"]); // codex: no skills cap
+    renderPanel({ agentBackendId: 6 }, [backend({ id: 6, type: "codex" })]);
+    expect(
+      await screen.findByText("This backend doesn't support skills"),
+    ).toBeInTheDocument();
+  });
+
+  it("granted skill chips render derived names from pack ids", async () => {
+    withCaps(["skills", "mcp_tools"]);
+    renderPanel({ agentBackendId: 5 }, [
+      backend({ id: 5, type: "claudecode" }),
+    ]);
+    expect(await screen.findByText("superpowers")).toBeInTheDocument();
+    expect(screen.getByText("frontend-design")).toBeInTheDocument();
+  });
+
+  it("renders the Tools section heading + Add Tool button (no switch)", async () => {
+    withCaps(["skills", "mcp_tools"]);
+    renderPanel(
+      { tools: [], agentBackendId: 5 },
+      [backend({ id: 5, type: "claudecode" })],
+      ["org"],
     );
-    expect(toolsHeading).toBeInTheDocument();
-    const orgSwitch = screen.getByRole("switch", { name: /Org Structure/i });
-    expect(orgSwitch).toBeInTheDocument();
-    expect(orgSwitch).toHaveAttribute("aria-checked", "false");
+    expect(await screen.findByText("Tools · TOOLS")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add Tool" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /Org Structure/i })).toBeNull();
   });
 
-  it("saves tools with org enabled after toggling the org switch", async () => {
+  it("grants the org tool via the tool picker and saves it", async () => {
+    withCaps(["skills", "mcp_tools"]);
     const user = userEvent.setup();
-    const { onUpdate } = renderPanel({ tools: [] }, [], ["org"]);
-    await user.click(screen.getByRole("switch", { name: /Org Structure/i }));
+    const { onUpdate } = renderPanel(
+      { tools: [], agentBackendId: 5 },
+      [backend({ id: 5, type: "claudecode" })],
+      ["org"],
+    );
+    await user.click(await screen.findByRole("button", { name: "Add Tool" }));
+    await user.click(
+      await screen.findByRole("checkbox", { name: "Org Structure" }),
+    );
+    await user.click(screen.getByText("Done"));
     const saveBtn = screen
       .getAllByRole("button")
       .find((b) => b.textContent?.trim() === "Save");
@@ -263,9 +320,14 @@ describe("OrgDetailAgent", () => {
     );
   });
 
-  it("renders org switch in on state when agent.tools has org enabled", () => {
-    renderPanel({ tools: [{ key: "org", enabled: true }] }, [], ["org"]);
-    const orgSwitch = screen.getByRole("switch", { name: /Org Structure/i });
-    expect(orgSwitch).toHaveAttribute("aria-checked", "true");
+  it("renders the Org Structure chip when the org tool is enabled", async () => {
+    withCaps(["skills", "mcp_tools"]);
+    renderPanel(
+      { tools: [{ key: "org", enabled: true }], agentBackendId: 5 },
+      [backend({ id: 5, type: "claudecode" })],
+      ["org"],
+    );
+    await screen.findByText("Tools · TOOLS");
+    expect(screen.getByText("Org Structure")).toBeInTheDocument();
   });
 });

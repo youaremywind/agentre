@@ -184,7 +184,7 @@ func (s *departmentSvc) Load(ctx context.Context, _ *LoadOrgRequest) (*LoadOrgRe
 func toAgentSkillDTO(items []agent_entity.AgentSkillItem) []AgentSkillDTO {
 	out := make([]AgentSkillDTO, 0, len(items))
 	for _, s := range items {
-		out = append(out, AgentSkillDTO{Label: s.Label, Enabled: s.Enabled})
+		out = append(out, AgentSkillDTO{ID: s.ID, Enabled: s.Enabled})
 	}
 	return out
 }

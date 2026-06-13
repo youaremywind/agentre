@@ -32,9 +32,9 @@ type BackendSummary struct {
 	LLMProviderActive bool   `json:"llmProviderActive"`
 }
 
-// AgentSkillDTO 与 agent_entity.AgentSkillItem 同结构，避免前端引用 entity 包。
+// AgentSkillDTO 与 agent_entity.AgentSkillItem 同结构(plugin id 开关)。
 type AgentSkillDTO struct {
-	Label   string `json:"label"`
+	ID      string `json:"id"`
 	Enabled bool   `json:"enabled"`
 }
 

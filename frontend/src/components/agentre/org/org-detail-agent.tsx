@@ -2,9 +2,12 @@ import * as React from "react";
 import type { TFunction } from "i18next";
 import {
   AlertTriangle,
+  Ban,
+  Boxes,
   CornerDownRight,
   History,
   Info,
+  Network,
   Trash2,
   Wrench,
   X,
@@ -40,11 +43,16 @@ import {
 } from "../types";
 import {
   agent_svc,
+  department_svc,
   type agent_backend_svc,
-  type department_svc,
 } from "../../../../wailsjs/go/models";
 
+import { useBackendCapabilities } from "../capability/use-backend-capabilities";
+import { CapabilityPicker } from "../capability/capability-picker";
+import { GrantedChips, type GrantedChip } from "../capability/granted-chips";
 import { resolveReportTo } from "./reporting";
+import { toolKeysToCatalog } from "./tool-catalog";
+import { useSkillCatalog } from "./use-skill-catalog";
 import { safeAgentColor, type OrgAgent, type OrgDepartment } from "./types";
 
 type Props = {
@@ -125,6 +133,10 @@ export function OrgDetailAgent(props: Props) {
     props.backends.find((b) => b.id === backendId) ??
     (props.agent.backend?.id === backendId ? props.agent.backend : undefined);
 
+  const { caps } = useBackendCapabilities(selectedBackend?.type);
+  const skillCatalog = useSkillCatalog(props.agent.id);
+  const [skillPickerOpen, setSkillPickerOpen] = React.useState(false);
+
   const handleSave = async () => {
     await props.onUpdate(
       agent_svc.UpdateAgentRequest.createFrom({
@@ -160,20 +172,66 @@ export function OrgDetailAgent(props: Props) {
     setDeletePromptOpen(false);
   };
 
-  const toggleSkill = (label: string) => {
-    setSkills((prev) =>
-      prev.map((s) => (s.label === label ? { ...s, enabled: !s.enabled } : s)),
-    );
-  };
-
-  const toggleTool = (key: string) => {
+  const [toolPickerOpen, setToolPickerOpen] = React.useState(false);
+  const toolChips: GrantedChip[] = tools
+    .filter((tl) => tl.enabled)
+    .map((tl) => ({
+      id: tl.key,
+      label: t(`org.agent.tools.names.${tl.key}`),
+      badge: tl.key === "org" ? t("org.agent.tools.approval") : undefined,
+    }));
+  const toolItems = toolKeysToCatalog(props.availableTools ?? [], tools, t);
+  const toggleToolGrant = (key: string) =>
     setTools((prev) =>
-      prev.map((t) => (t.key === key ? { ...t, enabled: !t.enabled } : t)),
+      prev.map((tl) => (tl.key === key ? { ...tl, enabled: !tl.enabled } : tl)),
     );
-  };
+  const removeTool = (key: string) =>
+    setTools((prev) =>
+      prev.map((tl) => (tl.key === key ? { ...tl, enabled: false } : tl)),
+    );
 
-  const enabledCount = skills.filter((s) => s.enabled).length;
-  const disabledCount = skills.length - enabledCount;
+  // 已授予芯片：label 由 id 派生(strip @marketplace)，count 来自已拉过的目录缓存。
+  const idToName = (id: string) => id.split("@")[0] || id;
+  const skillCountById = React.useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of skillCatalog.items) m.set(it.id, it.contents?.length ?? 0);
+    return m;
+  }, [skillCatalog.items]);
+  const skillChips: GrantedChip[] = skills
+    .filter((s) => s.enabled)
+    .map((s) => ({
+      id: s.id,
+      label: idToName(s.id),
+      count: skillCountById.get(s.id),
+    }));
+
+  // 弹窗 items：目录 overlay 本地选择态(本地优先于后端 enabled)
+  const localEnabled = React.useMemo(
+    () => new Set(skills.filter((s) => s.enabled).map((s) => s.id)),
+    [skills],
+  );
+  const pickerItems = skillCatalog.items.map((it) => ({
+    ...it,
+    enabled: localEnabled.has(it.id),
+  }));
+
+  const openSkillPicker = () => {
+    setSkillPickerOpen(true);
+    if (!skillCatalog.fetched) void skillCatalog.load(false);
+  };
+  const toggleSkillGrant = (id: string) => {
+    setSkills((prev) => {
+      const idx = prev.findIndex((s) => s.id === id);
+      if (idx >= 0) return prev.filter((s) => s.id !== id); // 取消授予 = 移除
+      return [
+        ...prev,
+        department_svc.AgentSkillDTO.createFrom({ id, enabled: true }),
+      ];
+    });
+  };
+  const removeSkill = (id: string) =>
+    setSkills((prev) => prev.filter((s) => s.id !== id));
+
   const promptCharCount = prompt.replace(/\s/g, "").length;
 
   return (
@@ -413,87 +471,92 @@ export function OrgDetailAgent(props: Props) {
         </section>
 
         <section className="space-y-2.5" data-slot="agent-section-skills">
-          <div className="flex items-center justify-between">
-            <h3 className="font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("org.agent.skills.title")}
-            </h3>
-            <span className="font-mono text-2xs text-muted-foreground">
-              {t("org.agent.skills.summary", {
-                disabled: disabledCount,
-                enabled: enabledCount,
-              })}
-            </span>
-          </div>
-          {skills.length === 0 ? (
-            <p className="text-2xs text-muted-foreground">
-              {t("org.agent.skills.empty")}
-            </p>
+          {caps?.has("skills") ? (
+            <>
+              <GrantedChips
+                title={t("org.agent.skills.sectionTitle")}
+                countLabel={t("org.agent.skills.enabledCount", {
+                  count: skillChips.length,
+                })}
+                chipIcon={Boxes}
+                chips={skillChips}
+                addLabel={t("org.agent.skills.add")}
+                removeLabel={(name) => t("capability.picker.remove", { name })}
+                onRemove={removeSkill}
+                onAdd={openSkillPicker}
+                emptyLabel={t("org.agent.skills.empty")}
+                footerNote={t("org.agent.skills.personalNote")}
+              />
+              <CapabilityPicker
+                open={skillPickerOpen}
+                title={t("org.agent.skillPicker.title")}
+                subtitle={t("org.agent.skillPicker.subtitle")}
+                searchPlaceholder={t("org.agent.skillPicker.searchPlaceholder")}
+                items={pickerItems}
+                loading={skillCatalog.loading}
+                footerNote={t("org.agent.skillPicker.personalNote")}
+                onToggle={toggleSkillGrant}
+                onConfirm={() => setSkillPickerOpen(false)}
+                onCancel={() => setSkillPickerOpen(false)}
+                onRescan={() => void skillCatalog.load(true)}
+              />
+            </>
           ) : (
-            <div
-              className="flex flex-wrap gap-1.5"
-              role="group"
-              aria-label={t("org.agent.skills.list")}
-            >
-              {skills.map((s) => (
-                <button
-                  key={s.label}
-                  type="button"
-                  role="switch"
-                  aria-checked={s.enabled}
-                  aria-label={t("org.agent.skills.item", { label: s.label })}
-                  onClick={() => toggleSkill(s.label)}
-                  className={cn(
-                    "rounded-sm border px-2 py-1 font-mono text-2xs transition-colors",
-                    s.enabled
-                      ? "border-status-running bg-status-running-bg text-status-running"
-                      : "border-destructive bg-destructive-soft text-destructive line-through",
-                  )}
-                >
-                  {s.label}
-                </button>
-              ))}
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <h3 className="font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("org.agent.skills.title")}
+                </h3>
+                <div className="flex-1" />
+                <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
+                  {t("org.agent.skillsGate.pill")}
+                </span>
+              </div>
+              <div className="flex items-start gap-2.5 rounded-md border border-border bg-secondary/30 px-3 py-2.5">
+                <Ban
+                  className="mt-0.5 size-3.5 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <div className="space-y-0.5">
+                  <p className="text-2xs font-semibold text-foreground">
+                    {t("org.agent.skillsGate.title")}
+                  </p>
+                  <p className="font-mono text-2xs text-muted-foreground">
+                    {t("org.agent.skillsGate.description")}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
         </section>
 
-        <section className="space-y-2.5" data-slot="agent-section-tools">
-          <div className="flex items-center justify-between">
-            <h3 className="font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("org.agent.tools.title")}
-            </h3>
-          </div>
-          {tools.length === 0 ? (
-            <p className="text-2xs text-muted-foreground">
-              {t("org.agent.tools.empty")}
-            </p>
-          ) : (
-            <div
-              className="flex flex-wrap gap-1.5"
-              role="group"
-              aria-label={t("org.agent.tools.list")}
-            >
-              {tools.map((tl) => (
-                <button
-                  key={tl.key}
-                  type="button"
-                  role="switch"
-                  aria-checked={tl.enabled}
-                  aria-label={t(`org.agent.tools.names.${tl.key}`)}
-                  title={t(`org.agent.tools.descriptions.${tl.key}`)}
-                  onClick={() => toggleTool(tl.key)}
-                  className={cn(
-                    "rounded-sm border px-2 py-1 font-mono text-2xs transition-colors",
-                    tl.enabled
-                      ? "border-status-running bg-status-running-bg text-status-running"
-                      : "border-destructive bg-destructive-soft text-destructive line-through",
-                  )}
-                >
-                  {t(`org.agent.tools.names.${tl.key}`)}
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
+        {caps?.has("mcp_tools") && (
+          <section className="space-y-2.5" data-slot="agent-section-tools">
+            <GrantedChips
+              title={t("org.agent.tools.sectionTitle")}
+              countLabel={t("org.agent.tools.enabledCount", {
+                count: toolChips.length,
+              })}
+              chipIcon={Network}
+              chips={toolChips}
+              addLabel={t("org.agent.tools.add")}
+              removeLabel={(name) => t("capability.picker.remove", { name })}
+              onRemove={removeTool}
+              onAdd={() => setToolPickerOpen(true)}
+              emptyLabel={t("org.agent.tools.empty")}
+            />
+            <CapabilityPicker
+              open={toolPickerOpen}
+              title={t("org.agent.toolPicker.title")}
+              subtitle={t("org.agent.toolPicker.subtitle")}
+              searchPlaceholder={t("org.agent.toolPicker.searchPlaceholder")}
+              items={toolItems}
+              onToggle={toggleToolGrant}
+              onConfirm={() => setToolPickerOpen(false)}
+              onCancel={() => setToolPickerOpen(false)}
+            />
+          </section>
+        )}
       </div>
 
       <footer className="flex items-center gap-2 border-t border-border bg-secondary/40 px-5 py-3">

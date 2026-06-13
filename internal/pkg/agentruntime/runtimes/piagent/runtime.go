@@ -261,12 +261,50 @@ func drainStream(ctx context.Context, req agentruntime.RunRequest, cwd string, s
 	}
 	if stopErr != nil {
 		result.StopErr = stopErr
+		logPiFailureDiagnostics(ctx, req, cwd, s)
 		logger.Ctx(ctx).Warn("piagent runtime: turn failed", piTurnLogFields(req, cwd, result, stopErr)...)
 		out <- agentruntime.ErrorEvent{Err: stopErr}
 		return
 	}
 	logger.Ctx(ctx).Info("piagent runtime: turn done", piTurnLogFields(req, cwd, result, nil)...)
 	out <- agentruntime.Done{}
+}
+
+type diagnosticsStream interface {
+	Diagnostics() pkgpi.StreamDiagnostics
+}
+
+func logPiFailureDiagnostics(ctx context.Context, req agentruntime.RunRequest, cwd string, s stream) {
+	ds, ok := s.(diagnosticsStream)
+	if !ok {
+		return
+	}
+	d := ds.Diagnostics()
+	if d.FinalErrorFrame == "" && d.StderrTail == "" {
+		return
+	}
+	fields := []zap.Field{
+		zap.Int64("sessionID", req.SessionID),
+		zap.Int64("agentID", req.AgentID),
+		zap.String("cwd", cwd),
+		zap.Bool("compact", req.Compact),
+	}
+	if d.FinalErrorEventType != "" {
+		fields = append(fields, zap.String("piEventType", d.FinalErrorEventType))
+	}
+	if d.FinalErrorStopReason != "" {
+		fields = append(fields, zap.String("piStopReason", d.FinalErrorStopReason))
+	}
+	if d.FinalErrorMessage != "" {
+		fields = append(fields, zap.String("piErrorMessage", d.FinalErrorMessage))
+	}
+	if d.FinalErrorFrame != "" {
+		fields = append(fields, zap.String("piFinalErrorFrame", d.FinalErrorFrame))
+	}
+	if d.StderrTail != "" {
+		fields = append(fields, zap.String("piStderrTail", d.StderrTail))
+	}
+	logger.Ctx(ctx).Debug("piagent runtime: turn failed diagnostics", fields...)
 }
 
 func piTurnLogFields(req agentruntime.RunRequest, cwd string, result *agentruntime.RunResult, err error) []zap.Field {

@@ -36,5 +36,6 @@ func migrationList() []*gormigrate.Migration {
 		migration202606100001(), // agent_backends.default_model
 		migration202606110001(), // agents.tools_json + CEO 默认开启 org
 		migration202606110002(), // group_tasks + workflows + task message columns
+		migration202606120001(), // agents.skills_json 重置为 plugin-id 语义
 	}
 }

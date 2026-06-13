@@ -105,6 +105,8 @@ func (r *Runtime) Capabilities() capability.Capabilities {
 			capability.CapMCPTools: true,
 			// CLI 在 run_in_background Bash 任务完成后自主跑续轮;实现 AutonomousTurnSource。
 			capability.CapAutonomousTurn: true,
+			// 接受 RunRequest.EnabledPlugins,spawn 时渲进 --settings 的 enabledPlugins。
+			capability.CapSkills: true,
 		},
 		PermissionModeMeta: capability.PermissionModeMeta{
 			AllowedModes:         []string{"default", "acceptEdits", "plan", "bypassPermissions"},
@@ -462,6 +464,7 @@ func (r *Runtime) acquireSession(ctx context.Context, req agentruntime.RunReques
 	if err != nil {
 		return nil, "", fmt.Errorf("agentruntime/runtimes/claudecode: build hook settings: %w", err)
 	}
+	settingsJSON = buildSkillsSettings(req.EnabledPlugins, settingsJSON)
 
 	pureResume := req.ProviderSessionID != "" && req.ForkAnchor == ""
 	var cliSessionUUID, inboxKey string

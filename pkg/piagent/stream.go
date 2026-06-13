@@ -14,11 +14,12 @@ type Stream struct {
 	killGrace time.Duration
 	events    chan Event
 
-	mu        sync.RWMutex
-	sessionID string
-	model     string
-	err       error
-	cur       Event
+	mu          sync.RWMutex
+	sessionID   string
+	model       string
+	err         error
+	diagnostics StreamDiagnostics
+	cur         Event
 
 	closeOnce sync.Once
 }
@@ -60,6 +61,16 @@ func (s *Stream) Err() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.err
+}
+
+func (s *Stream) Diagnostics() StreamDiagnostics {
+	s.mu.RLock()
+	out := s.diagnostics
+	s.mu.RUnlock()
+	if s.proc != nil && s.proc.stderr != nil {
+		out.StderrTail = tailString(strings.TrimSpace(s.proc.stderr.String()), diagnosticStderrTailLimit)
+	}
+	return out
 }
 
 func (s *Stream) Close(ctx context.Context) error {
@@ -126,6 +137,7 @@ func (s *Stream) drain(ctx context.Context) {
 		}
 		s.handleRPCEvent(ev)
 		if err := finalAgentEndError(ev); err != nil {
+			s.recordFinalErrorDiagnostics(ev, line)
 			s.setErr(err)
 			s.emit(Event{Kind: EventError, Err: err})
 			return
@@ -315,6 +327,28 @@ func (s *Stream) setErr(err error) {
 	if s.err == nil {
 		s.err = err
 	}
+}
+
+const diagnosticStderrTailLimit = 4 * 1024
+
+func (s *Stream) recordFinalErrorDiagnostics(ev rpcEvent, rawLine string) {
+	msg := lastAssistantFromAgentEnd(ev.Messages)
+	if msg == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.diagnostics.FinalErrorEventType = ev.Type
+	s.diagnostics.FinalErrorStopReason = strings.TrimSpace(msg.StopReason)
+	s.diagnostics.FinalErrorMessage = strings.TrimSpace(msg.ErrorMessage)
+	s.diagnostics.FinalErrorFrame = strings.TrimSpace(rawLine)
+}
+
+func tailString(s string, limit int) string {
+	if limit <= 0 || len(s) <= limit {
+		return s
+	}
+	return s[len(s)-limit:]
 }
 
 func toolResultText(raw json.RawMessage) string {

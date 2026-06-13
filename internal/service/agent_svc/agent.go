@@ -364,7 +364,7 @@ func (s *agentSvc) requireActiveBackend(ctx context.Context, id int64) error {
 func skillsFromDTO(items []department_svc.AgentSkillDTO) []agent_entity.AgentSkillItem {
 	out := make([]agent_entity.AgentSkillItem, 0, len(items))
 	for _, s := range items {
-		out = append(out, agent_entity.AgentSkillItem{Label: s.Label, Enabled: s.Enabled})
+		out = append(out, agent_entity.AgentSkillItem{ID: s.ID, Enabled: s.Enabled})
 	}
 	return out
 }
@@ -381,7 +381,7 @@ func toItem(a *agent_entity.Agent) *AgentItem {
 	rawSkills := a.GetSkills()
 	skills := make([]department_svc.AgentSkillDTO, 0, len(rawSkills))
 	for _, s := range rawSkills {
-		skills = append(skills, department_svc.AgentSkillDTO{Label: s.Label, Enabled: s.Enabled})
+		skills = append(skills, department_svc.AgentSkillDTO{ID: s.ID, Enabled: s.Enabled})
 	}
 	rawTools := a.GetTools()
 	tools := make([]department_svc.AgentToolDTO, 0, len(rawTools))

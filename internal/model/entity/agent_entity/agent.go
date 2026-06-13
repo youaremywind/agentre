@@ -15,9 +15,9 @@ import (
 // SystemBadgeDefault 标记不可删除的 CEO 助手。
 const SystemBadgeDefault = "DEFAULT"
 
-// AgentSkillItem Agent 技能开关。
+// AgentSkillItem Agent 技能包(= Claude Code plugin)开关。ID 形如 "name@marketplace"。
 type AgentSkillItem struct {
-	Label   string `json:"label"`
+	ID      string `json:"id"`
 	Enabled bool   `json:"enabled"`
 }
 
@@ -92,6 +92,27 @@ func (a *Agent) SetSkills(items []AgentSkillItem) {
 	}
 	b, _ := json.Marshal(items)
 	a.SkillsJSON = string(b)
+}
+
+// GetEnabledPackIDs 返回 enabled 的技能包 id。
+func (a *Agent) GetEnabledPackIDs() []string {
+	out := []string{}
+	for _, it := range a.GetSkills() {
+		if it.Enabled {
+			out = append(out, it.ID)
+		}
+	}
+	return out
+}
+
+// SkillPackEnabled 报告某技能包是否开启。
+func (a *Agent) SkillPackEnabled(id string) bool {
+	for _, it := range a.GetSkills() {
+		if it.ID == id {
+			return it.Enabled
+		}
+	}
+	return false
 }
 
 func (a *Agent) GetTools() []AgentToolItem {

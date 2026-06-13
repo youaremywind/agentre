@@ -300,6 +300,11 @@ type RunRequest struct {
 	// 的 runtime(claudecode)消费; 其它 runtime 忽略。群聊经此注入 group_send tool。
 	MCPServers []MCPServerSpec
 
+	// EnabledPlugins 非空 = 给本轮 claude 注入 enabledPlugins 覆盖(全量已安装
+	// plugin → 是否授予;为约束到子集须含 false 项)。仅声明 CapSkills 的 runtime
+	// (claudecode)消费,spawn 时渲进 --settings;其它 runtime 忽略。
+	EnabledPlugins map[string]bool
+
 	// ForkAnchor 非空时 = "重新生成"路径：runner 应当把 provider 会话从 ForkAnchor
 	// 之后的所有内容丢弃，再以 UserText 重发一次。
 	//

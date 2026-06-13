@@ -2434,6 +2434,7 @@ func (s *chatSvc) runTurn(
 		Compact:           compact,
 		ForkAnchor:        forkAnchor,
 		MCPServers:        appendTurnMCP(ctx, extras.mcpServers, a, sess.ID, sess.GroupID, runner.Capabilities().Has(capability.CapMCPTools)),
+		EnabledPlugins:    enabledPluginsForTurn(ctx, a, runner.Capabilities().Has(capability.CapSkills)),
 	}
 	if userMsg != nil {
 		req.UserText = textOfMessage(userMsg)

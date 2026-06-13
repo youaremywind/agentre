@@ -48,6 +48,9 @@ func TestClaudeCodeCapabilities(t *testing.T) {
 		So(caps.Has(capability.CapMCPTools), ShouldBeTrue)
 		// CapAutonomousTurn=true:CLI 后台任务完成自主续轮;必须实现 AutonomousTurnSource。
 		So(caps.Has(capability.CapAutonomousTurn), ShouldBeTrue)
+		// CapSkills=true:runtime 接受 RunRequest.EnabledPlugins,spawn 时渲进
+		// --settings 的 enabledPlugins,按 agent 注入技能包开关。
+		So(caps.Has(capability.CapSkills), ShouldBeTrue)
 		_, ok := agentruntime.Runtime(r).(agentruntime.AutonomousTurnSource)
 		So(ok, ShouldBeTrue)
 	})

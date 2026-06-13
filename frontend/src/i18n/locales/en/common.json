@@ -1795,18 +1795,52 @@
       "reportsTo": "Reports to",
       "savedAt": "Saved · {{time}}",
       "skills": {
-        "empty": "No skills yet. Add skills through Update settings.",
-        "item": "Skill {{label}}",
-        "list": "Skill list",
+        "sectionTitle": "Skills · Skill Packs",
+        "enabledCount": "{{count}} enabled",
+        "add": "Add Skill",
+        "empty": "No skill packs granted",
+        "personalNote": "Always available · personal skills (~/.claude/skills) can't be toggled individually",
         "summary": "{{enabled}} enabled · {{disabled}} disabled",
-        "title": "Skills / Tools"
+        "title": "Skills"
+      },
+      "skillsGate": {
+        "pill": "Unsupported",
+        "title": "This backend doesn't support skills",
+        "description": "Skills are a Claude Code native capability. Switch to a Claude Code backend to enable and configure them."
+      },
+      "skillPicker": {
+        "title": "Add Skills · Skill Packs",
+        "subtitle": "One pack = a set of skills, granted per agent",
+        "searchPlaceholder": "Search skill packs / descriptions…",
+        "personalNote": "Personal skills (~/.claude/skills) are always available; the CLI can't toggle them individually"
       },
       "tools": {
         "title": "Tools",
+        "sectionTitle": "Tools · TOOLS",
+        "enabledCount": "{{count}} enabled",
+        "add": "Add Tool",
         "empty": "No tools available",
-        "list": "Tool toggles",
+        "approval": "Approval",
         "names": { "org": "Org Structure" },
         "descriptions": { "org": "Allow this agent to read and manage departments and members (writes require your approval)" }
+      },
+      "toolPicker": {
+        "title": "Add Tools",
+        "subtitle": "Tool calls are injected over MCP; writes need approval",
+        "searchPlaceholder": "Search tools / descriptions…"
+      },
+      "skillCatalog": {
+        "group": {
+          "recommended": "Recommended · Agentre picks",
+          "installed": "Installed · discovered on this backend",
+          "available": "Available · Marketplace"
+        },
+        "badge": {
+          "recommended": "Recommended",
+          "installed": "Installed",
+          "needInstall": "Install first"
+        },
+        "needInstall": "Install first"
       },
       "systemPrompt": "System Prompt",
       "systemPromptHint": "Put style, tone, and boundaries in the system prompt. No separate fields are used.",
@@ -2305,5 +2339,17 @@
     "badge": "Under construction",
     "planning": "Planning",
     "progressLabel": "Design progress"
+  },
+  "capability": {
+    "picker": {
+      "rescan": "Rescan",
+      "done": "Done",
+      "loading": "Loading…",
+      "empty": "Nothing available",
+      "searchEmpty": "No matches",
+      "selected": "{{count}} selected · applies on the agent's next new session after save",
+      "remove": "Remove {{name}}",
+      "close": "Close"
+    }
   }
 }

@@ -111,3 +111,47 @@ func TestStreamEmitsErrorFromFinalAgentEnd(t *testing.T) {
 	assert.False(t, done, "error terminal agent_end must not be reported as a clean done")
 	assert.EqualError(t, s.Err(), "piagent: terminated")
 }
+
+func TestStreamDiagnosticsIncludeFinalErrorFrameAndStderrTail(t *testing.T) {
+	finalFrame := `{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":""}],"stopReason":"error","errorMessage":"terminated","model":"gpt-5.5(xhigh)"}]}`
+	script := strings.Join([]string{
+		`{"type":"response","command":"prompt","success":true}`,
+		finalFrame,
+		"",
+	}, "\n")
+	client, proc := newCaptureClient(script)
+	proc.stderr = strings.NewReader("first stderr line\nlast stderr line\n")
+
+	s, err := client.Stream(context.Background(), "research pi rpc")
+	require.NoError(t, err)
+
+	for s.Next() {
+	}
+
+	d := s.Diagnostics()
+	assert.Equal(t, "agent_end", d.FinalErrorEventType)
+	assert.Equal(t, "error", d.FinalErrorStopReason)
+	assert.Equal(t, "terminated", d.FinalErrorMessage)
+	assert.JSONEq(t, finalFrame, d.FinalErrorFrame)
+	assert.Equal(t, "first stderr line\nlast stderr line", d.StderrTail)
+}
+
+func TestStreamDiagnosticsTruncateLongStderrTail(t *testing.T) {
+	script := strings.Join([]string{
+		`{"type":"response","command":"prompt","success":true}`,
+		`{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","errorMessage":"terminated"}]}`,
+		"",
+	}, "\n")
+	client, proc := newCaptureClient(script)
+	proc.stderr = strings.NewReader(strings.Repeat("a", diagnosticStderrTailLimit+16))
+
+	s, err := client.Stream(context.Background(), "research pi rpc")
+	require.NoError(t, err)
+
+	for s.Next() {
+	}
+
+	d := s.Diagnostics()
+	assert.Len(t, d.StderrTail, diagnosticStderrTailLimit)
+	assert.Equal(t, strings.Repeat("a", diagnosticStderrTailLimit), d.StderrTail)
+}

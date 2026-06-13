@@ -8,9 +8,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
 	"github.com/agentre-ai/agentre/internal/model/entity/app_setting_entity"
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/claudecode"
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/piagent"
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentskill/claudeskill" // 触发 discoverer init 注册
 	"github.com/agentre-ai/agentre/internal/pkg/httpgateway"
 	"github.com/agentre-ai/agentre/internal/pkg/paths"
 	"github.com/agentre-ai/agentre/internal/pkg/sysnotify"
@@ -34,6 +36,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/service/notification_svc"
 	"github.com/agentre-ai/agentre/internal/service/orgtool_svc"
 	"github.com/agentre-ai/agentre/internal/service/project_svc"
+	"github.com/agentre-ai/agentre/internal/service/skill_svc"
 	"github.com/agentre-ai/agentre/migrations"
 
 	"github.com/cago-frame/cago"
@@ -161,6 +164,17 @@ func Init(ctx context.Context) (*Runtime, error) {
 	chat_svc.RegisterTurnMCPProvider(orgtool_svc.Default().BuildTurnMCP)
 	// group_create:单聊轮注入(群成员轮在 provider 内按 groupID 跳过)。
 	chat_svc.RegisterTurnMCPProvider(group_svc.Default().BuildCreateTurnMCP)
+
+	// 技能包(skill pack)注入:skill_svc 组合 agent 授权 + 发现,chat_svc 按 CapSkills
+	// 在 runTurn 注入 RunRequest.EnabledPlugins(claudecode 经 --settings 下发)。
+	skill_svc.Register(agent_repo.Agent(), agent_backend_repo.AgentBackend())
+	chat_svc.RegisterEnabledPluginsProvider(func(ctx context.Context, a *agent_entity.Agent) map[string]bool {
+		m, err := skill_svc.Default().EnabledPluginsMap(ctx, a.ID)
+		if err != nil {
+			return nil // 发现/查询失败 → 软降级(本轮不约束技能集),不阻断对话
+		}
+		return m
+	})
 
 	// 注入平台原生通知实现，供前端 App.ShowNotification 调用。
 	notification_svc.RegisterNotifier(sysnotify.New())

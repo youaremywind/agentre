@@ -651,3 +651,43 @@ repo unit tests always use `testutils.Database(t)` + sqlmock, **never start a re
 - [ ] The Prober has been registered in `proberRegistry`; the CLI-kind backend's env wiring is in `agentruntime/clienv.go` and shared with the chat path
 - [ ] Key flows are logged: `logger.Ctx(ctx)`, message uses the lowercase `package.Method:` prefix, fields use `zap.Xxx` (see [development.md](development.md) §logging)
 - [ ] `make check` (lint + test) all passes; the new package's service/repository layer coverage ≥80%
+
+---
+
+## 7. 技能包（Skill Pack / plugin）注入 —— `CapSkills`（**计划中（分支 `feature/agent-skills`），尚未落地**）
+
+> 状态：设计完成、Claude Code CLI 机制已实测；实现计划 `superpowers/plans/2026-06-12-agent-skills-pr1-backend.md`，设计 `superpowers/specs/2026-06-12-agent-skills-tools-design.md`。
+> **下列 `CapSkills` / `RunRequest.EnabledPlugins` / `internal/pkg/agentskill` / `skill_svc` 等尚未进代码**（`git grep` 找不到属正常）。落地后请把 §7.3 并入上面的 capability 矩阵、删掉「计划中」标记。
+>
+> 给 agent 按 **Claude Code plugin（skill-pack）** 粒度配技能，是与 `CapMCPTools` 同构的 launch-time 注入：per-agent 配置 → spawn 时 CLI flag → 每会话子进程独立。
+
+### 7.1 Claude Code CLI 控制机制（已实测，claude 2.1.174 —— 这部分是 CLI 客观事实）
+
+| 关注点 | 结论（命令 / 实验） |
+| --- | --- |
+| 发现已装包 | `claude plugin list --json` → `[{id:"name@marketplace", enabled, scope}]`；`--available --json` 加 marketplace 可装项；`claude plugin details <id>` 列包内 skill 名 + token 成本 |
+| per-session 真相 | `--output-format stream-json` 的 `system.init` 帧带 `skills[]` / `plugins[]`（runtime 已解析此帧）。plugin skill 命名 `superpowers:brainstorming`，个人裸 skill `cago` |
+| 开关控制 | `--settings '{"enabledPlugins":{"<id>":true/false}}'` 在 **launch 时**完整控制 plugin 及其 skills。实测：关 `superpowers@claude-plugins-official` → init 帧 `skills` 从 32 降到 18（其 14 个整包消失，且从 `plugins[]` 移除） |
+| 粒度边界 | 只能按 **plugin** 开关；**单个 skill 不可**（`<name>@skills-dir:false` 无效）；个人 `~/.claude/skills/*` 裸 skill 不受 `enabledPlugins` 控制；`--disable-slash-commands` = 关全部 |
+| 约束到子集 | `--settings` 是叠加（additional）。要让 agent 只有「授予的包」，须注入**全量** `enabledPlugins`（每个已装 plugin → 是否授予，含 false），覆盖用户全局开关 |
+
+### 7.2 per-agent 独立怎么成立（共享安装也不冲突）
+
+同后端的多 agent 共用一份 `~/.claude/` 安装与 `settings.json`，但 agentre **不改共享文件**，而是**每次 spawn 子进程时单独传 `--settings`**：
+
+- 一 chat-session = 一 claude 子进程（LRU 按 `sessionKey(SessionID)`，`runtimes/claudecode/runtime.go`）；群成员各自 `BackingSessionID`（`group_svc/scheduler.go`）。
+- 传**全量** `enabledPlugins` map → 该 agent 技能集只由自己的覆盖决定，与全局 `settings.json` 无关；同后端两 agent 可并发跑不同技能集。
+- 与已上线 org 工具（per-agent `MCPServers`→`--mcp-config`，`session.go` `ccBuildClientOpts`）**同模式**。
+- **caveat**：launch-time 生效，cache-hit 复用不重下发 → 改授权**下次 spawn** 生效（新会话即时；活跃缓存会话下次重启）。无 per-call gateway，纯 launch-time（对比 org 工具有 gateway 每次调用复检）。
+
+### 7.3 计划接入的接口（落地后并入 §0.5 矩阵）
+
+| 接缝 | 形态 |
+| --- | --- |
+| 能力 | `capability.CapSkills`（仅 claudecode 声明）；前端 `caps.has("skills")` 门控技能区 |
+| RunRequest | 增 `EnabledPlugins map[string]bool`（全量已装→是否授予）；仅 `CapSkills` runtime 消费，其它忽略（软降级，同 `MCPServers`/`CapMCPTools`） |
+| claudecode | 纯函数 `buildSkillsSettings(map, base) string` 把 `{"enabledPlugins":…}` 合进 `--settings`（喂现成的 `ccLaunchSpec.Settings`，当前保留未用） |
+| 目录域 | leaf `internal/pkg/agentskill`：`SkillPack` 类型 + `Recommended()` 静态精选 + `Discoverer` 按 backend 注册表（claudecode 实现 = 解析 `plugin list --json`，blank import 注册，仿 runtime/prober） |
+| 服务 | `skill_svc`：`ListAgentSkillPacks`（推荐+发现合并去重）/ `EnabledPluginsMap`（注入用）；保存复用 `agent_svc.Update`（`agents.skills_json` 存 `{id,enabled}`，id=plugin id） |
+| 注入点 | `chat_svc` `runTurn` 组 RunRequest 时按 `CapSkills` 填 `EnabledPlugins`（`turn_skills.go` 接缝，仿 `turn_mcp.go`） |
+| 远端 | 发现须在 claude 所在机器；远端 backend 经 daemon，v1 软降级（同 org-tool/group_send remote 限制） |
