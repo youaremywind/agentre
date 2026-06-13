@@ -69,17 +69,19 @@ export function useWorkflows() {
     [reload],
   );
 
-  // remove 与 create/update 不同:create/update 被编辑弹窗表单 catch 后内联展示,
-  // 所以保持抛出;remove 没有表单消费方,失败直接落 error 由页面列表区展示。
+  // remove 与 create/update 不同:create/update 被编辑表单 catch 后内联展示,所以保持抛出;
+  // remove 没有表单消费方,失败直接落 error 由列表区展示。返回 ok 布尔,让调用方据此
+  // 决定是否清选中/回浏览态(失败时保留选中,避免"看着删了其实没删"的错位)。
   const remove = useCallback(
-    async (id: number) => {
+    async (id: number): Promise<boolean> => {
       try {
         await WorkflowDelete({ id });
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : String(e));
-        return;
+        return false;
       }
       await reload();
+      return true;
     },
     [reload],
   );

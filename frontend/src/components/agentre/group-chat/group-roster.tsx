@@ -120,6 +120,7 @@ function GroupRoster({
       <div className="flex shrink-0 gap-1 border-b border-border p-2">
         <Button
           type="button"
+          data-testid="group-roster-members-tab"
           variant={tab === "members" ? "secondary" : "ghost"}
           size="sm"
           className="flex-1"
@@ -129,6 +130,7 @@ function GroupRoster({
         </Button>
         <Button
           type="button"
+          data-testid="group-roster-tasks-tab"
           variant={tab === "tasks" ? "secondary" : "ghost"}
           size="sm"
           className="flex-1"
@@ -146,6 +148,7 @@ function GroupRoster({
         </Button>
         <Button
           type="button"
+          data-testid="group-roster-settings-tab"
           variant={tab === "settings" ? "secondary" : "ghost"}
           size="sm"
           className="flex-1"

@@ -25,7 +25,7 @@ export { IssuesPage } from "./issues-page";
 export { OrgChartPage } from "./org-chart-page";
 export { ProjectsPage } from "./project-page";
 export { UnderConstructionPage } from "./under-construction-page";
-export { WorkflowsPage } from "./workflows/workflows-page";
+export { WorkflowManagerDialog } from "./workflows/workflow-manager-dialog";
 export {
   ApprovalGate,
   ChatComposer,

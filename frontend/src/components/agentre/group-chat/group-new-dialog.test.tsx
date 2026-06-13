@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useWorkflowManagerStore } from "@/stores/workflow-manager-store";
+
 import { GroupNewDialog } from "./group-new-dialog";
 
 const groupCreate = vi.fn();
@@ -55,6 +57,16 @@ vi.mock("@/stores/new-chat-context-store", () => ({
     selector: (s: { projectContext: null }) => unknown,
   ) => selector({ projectContext: null }),
 }));
+
+it("「管理流程」link 打开管理弹窗(openBrowse)", async () => {
+  workflowList.mockResolvedValue({ items: [] });
+  const user = userEvent.setup({ pointerEventsCheck: 0 });
+  useWorkflowManagerStore.setState({ open: false, intent: "browse" });
+  render(<GroupNewDialog open onOpenChange={() => {}} />);
+  await user.click(screen.getByTestId("group-manage-workflows"));
+  expect(useWorkflowManagerStore.getState().open).toBe(true);
+  expect(useWorkflowManagerStore.getState().intent).toBe("browse");
+});
 
 describe("GroupNewDialog", () => {
   beforeEach(() => {

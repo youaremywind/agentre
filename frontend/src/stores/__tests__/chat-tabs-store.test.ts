@@ -384,6 +384,7 @@ describe("chat-tabs-store · resolveNewTab", () => {
     const t = useChatTabsStore.getState().tabs[0];
     expect(t.id).toBe(tabId);
     expect(t.meta).toEqual({ kind: "session", sessionId: 99 });
+    expect(t.isPreview).toBe(false);
   });
 
   it("非 kind:'new' tab 是 noop", () => {

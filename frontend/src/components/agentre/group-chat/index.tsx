@@ -286,6 +286,7 @@ function GroupChat({ groupId }: { groupId: number }) {
                     type="button"
                     variant="outline"
                     size="sm"
+                    data-testid="group-pause-button"
                     onClick={() => runControl(GroupPause)}
                   >
                     <Pause data-icon="inline-start" aria-hidden="true" />
@@ -295,6 +296,7 @@ function GroupChat({ groupId }: { groupId: number }) {
                     type="button"
                     variant="outline"
                     size="sm"
+                    data-testid="group-stop-button"
                     onClick={() => runControl(GroupStop)}
                   >
                     <Square data-icon="inline-start" aria-hidden="true" />
@@ -307,6 +309,7 @@ function GroupChat({ groupId }: { groupId: number }) {
                   type="button"
                   variant="outline"
                   size="sm"
+                  data-testid="group-resume-button"
                   onClick={() => runControl(GroupResume)}
                 >
                   <Play data-icon="inline-start" aria-hidden="true" />

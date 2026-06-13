@@ -29,8 +29,31 @@ const ReplyPrefix = "e2e-fake-reply: "
 // e2e spec 用它驱动主持人轮确定性建卡(真实场景这是 LLM 的判断,fake 用文本模式顶替)。
 const TaskDirectivePrefix = "e2e-task:"
 
+// TaskOpenDirectivePrefix 触发只建 open 任务的用户指令:e2e-task-open:<assignee>:<title>。
+// fake 会在 brief 里写入 OpenTaskMarker,成员收到派活后不会自动 complete。
+const TaskOpenDirectivePrefix = "e2e-task-open:"
+
+// TaskParentDirectivePrefix 触发带 parentTaskId 的建卡指令:
+// e2e-task-parent:<assignee>:<title>:<parentTaskNo>。
+const TaskParentDirectivePrefix = "e2e-task-parent:"
+
 // TaskResultPrefix 是 fake 交付任务时 result 的前缀,DB oracle 据此锁定 fake 写入的行。
 const TaskResultPrefix = "e2e-fake-result: "
+
+// OpenTaskMarker 标记 create-only 任务,让成员 fake 收到派活抬头时保持 open。
+const OpenTaskMarker = "e2e-open-task"
+
+// TaskCompleteEmptyDirectivePrefix 触发空 result complete,用于 e2e 验证服务端软门。
+const TaskCompleteEmptyDirectivePrefix = "e2e-task-complete-empty:"
+
+// TaskCancelDirectivePrefix 触发取消任务:e2e-task-cancel:<taskNo>:<reason>。
+const TaskCancelDirectivePrefix = "e2e-task-cancel:"
+
+// GroupInviteDirectivePrefix 触发动态招募:e2e-group-invite:<agentName>:<reason>。
+const GroupInviteDirectivePrefix = "e2e-group-invite:"
+
+// SystemAssertDirectivePrefix 触发 system prompt 可观测断言:e2e-assert-system:<needle>。
+const SystemAssertDirectivePrefix = "e2e-assert-system:"
 
 // GroupCreateDirectivePrefix 触发单聊建群的用户指令:
 // e2e-group-create:<title>:<成员名逗号分隔>:<brief>。
@@ -66,6 +89,13 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		Model:             "e2e-fake-model",
 	}
 	reply := ReplyPrefix + req.UserText
+	if needle, ok := parseOnePartDirective(req.UserText, SystemAssertDirectivePrefix); ok {
+		if strings.Contains(req.SystemPrompt, needle) {
+			reply += "\ne2e-system-ok:" + needle
+		} else {
+			reply += "\ne2e-system-missing:" + needle
+		}
+	}
 	chunkDelay := configuredChunkDelay()
 	go func() {
 		defer close(out)
@@ -102,21 +132,51 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		// 任务接缝(spec §9):主持人收到 e2e-task 指令 → 建卡派活;成员收到派活抬头 → 交付。
 		// 与 group_send 一样尽力而为:失败只写 stderr,缺卡/缺交付由 e2e spec 显式抓红。
 		if spec, ok := findGroupToolServer(req.MCPServers, "group_task_create"); ok {
-			if assignee, title, found := parseTaskDirective(req.UserText); found {
-				if err := postToolCall(ctx, spec, "group_task_create", map[string]any{
-					"assignee": assignee, "title": title, "brief": "e2e-brief: " + title,
-				}); err != nil {
+			if task, found := parseTaskCreateDirective(req.UserText); found {
+				args := map[string]any{
+					"assignee": task.assignee,
+					"title":    task.title,
+					"brief":    task.brief,
+				}
+				if task.parentTaskNo > 0 {
+					args["parentTaskId"] = task.parentTaskNo
+				}
+				if err := postToolCall(ctx, spec, "group_task_create", args); err != nil {
 					fmt.Fprintf(os.Stderr, "fake: group_task_create failed: %v\n", err)
 				}
 			}
 		}
 		if spec, ok := findGroupToolServer(req.MCPServers, "group_task_complete"); ok {
-			if m := taskAssignedRe.FindStringSubmatch(req.UserText); m != nil {
+			if no, found := parseTaskCompleteEmptyDirective(req.UserText); found {
+				if err := postToolCall(ctx, spec, "group_task_complete", map[string]any{
+					"taskId": no, "result": "",
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "fake: group_task_complete failed: %v\n", err)
+				}
+			} else if m := taskAssignedRe.FindStringSubmatch(req.UserText); m != nil && !strings.Contains(req.UserText, OpenTaskMarker) {
 				no, _ := strconv.Atoi(m[1])
 				if err := postToolCall(ctx, spec, "group_task_complete", map[string]any{
 					"taskId": no, "result": TaskResultPrefix + "task #" + m[1],
 				}); err != nil {
 					fmt.Fprintf(os.Stderr, "fake: group_task_complete failed: %v\n", err)
+				}
+			}
+		}
+		if spec, ok := findGroupToolServer(req.MCPServers, "group_task_cancel"); ok {
+			if no, reason, found := parseTaskCancelDirective(req.UserText); found {
+				if err := postToolCall(ctx, spec, "group_task_cancel", map[string]any{
+					"taskId": no, "reason": reason,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "fake: group_task_cancel failed: %v\n", err)
+				}
+			}
+		}
+		if spec, ok := findGroupToolServer(req.MCPServers, "group_invite"); ok {
+			if name, reason, found := parseGroupInviteDirective(req.UserText); found {
+				if err := postToolCall(ctx, spec, "group_invite", map[string]any{
+					"agentNames": []string{name}, "reason": reason,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "fake: group_invite failed: %v\n", err)
 				}
 			}
 		}
@@ -139,6 +199,13 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		}
 	}()
 	return out, result, nil
+}
+
+type taskCreateDirective struct {
+	assignee     string
+	title        string
+	brief        string
+	parentTaskNo int
 }
 
 // findGroupToolServer 返回首个广告 tool 的注入 MCP server(无 → !ok)。
@@ -168,6 +235,81 @@ func parseTaskDirective(text string) (assignee, title string, ok bool) {
 		return "", "", false
 	}
 	return assignee, title, true
+}
+
+func parseTaskCreateDirective(text string) (taskCreateDirective, bool) {
+	if assignee, title, ok := parseTaskDirective(text); ok {
+		return taskCreateDirective{assignee: assignee, title: title, brief: "e2e-brief: " + title}, true
+	}
+	if assignee, title, ok := parseTwoPartDirective(text, TaskOpenDirectivePrefix); ok {
+		return taskCreateDirective{assignee: assignee, title: title, brief: OpenTaskMarker + ": " + title}, true
+	}
+	if assignee, rest, ok := parseTwoPartDirective(text, TaskParentDirectivePrefix); ok {
+		title, parentRaw, found := strings.Cut(rest, ":")
+		title, parentRaw = strings.TrimSpace(title), strings.TrimSpace(parentRaw)
+		parentNo, err := strconv.Atoi(parentRaw)
+		if found && title != "" && err == nil && parentNo > 0 {
+			return taskCreateDirective{assignee: assignee, title: title, brief: "e2e-brief: " + title, parentTaskNo: parentNo}, true
+		}
+	}
+	return taskCreateDirective{}, false
+}
+
+func parseTaskCompleteEmptyDirective(text string) (taskNo int, ok bool) {
+	raw, ok := parseOnePartDirective(text, TaskCompleteEmptyDirectivePrefix)
+	if !ok {
+		return 0, false
+	}
+	no, err := strconv.Atoi(raw)
+	if err != nil || no <= 0 {
+		return 0, false
+	}
+	return no, true
+}
+
+func parseTaskCancelDirective(text string) (taskNo int, reason string, ok bool) {
+	noRaw, reason, ok := parseTwoPartDirective(text, TaskCancelDirectivePrefix)
+	if !ok {
+		return 0, "", false
+	}
+	no, err := strconv.Atoi(noRaw)
+	if err != nil || no <= 0 {
+		return 0, "", false
+	}
+	return no, reason, true
+}
+
+func parseGroupInviteDirective(text string) (agentName, reason string, ok bool) {
+	return parseTwoPartDirective(text, GroupInviteDirectivePrefix)
+}
+
+func parseOnePartDirective(text, prefix string) (value string, ok bool) {
+	idx := strings.Index(text, prefix)
+	if idx < 0 {
+		return "", false
+	}
+	rest := text[idx+len(prefix):]
+	if i := strings.IndexByte(rest, '\n'); i >= 0 {
+		rest = rest[:i]
+	}
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return "", false
+	}
+	return rest, true
+}
+
+func parseTwoPartDirective(text, prefix string) (first, second string, ok bool) {
+	raw, ok := parseOnePartDirective(text, prefix)
+	if !ok {
+		return "", "", false
+	}
+	first, second, found := strings.Cut(raw, ":")
+	first, second = strings.TrimSpace(first), strings.TrimSpace(second)
+	if !found || first == "" || second == "" {
+		return "", "", false
+	}
+	return first, second, true
 }
 
 // parseGroupCreateDirective 解析建群指令(取指令所在行;三段冒号分隔,成员逗号分隔;

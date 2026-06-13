@@ -24,6 +24,7 @@ import { useProjectList } from "@/hooks/use-project-list";
 import { useChatTabsStore } from "@/stores/chat-tabs-store";
 import { useGroupListStore } from "@/stores/group-list-store";
 import { useNewChatContextStore } from "@/stores/new-chat-context-store";
+import { useWorkflowManagerStore } from "@/stores/workflow-manager-store";
 
 import { AgentMultiPicker, type PickableAgent } from "./agent-multi-picker";
 import { GroupCreate, WorkflowList } from "../../../../wailsjs/go/app/App";
@@ -64,6 +65,19 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  const loadWorkflows = React.useCallback(() => {
+    WorkflowList()
+      .then((resp) =>
+        setWorkflowOptions(
+          (resp?.items ?? []).map((i: { id: number; name: string }) => ({
+            id: i.id,
+            name: i.name,
+          })),
+        ),
+      )
+      .catch(() => setWorkflowOptions([]));
+  }, []);
+
   // 每次打开重置 + 预填当前项目上下文。
   React.useEffect(() => {
     if (open) {
@@ -73,18 +87,17 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
       setMemberIDs([]);
       setWorkflowID(0);
       setError(null);
-      WorkflowList()
-        .then((resp) =>
-          setWorkflowOptions(
-            (resp?.items ?? []).map((i: { id: number; name: string }) => ({
-              id: i.id,
-              name: i.name,
-            })),
-          ),
-        )
-        .catch(() => setWorkflowOptions([]));
+      loadWorkflows();
     }
-  }, [open, projectContext]);
+  }, [open, projectContext, loadWorkflows]);
+
+  // 管理弹窗关闭时刷新流程下拉（新建流程后可立即选中）。
+  const wfManagerOpen = useWorkflowManagerStore((s) => s.open);
+  const prevWfOpen = React.useRef(wfManagerOpen);
+  React.useEffect(() => {
+    if (prevWfOpen.current && !wfManagerOpen && open) loadWorkflows();
+    prevWfOpen.current = wfManagerOpen;
+  }, [wfManagerOpen, open, loadWorkflows]);
 
   const canSubmit = title.trim().length > 0 && hostID > 0 && !submitting;
 
@@ -124,6 +137,7 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
               <span className="ml-0.5 text-destructive">*</span>
             </span>
             <Input
+              data-testid="group-title-input"
               aria-label={t("group.new.groupTitle")}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -142,6 +156,7 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
               onValueChange={(v) => setHostID(Number(v))}
             >
               <SelectTrigger
+                data-testid="group-host-select"
                 aria-label={t("group.new.host")}
                 className="h-9 text-xs"
               >
@@ -169,6 +184,7 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
               onValueChange={(v) => setProjectID(Number(v))}
             >
               <SelectTrigger
+                data-testid="group-project-select"
                 aria-label={t("group.new.project")}
                 className="h-9 text-xs"
               >
@@ -186,14 +202,25 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
           </label>
 
           <label className="flex flex-col gap-1.5 text-xs">
-            <span className="font-medium text-foreground">
-              {t("group.new.workflow")}
+            <span className="flex items-center justify-between font-medium text-foreground">
+              <span>{t("group.new.workflow")}</span>
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                data-testid="group-manage-workflows"
+                className="h-auto p-0 text-2xs"
+                onClick={() => useWorkflowManagerStore.getState().openBrowse()}
+              >
+                {t("group.new.manageWorkflows")}
+              </Button>
             </span>
             <Select
               value={String(workflowID)}
               onValueChange={(v) => setWorkflowID(Number(v))}
             >
               <SelectTrigger
+                data-testid="group-workflow-select"
                 aria-label={t("group.new.workflow")}
                 className="h-9 text-xs"
               >
@@ -246,6 +273,7 @@ function GroupNewDialog({ open, onOpenChange }: GroupNewDialogProps) {
           <Button
             type="button"
             disabled={!canSubmit}
+            data-testid="group-create-submit"
             onClick={() => void submit()}
           >
             {submitting ? (

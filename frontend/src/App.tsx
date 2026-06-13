@@ -17,7 +17,6 @@ import buildingCommunityIcon from "@iconify-icons/tabler/building-community";
 import layoutKanbanIcon from "@iconify-icons/tabler/layout-kanban";
 import messageCircleIcon from "@iconify-icons/tabler/message-circle";
 import settingsIcon from "@iconify-icons/tabler/settings";
-import routeIcon from "@iconify-icons/tabler/route-2";
 import webhookIcon from "@iconify-icons/tabler/webhook";
 
 import {
@@ -34,7 +33,7 @@ import {
   IssuesPage,
   OrgChartPage,
   PaletteScopeBridge,
-  WorkflowsPage,
+  WorkflowManagerDialog,
   ProjectsPage,
   QuitConfirmDialog,
   ShortcutsProvider,
@@ -92,11 +91,6 @@ const navItems: NavItem[] = [
     icon: buildingCommunityIcon,
   },
   {
-    path: "/workflows",
-    labelKey: "nav.workflows",
-    icon: routeIcon,
-  },
-  {
     path: "/hooks",
     labelKey: "nav.hooks",
     icon: webhookIcon,
@@ -115,7 +109,6 @@ const pageBreadcrumbKeys: Record<string, string> = {
   "/hooks": "nav.hooks",
   "/issues": "nav.issues",
   "/org": "nav.org",
-  "/workflows": "nav.workflows",
   "/settings": "nav.settings",
 };
 
@@ -795,6 +788,7 @@ function AppLayout() {
             {navItems.map((item) => (
               <SidebarButton
                 key={item.labelKey}
+                data-testid={`nav-${item.path?.slice(1) ?? item.labelKey}`}
                 label={t(item.labelKey)}
                 icon={item.icon}
                 active={isNavItemActive(location.pathname, item.path)}
@@ -808,6 +802,7 @@ function AppLayout() {
               onThemePreferenceChange={setThemePreference}
             />
             <SidebarButton
+              data-testid="nav-settings"
               label={t(settingsNavItem.labelKey)}
               icon={settingsNavItem.icon}
               active={isNavItemActive(location.pathname, settingsNavItem.path)}
@@ -841,6 +836,7 @@ function AppLayout() {
         />
         <PaletteScopeBridge />
         <CommandPalette />
+        <WorkflowManagerDialog />
         <Toaster position="bottom-right" richColors theme={effectiveTheme} />
       </div>
     </ShortcutsProvider>
@@ -881,7 +877,6 @@ function App() {
           <Route path="/issues" element={<IssuesPage />} />
           <Route path="/hooks" element={<HooksPage />} />
           <Route path="/org" element={<OrgChartPage />} />
-          <Route path="/workflows" element={<WorkflowsPage />} />
           <Route path="/settings" element={<SettingsRoute />} />
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Route>

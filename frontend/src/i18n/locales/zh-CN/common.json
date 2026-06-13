@@ -729,7 +729,8 @@
       "create": "创建群聊",
       "workflow": "协作流程",
       "workflowNone": "不绑定",
-      "workflowHint": "可选;主持人将按该流程的最新内容编排协作"
+      "workflowHint": "可选;主持人将按该流程的最新内容编排协作",
+      "manageWorkflows": "管理流程"
     }
   },
   "groupCreateCard": {
@@ -801,7 +802,10 @@
       "commandPlaceholder": "输入命令…",
       "sessionPlaceholder": "搜索会话…"
     },
-    "title": "命令面板"
+    "title": "命令面板",
+    "workflows": {
+      "heading": "操作"
+    }
   },
   "dataBackup": {
     "actions": {
@@ -1412,8 +1416,7 @@
     "issues": "Issues",
     "org": "组织",
     "projects": "项目",
-    "settings": "设置",
-    "workflows": "流程"
+    "settings": "设置"
   },
   "projectSettings": {
     "basic": {
@@ -1954,6 +1957,19 @@
       "desc_one": "「{{name}}」正被 1 个群使用;删除后该群按「不绑定流程」处理,且不可恢复。",
       "descUnused": "删除「{{name}}」后不可恢复。",
       "confirm": "删除流程"
+    },
+    "manager": {
+      "searchPlaceholder": "搜索流程名称或正文",
+      "metaLive": "{{count}} 个群使用中 · 更新于 {{time}} · 修改即时生效",
+      "metaLive_one": "{{count}} 个群使用中 · 更新于 {{time}} · 修改即时生效",
+      "metaUnused": "未使用 · 更新于 {{time}} · 修改即时生效",
+      "saveHint": "⌘ + Enter 保存 · Esc 取消"
+    },
+    "actions": {
+      "openLibrary": "打开流程库",
+      "openLibraryHint": "浏览 / 新建 / 编辑跨群协作流程",
+      "newWorkflow": "新建流程",
+      "newWorkflowHint": "直接打开空白流程编辑器"
     }
   },
   "permissionMode": {

@@ -729,7 +729,8 @@
       "create": "Create group",
       "workflow": "Workflow",
       "workflowNone": "None",
-      "workflowHint": "Optional; the host orchestrates by the latest content of this workflow"
+      "workflowHint": "Optional; the host orchestrates by the latest content of this workflow",
+      "manageWorkflows": "Manage workflows"
     }
   },
   "groupCreateCard": {
@@ -801,7 +802,10 @@
       "commandPlaceholder": "Type a command...",
       "sessionPlaceholder": "Search sessions..."
     },
-    "title": "Command Palette"
+    "title": "Command Palette",
+    "workflows": {
+      "heading": "Actions"
+    }
   },
   "dataBackup": {
     "actions": {
@@ -1412,8 +1416,7 @@
     "issues": "Issues",
     "org": "Organization",
     "projects": "Projects",
-    "settings": "Settings",
-    "workflows": "Workflows"
+    "settings": "Settings"
   },
   "projectSettings": {
     "basic": {
@@ -1954,6 +1957,19 @@
       "desc_one": "\"{{name}}\" is used by 1 group; after deletion it falls back to \"no workflow\". This cannot be undone.",
       "descUnused": "Deleting \"{{name}}\" cannot be undone.",
       "confirm": "Delete workflow"
+    },
+    "manager": {
+      "searchPlaceholder": "Search workflow name or body",
+      "metaLive": "Used by {{count}} groups · updated {{time}} · changes apply immediately",
+      "metaLive_one": "Used by {{count}} group · updated {{time}} · changes apply immediately",
+      "metaUnused": "Unused · updated {{time}} · changes apply immediately",
+      "saveHint": "⌘ + Enter to save · Esc to cancel"
+    },
+    "actions": {
+      "openLibrary": "Open workflow library",
+      "openLibraryHint": "Browse / create / edit cross-group workflows",
+      "newWorkflow": "New workflow",
+      "newWorkflowHint": "Open a blank workflow editor"
     }
   },
   "permissionMode": {

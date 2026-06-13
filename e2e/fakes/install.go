@@ -69,20 +69,23 @@ func Install(ctx context.Context) {
 		return
 	}
 
-	// seed 第二个 agent 当群成员(挂 CEO 汇报线;子 agent 与建群弹窗 eligible 池同口径)
-	// —— 任务卡 e2e(group-task.spec)需要群里有人可派活。幂等同 backend:命中名字即复用。
-	const memberName = "E2E Member"
-	if existing, err := agent_repo.Agent().FindByName(ctx, memberName); err != nil {
-		logger.Ctx(ctx).Error("e2efakes.Install: lookup member agent failed", zap.Error(err))
-		return
-	} else if existing == nil {
-		if _, err := agent_svc.Agent().Create(ctx, &agent_svc.CreateAgentRequest{
-			Name:           memberName,
-			ParentAgentID:  ceo.ID,
-			AgentBackendID: backendID,
-		}); err != nil {
-			logger.Ctx(ctx).Error("e2efakes.Install: create member agent failed", zap.Error(err))
+	// seed 群聊成员(挂 CEO 汇报线;子 agent 与建群弹窗 eligible 池同口径)。
+	// E2E Member 覆盖执行人链路;E2E Reviewer 覆盖验证/审查/动态招募链路。
+	for _, memberName := range []string{"E2E Member", "E2E Reviewer"} {
+		if existing, err := agent_repo.Agent().FindByName(ctx, memberName); err != nil {
+			logger.Ctx(ctx).Error("e2efakes.Install: lookup member agent failed",
+				zap.String("name", memberName), zap.Error(err))
 			return
+		} else if existing == nil {
+			if _, err := agent_svc.Agent().Create(ctx, &agent_svc.CreateAgentRequest{
+				Name:           memberName,
+				ParentAgentID:  ceo.ID,
+				AgentBackendID: backendID,
+			}); err != nil {
+				logger.Ctx(ctx).Error("e2efakes.Install: create member agent failed",
+					zap.String("name", memberName), zap.Error(err))
+				return
+			}
 		}
 	}
 

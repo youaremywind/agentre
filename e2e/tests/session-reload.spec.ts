@@ -24,6 +24,22 @@ test("session + transcript survive a page reload", async ({ page }) => {
   await expect(page.getByTestId("tab-spinner")).toHaveCount(0);
   await expect.poll(() => runningSessionCount(), { timeout: 15_000 }).toBe(0);
   expect(fakeAssistantMessageCount()).toBeGreaterThanOrEqual(1);
+  await page.waitForFunction(() => {
+    const raw = localStorage.getItem("agentre.chatTabs");
+    if (!raw) return false;
+    try {
+      const state = JSON.parse(raw) as {
+        activeTabId?: string | null;
+        tabs?: Array<{ id: string; meta?: { kind?: string } }>;
+      };
+      return state.tabs?.some(
+        (tab) =>
+          tab.id === state.activeTabId && tab.meta?.kind === "session",
+      );
+    } catch {
+      return false;
+    }
+  });
 
   // 3. 重载页面 —— 真实的"重开 app"近似:清空内存态,只剩 localStorage + DB。
   await page.reload();

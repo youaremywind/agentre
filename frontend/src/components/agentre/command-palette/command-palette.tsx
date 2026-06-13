@@ -40,6 +40,7 @@ import { COMMAND_PREFIX, parseMode, type PaletteMode } from "./mode";
 import { chatSessionsSource } from "./sources/chat-sessions-source";
 import { newChatSource } from "./sources/new-chat-source";
 import { newProjectChatSource } from "./sources/new-project-chat-source";
+import { workflowActionsSource } from "./sources/workflow-actions-source";
 import type { CommandItemBase, CommandSource, OnSelectCtx } from "./types";
 
 // 路由约定：与 sources 内部判断同步。也是 ContextBar / Tab 拦截的守卫条件。
@@ -58,6 +59,7 @@ const SOURCES: CommandSource<any>[] = [
   chatSessionsSource,
   newChatSource,
   newProjectChatSource,
+  workflowActionsSource,
 ];
 
 export function CommandPalette(): React.ReactElement {

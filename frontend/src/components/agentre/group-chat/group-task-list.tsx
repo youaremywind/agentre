@@ -66,6 +66,8 @@ function TaskRow({
     <div className="flex items-center gap-1">
       <button
         type="button"
+        data-testid={`group-task-row-${task.taskNo}`}
+        data-status={task.status}
         onClick={() => onAnchorTask(task)}
         className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent"
       >
@@ -130,7 +132,10 @@ function GroupTaskList({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-auto p-2">
+    <div
+      className="flex min-h-0 flex-1 flex-col overflow-auto p-2"
+      data-testid="group-task-list"
+    >
       {open.length > 0 ? (
         <>
           <div className="px-2 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
