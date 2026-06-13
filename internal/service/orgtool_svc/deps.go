@@ -39,8 +39,9 @@ type AgentLookup interface {
 	Find(ctx context.Context, id int64) (*agent_entity.Agent, error)
 }
 
-// ApprovalGateway 审批卡登记/决议(chat_svc 的窄投影)。
+// ApprovalGateway 审批卡登记/决议(chat_svc 通用工具审批网关的窄投影)。
+// Begin 返回等待 channel,waiter 与前端应答路由由 chat_svc 统一持有。
 type ApprovalGateway interface {
-	BeginOrgApproval(ctx context.Context, sessionID int64, blk *blocks.OrgApprovalBlock) error
-	FinishOrgApproval(ctx context.Context, sessionID int64, requestID, status, result string) error
+	BeginToolApproval(ctx context.Context, sessionID int64, blk *blocks.ToolApprovalBlock) (<-chan bool, error)
+	FinishToolApproval(ctx context.Context, sessionID int64, requestID, status, result string) error
 }

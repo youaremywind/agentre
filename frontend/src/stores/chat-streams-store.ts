@@ -11,11 +11,11 @@ import { useQueuedMessagesStore } from "./queued-messages-store";
 // ChatBlock 实例（含 convertValues）也结构性满足这个类型，因此渲染路径同时接受两者。
 export type ChatBlockData = Omit<chat_svc.ChatBlock, "convertValues">;
 
-// OrgApprovalData 是组织架构写工具审批卡片的纯数据形态,逐字对齐后端
-// chat_svc.ChatBlockOrgApproval(去掉 wails 注入的 convertValues)。流事件 payload
-// 与持久化/overlay block.orgApproval 都是这个形状,store/card 共用一份类型。
-export type OrgApprovalData = Omit<
-  chat_svc.ChatBlockOrgApproval,
+// ToolApprovalData 是 agent 内置写工具(org / group_create / workflow 等)审批卡片的纯
+// 数据形态,逐字对齐后端 chat_svc.ChatBlockToolApproval(去掉 wails 注入的 convertValues)。
+// 流事件 payload 与持久化/overlay block.toolApproval 都是这个形状,store/card 共用一份类型。
+export type ToolApprovalData = Omit<
+  chat_svc.ChatBlockToolApproval,
   "convertValues"
 >;
 
@@ -147,15 +147,18 @@ type Actions = {
     payload: chat_svc.ChatBlockToolPermission,
     canonical?: view.CanonicalDTO,
   ) => void;
-  // appendLiveOrgApproval 在 stream 上插入组织架构写工具审批卡片(status:"pending"),
+  // appendLiveToolApproval 在 stream 上插入内置写工具审批卡片(status:"pending"),
   // 与 appendLiveToolPermissionRequest 同款 flushText 流程。审批卡不走
-  // CanonicalToolRouter,直接按 block.type==="org_approval" 由 transcript 路由。
-  appendLiveOrgApproval: (sessionId: number, payload: OrgApprovalData) => void;
-  // markOrgApprovalResolved 按 orgApproval.requestId 找到对应 block 覆盖 status/result。
-  // 后端 emit approved/denied/expired 决议更新(同 requestId)时调用;未知 requestId no-op。
-  markOrgApprovalResolved: (
+  // CanonicalToolRouter,直接按 block.type==="tool_approval" 由 transcript 路由。
+  appendLiveToolApproval: (
     sessionId: number,
-    payload: OrgApprovalData,
+    payload: ToolApprovalData,
+  ) => void;
+  // markToolApprovalResolved 按 toolApproval.requestId 找到对应 block 覆盖 status/result。
+  // 后端 emit approved/denied/expired 决议更新(同 requestId)时调用;未知 requestId no-op。
+  markToolApprovalResolved: (
+    sessionId: number,
+    payload: ToolApprovalData,
   ) => void;
   // patchLiveUsage 把后端推来的 per-call usage 快照写到 LiveStream.liveUsage 上。
   // Composer 进度条用它在 turn 内随工具循环实时刷新「已用上下文」，turn 结束
@@ -531,7 +534,7 @@ export const useChatStreamsStore = create<State & Actions>((set) => ({
       return { streams: next };
     }),
 
-  appendLiveOrgApproval: (sessionId, payload) =>
+  appendLiveToolApproval: (sessionId, payload) =>
     set((state) => {
       const cur = state.streams.get(sessionId);
       if (!cur || !payload || !payload.requestId) return state;
@@ -542,15 +545,15 @@ export const useChatStreamsStore = create<State & Actions>((set) => ({
         liveBlocks: [
           ...flushed.liveBlocks,
           {
-            type: "org_approval",
-            orgApproval: payload,
+            type: "tool_approval",
+            toolApproval: payload,
           },
         ],
       });
       return { streams: next };
     }),
 
-  markOrgApprovalResolved: (sessionId, payload) =>
+  markToolApprovalResolved: (sessionId, payload) =>
     set((state) => {
       const cur = state.streams.get(sessionId);
       if (!cur || !payload || !payload.requestId) return state;
@@ -558,7 +561,10 @@ export const useChatStreamsStore = create<State & Actions>((set) => ({
       let targetIdx = -1;
       for (let i = cur.liveBlocks.length - 1; i >= 0; i--) {
         const b = cur.liveBlocks[i];
-        if (b.type === "org_approval" && b.orgApproval?.requestId === target) {
+        if (
+          b.type === "tool_approval" &&
+          b.toolApproval?.requestId === target
+        ) {
           targetIdx = i;
           break;
         }
@@ -567,12 +573,12 @@ export const useChatStreamsStore = create<State & Actions>((set) => ({
       if (targetIdx < 0) return state;
       const existing = cur.liveBlocks[targetIdx];
       const mergedApproval = {
-        ...(existing.orgApproval ?? payload),
+        ...(existing.toolApproval ?? payload),
         ...payload,
-      } as OrgApprovalData;
+      } as ToolApprovalData;
       const merged: ChatBlockData = {
         ...existing,
-        orgApproval: mergedApproval,
+        toolApproval: mergedApproval,
       };
       const nextBlocks = [...cur.liveBlocks];
       nextBlocks[targetIdx] = merged;

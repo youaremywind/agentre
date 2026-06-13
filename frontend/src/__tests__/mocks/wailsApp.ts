@@ -20,8 +20,7 @@ export const Greet = vi.fn((name: string) =>
 
 export const AnswerUserQuestion = vi.fn(() => Promise.resolve({}));
 export const AnswerToolPermission = vi.fn(() => Promise.resolve({}));
-export const AnswerOrgApproval = vi.fn(() => Promise.resolve({}));
-export const AnswerGroupCreateApproval = vi.fn(() => Promise.resolve({}));
+export const AnswerToolApproval = vi.fn(() => Promise.resolve({}));
 export const ResolvePlanAction = vi.fn(() => Promise.resolve({}));
 
 export const Info = vi.fn(() =>

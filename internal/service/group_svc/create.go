@@ -20,6 +20,10 @@ import (
 	chatblocks "github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
 )
 
+// toolKeyGroupCreate 是 group_create 在 chat_svc 通用工具审批管线里的 ToolKey
+// (group 工具无 agenttool registry 项,故就近定义)。
+const toolKeyGroupCreate = "group_create"
+
 // BuildCreateTurnMCP 实现 chat_svc.TurnMCPProvider:给普通单聊轮注入 group_create。
 // 群成员轮(groupID>0)不注入 —— 防群中拉群套娃(spec §7.1);能力门控(CapMCPTools)
 // 由 chat_svc.appendTurnMCP 统一处理,这里不重复判。
@@ -56,28 +60,27 @@ func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int
 		return "", err
 	}
 
-	// 审批门:挂起当前 MCP 调用直至用户决议/超时(复用 org_approval block 管线)。
+	// 审批门:挂起当前 MCP 调用直至用户决议/超时(走 chat_svc 通用工具审批管线,
+	// ToolKey=group_create;waiter 与前端应答路由 AnswerToolApproval 由 chat_svc 持有)。
 	requestID := uuid.NewString()
-	blk := &chatblocks.OrgApprovalBlock{RequestID: requestID, ToolName: "group_create",
+	blk := &chatblocks.ToolApprovalBlock{ToolKey: toolKeyGroupCreate, RequestID: requestID, ToolName: "group_create",
 		ToolInput: map[string]any{"title": title, "memberNames": memberNames, "brief": brief}, Status: "pending"}
-	ch := make(chan bool, 1)
-	s.createWaiters.Store(requestID, ch)
-	defer s.createWaiters.Delete(requestID)
-	if err := s.gw.BeginGroupCreateApproval(ctx, sessionID, blk); err != nil {
+	ch, err := s.gw.BeginToolApproval(ctx, sessionID, blk)
+	if err != nil {
 		return "", fmt.Errorf("审批通道不可用: %w", err)
 	}
 	select {
 	case allow := <-ch:
 		if !allow {
-			_ = s.gw.FinishGroupCreateApproval(ctx, sessionID, requestID, "denied", "")
+			_ = s.gw.FinishToolApproval(ctx, sessionID, requestID, "denied", "")
 			return "用户拒绝了此操作", nil
 		}
 	case <-time.After(s.approvalTimeout):
-		_ = s.gw.FinishGroupCreateApproval(ctx, sessionID, requestID, "expired", "")
+		_ = s.gw.FinishToolApproval(ctx, sessionID, requestID, "expired", "")
 		return "审批超时，操作未执行", nil
 	case <-ctx.Done():
 		// 请求 ctx 已死,用 Background 调 Finish
-		_ = s.gw.FinishGroupCreateApproval(context.Background(), sessionID, requestID, "expired", "")
+		_ = s.gw.FinishToolApproval(context.Background(), sessionID, requestID, "expired", "")
 		return "", ctx.Err()
 	}
 
@@ -89,8 +92,8 @@ func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int
 	})
 	if err != nil {
 		// 业务校验失败也算 approved 终态,错误进 Result 给 agent 纠错(镜像 orgtool)。
-		_ = s.gw.FinishGroupCreateApproval(ctx, sessionID, requestID, "approved", "执行失败: "+err.Error())
-		return "已批准但执行失败: " + err.Error(), nil
+		_ = s.gw.FinishToolApproval(ctx, sessionID, requestID, "approved", "执行失败: "+err.Error())
+		return "已批准但执行失败: " + err.Error(), nil //nolint:nilerr // 失败编码进返回文本给 agent,不作 RPC error(镜像 orgtool)
 	}
 	g := detail.Group
 	// 群已落库即算成功,后续消息失败只 Warn 不回滚:agent 拿到 group id 后可在群内补发;
@@ -106,7 +109,7 @@ func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int
 	// 契约:前端 GroupCreateCard 按 "group created: id=<id> title=<title>" 解析渲染跳转卡
 	// (同样进审批卡 result);改格式需同步 frontend/src/components/agentre/canonical-tool/group-create/。
 	result := fmt.Sprintf("group created: id=%d title=%s", g.ID, g.Title)
-	_ = s.gw.FinishGroupCreateApproval(ctx, sessionID, requestID, "approved", result)
+	_ = s.gw.FinishToolApproval(ctx, sessionID, requestID, "approved", result)
 	logger.Ctx(ctx).Info("group_svc.HandleGroupCreate: created",
 		zap.Int64("groupID", g.ID), zap.Int64("hostAgentID", agentID), zap.Int64("sessionID", sessionID))
 	return result, nil
@@ -137,29 +140,6 @@ func (s *groupSvc) resolveCreateMembers(ctx context.Context, hostAgentID int64, 
 		out = append(out, id)
 	}
 	return out, nil
-}
-
-// AnswerGroupCreateApprovalRequest 前端审批入口(wails binding)。
-type AnswerGroupCreateApprovalRequest struct {
-	SessionID int64  `json:"sessionId"`
-	RequestID string `json:"requestId"`
-	Allow     bool   `json:"allow"`
-}
-
-// AnswerGroupCreateApprovalResponse 应答返回(无字段)。
-type AnswerGroupCreateApprovalResponse struct{}
-
-// AnswerGroupCreateApproval 唤醒挂起的 group_create 调用。重复应答/已超时/未知 → InvalidParameter。
-func (s *groupSvc) AnswerGroupCreateApproval(ctx context.Context, req *AnswerGroupCreateApprovalRequest) (*AnswerGroupCreateApprovalResponse, error) {
-	if req == nil || req.RequestID == "" {
-		return nil, i18n.NewError(ctx, code.InvalidParameter)
-	}
-	v, ok := s.createWaiters.LoadAndDelete(req.RequestID)
-	if !ok {
-		return nil, i18n.NewError(ctx, code.InvalidParameter)
-	}
-	v.(chan bool) <- req.Allow
-	return &AnswerGroupCreateApprovalResponse{}, nil
 }
 
 // SetApprovalTimeoutForTest 测试钩子:缩短 group_create 审批超时(仅测试使用)。

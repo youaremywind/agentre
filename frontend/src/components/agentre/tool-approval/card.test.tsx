@@ -2,16 +2,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 
-import { OrgApprovalCard } from "./card";
-import type { OrgApprovalData } from "@/stores/chat-streams-store";
-import {
-  AnswerGroupCreateApproval,
-  AnswerOrgApproval,
-} from "../../../../wailsjs/go/app/App";
+import { ToolApprovalCard } from "./card";
+import type { ToolApprovalData } from "@/stores/chat-streams-store";
+import { AnswerToolApproval } from "../../../../wailsjs/go/app/App";
 
 vi.mock("../../../../wailsjs/go/app/App", () => ({
-  AnswerOrgApproval: vi.fn().mockResolvedValue(undefined),
-  AnswerGroupCreateApproval: vi.fn().mockResolvedValue(undefined),
+  AnswerToolApproval: vi.fn().mockResolvedValue(undefined),
 }));
 
 // group_create 批准落地后要刷新侧栏群列表;mock 掉 store 只断言 reload 被调。
@@ -24,14 +20,15 @@ vi.mock("@/stores/group-list-store", () => ({
   },
 }));
 
-describe("OrgApprovalCard", () => {
+describe("ToolApprovalCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   const pending = (
-    overrides: Partial<OrgApprovalData> = {},
-  ): OrgApprovalData => ({
+    overrides: Partial<ToolApprovalData> = {},
+  ): ToolApprovalData => ({
+    toolKey: "org",
     requestId: "org-1",
     toolName: "org_create_department",
     toolInput: { name: "研发部", parentId: 1 },
@@ -40,7 +37,7 @@ describe("OrgApprovalCard", () => {
   });
 
   it("renders the tool label, the input payload and approve/reject buttons when pending", () => {
-    render(<OrgApprovalCard approval={pending()} sessionId={42} />);
+    render(<ToolApprovalCard approval={pending()} sessionId={42} />);
     // tools.org_create_department → "Create department" (setup forces en locale)
     expect(screen.getByText("Create department")).toBeDefined();
     // 入参 JSON 原样渲染(动态内容不翻译)
@@ -49,14 +46,14 @@ describe("OrgApprovalCard", () => {
     expect(screen.getByText("Reject")).toBeDefined();
   });
 
-  it("calls AnswerOrgApproval with allow:true when approve is clicked", async () => {
+  it("calls AnswerToolApproval with allow:true when approve is clicked", async () => {
     const user = userEvent.setup();
-    render(<OrgApprovalCard approval={pending()} sessionId={42} />);
+    render(<ToolApprovalCard approval={pending()} sessionId={42} />);
     await user.click(screen.getByText("Approve"));
     await waitFor(() => {
-      expect(AnswerOrgApproval).toHaveBeenCalledTimes(1);
+      expect(AnswerToolApproval).toHaveBeenCalledTimes(1);
     });
-    expect(AnswerOrgApproval).toHaveBeenCalledWith(
+    expect(AnswerToolApproval).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 42,
         requestId: "org-1",
@@ -65,14 +62,14 @@ describe("OrgApprovalCard", () => {
     );
   });
 
-  it("calls AnswerOrgApproval with allow:false when reject is clicked", async () => {
+  it("calls AnswerToolApproval with allow:false when reject is clicked", async () => {
     const user = userEvent.setup();
-    render(<OrgApprovalCard approval={pending()} sessionId={42} />);
+    render(<ToolApprovalCard approval={pending()} sessionId={42} />);
     await user.click(screen.getByText("Reject"));
     await waitFor(() => {
-      expect(AnswerOrgApproval).toHaveBeenCalledTimes(1);
+      expect(AnswerToolApproval).toHaveBeenCalledTimes(1);
     });
-    expect(AnswerOrgApproval).toHaveBeenCalledWith(
+    expect(AnswerToolApproval).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 42,
         requestId: "org-1",
@@ -83,7 +80,7 @@ describe("OrgApprovalCard", () => {
 
   it("renders a read-only status badge with no buttons once denied", () => {
     render(
-      <OrgApprovalCard
+      <ToolApprovalCard
         approval={pending({
           status: "denied",
           result: "用户拒绝了删除操作",
@@ -99,7 +96,7 @@ describe("OrgApprovalCard", () => {
 
   it("renders an approved badge with the result text", () => {
     render(
-      <OrgApprovalCard
+      <ToolApprovalCard
         approval={pending({
           status: "approved",
           result: "已创建部门 研发部",
@@ -114,7 +111,7 @@ describe("OrgApprovalCard", () => {
 
   it("renders an expired badge for status=expired", () => {
     render(
-      <OrgApprovalCard
+      <ToolApprovalCard
         approval={pending({ status: "expired" })}
         sessionId={42}
       />,
@@ -125,8 +122,9 @@ describe("OrgApprovalCard", () => {
 
   describe("group_create", () => {
     const groupCreatePending = (
-      overrides: Partial<OrgApprovalData> = {},
-    ): OrgApprovalData => ({
+      overrides: Partial<ToolApprovalData> = {},
+    ): ToolApprovalData => ({
+      toolKey: "group_create",
       requestId: "gc-1",
       toolName: "group_create",
       toolInput: {
@@ -138,57 +136,27 @@ describe("OrgApprovalCard", () => {
       ...overrides,
     });
 
-    it("routes group_create answers to AnswerGroupCreateApproval (not AnswerOrgApproval)", async () => {
+    it("routes group_create answers through the unified AnswerToolApproval", async () => {
       const user = userEvent.setup();
       render(
-        <OrgApprovalCard approval={groupCreatePending()} sessionId={42} />,
+        <ToolApprovalCard approval={groupCreatePending()} sessionId={42} />,
       );
       await user.click(screen.getByText("Approve"));
       await waitFor(() => {
-        expect(AnswerGroupCreateApproval).toHaveBeenCalledTimes(1);
+        expect(AnswerToolApproval).toHaveBeenCalledTimes(1);
       });
-      expect(AnswerGroupCreateApproval).toHaveBeenCalledWith(
+      expect(AnswerToolApproval).toHaveBeenCalledWith(
         expect.objectContaining({
           sessionId: 42,
           requestId: "gc-1",
           allow: true,
         }),
       );
-      expect(AnswerOrgApproval).not.toHaveBeenCalled();
-    });
-
-    it("routes group_create rejections to AnswerGroupCreateApproval with allow:false", async () => {
-      const user = userEvent.setup();
-      render(
-        <OrgApprovalCard approval={groupCreatePending()} sessionId={42} />,
-      );
-      await user.click(screen.getByText("Reject"));
-      await waitFor(() => {
-        expect(AnswerGroupCreateApproval).toHaveBeenCalledTimes(1);
-      });
-      expect(AnswerGroupCreateApproval).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sessionId: 42,
-          requestId: "gc-1",
-          allow: false,
-        }),
-      );
-      expect(AnswerOrgApproval).not.toHaveBeenCalled();
-    });
-
-    it("keeps non-group_create answers on AnswerOrgApproval", async () => {
-      const user = userEvent.setup();
-      render(<OrgApprovalCard approval={pending()} sessionId={42} />);
-      await user.click(screen.getByText("Approve"));
-      await waitFor(() => {
-        expect(AnswerOrgApproval).toHaveBeenCalledTimes(1);
-      });
-      expect(AnswerGroupCreateApproval).not.toHaveBeenCalled();
     });
 
     it("reloads the group list when a group_create approval resolves approved", () => {
       render(
-        <OrgApprovalCard
+        <ToolApprovalCard
           approval={groupCreatePending({
             status: "approved",
             result: "group created: id=12 title=新功能开发组",
@@ -201,10 +169,10 @@ describe("OrgApprovalCard", () => {
 
     it("does not reload the group list while pending or for non-group_create approvals", () => {
       render(
-        <OrgApprovalCard approval={groupCreatePending()} sessionId={42} />,
+        <ToolApprovalCard approval={groupCreatePending()} sessionId={42} />,
       );
       render(
-        <OrgApprovalCard
+        <ToolApprovalCard
           approval={pending({ status: "approved", result: "done" })}
           sessionId={42}
         />,
@@ -214,7 +182,7 @@ describe("OrgApprovalCard", () => {
 
     it("shows the i18n label for group_create", () => {
       render(
-        <OrgApprovalCard approval={groupCreatePending()} sessionId={42} />,
+        <ToolApprovalCard approval={groupCreatePending()} sessionId={42} />,
       );
       expect(screen.getByText("Create group chat")).toBeDefined();
     });

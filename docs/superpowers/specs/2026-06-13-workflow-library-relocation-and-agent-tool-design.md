@@ -123,21 +123,30 @@ const KeyWorkflow = "workflow"
 - 后端：`agenttool.Keys()` 自动把 `workflow` 纳入「可用工具清单」（`availableTools`）。
 - 前端：`org/tool-catalog.ts` 把 `"workflow"` 加入 `APPROVAL_TOOLS` 集合（写需审批 → 带审批徽标）；i18n 新增 `org.agent.tools.names.workflow` =「流程库」与 `descriptions.workflow` =「允许该 Agent 查询并管理协作流程（写操作需你审批）」。能力 picker（`org-detail-agent.tsx`）按 key 自动渲染，**无需新 UI**。
 
-### 审批管线：泛化为共享管线（已定）
+### 审批管线：泛化为通用 tool_approval（已定，含探查修正）
 
-**决定：泛化共享审批管线（方案 1，OCP）。**
+**决定：完整重命名为通用「工具审批」管线（方案 1 彻底版，OCP）。**
 
-org 工具的审批管线当前是 org 专属的：`chat_svc/blocks` 的 `OrgApprovalBlock`、`chat_svc` 的 `BeginOrgApproval/FinishOrgApproval/AnswerOrgApproval`、stream 事件 `kind:"org_approval"`、以及前端对应的审批块渲染。
+**探查修正（2026-06-14）**：审批管线**其实已经是通用的、且已被两个工具共用**——`chat_svc/blocks.OrgApprovalBlock` 无任何 org 专属字段（只有 `{RequestID, ToolName, ToolInput, Status, Result}`），`chat_svc.Begin/FinishOrgApproval` 也是通用逻辑（只是名字叫 org）；**org 工具与 `group_create`（group_svc）已经共用同一套 block + Begin/Finish**，前端 `OrgApprovalCard` 已按 `toolName` 通用渲染、并对 `group_create` 路由到独立 `AnswerGroupCreateApproval`。所以「泛化」不是从零搭共享机制，而是**把已经共享的机制改名为通用 + 统一 Answer 入口**。
 
-把它泛化成「工具审批」通用机制（block 携带 `toolKey` / server 名 + 工具名 + 入参 + 状态/结果），org 与 workflow（及未来工具）**共用一套** begin/finish/answer + 一个前端审批渲染器。新增工具不再复制审批 plumbing。
+落地（PR2，前置重构）：
 
-落地要点：
+- **block**：`chat_svc/blocks/org_approval.go` → `tool_approval.go`；`OrgApprovalBlock` → `ToolApprovalBlock`，新增字段 `ToolKey string`（"org" / "group_create" / "workflow"）；`Type()` 返回 `"tool_approval"`；factory 重注册。
+- **chat_svc**：`org_approval.go` → `tool_approval.go`；`BeginOrgApproval/FinishOrgApproval/takeOrgApprovals/snapshotOrgApprovals` → `Begin/Finish/take/snapshotToolApproval`；事件 payload `kind:"org_approval"` → `"tool_approval"`（带 `toolKey`）；map 字段 `orgApprovals` → `toolApprovals`。
+- **统一 waiter + Answer**：把现在分散在 orgtool_svc / group_svc 各自的 `waiters sync.Map` + 各自的 `Answer*Approval` binding **上收进 chat_svc**：`BeginToolApproval` 登记 block **并返回等待 channel**；新增唯一 `chat_svc.AnswerToolApproval(ctx, sessionID, requestID, allow)` 按 requestID 路由唤醒。工具服务只 `BeginToolApproval(→ch) → 等 ch → FinishToolApproval`，不再各自持 waiter / Answer。
+- **orgtool_svc / group_svc**：`ApprovalGateway` 接口换成通用 `BeginToolApproval/FinishToolApproval`；建 block 时带 `ToolKey`（"org" / "group_create"）；删掉各自的 `waiters` 与 `AnswerOrgApproval`/`AnswerGroupCreateApproval`。
+- **App binding**：`AnswerOrgApproval` + `AnswerGroupCreateApproval` 合并成单个 `App.AnswerToolApproval` → `chat_svc.Default().AnswerToolApproval`。
+- **前端**：`OrgApprovalCard` → `ToolApprovalCard`，读 `block.toolApproval`（带 `toolKey`），统一调 `AnswerToolApproval`；`transcript-rows.ts`/`transcript-row-view.tsx` 的 `case "org_approval"` → `"tool_approval"`、`block.orgApproval` → `block.toolApproval`；`chat-streams-store.ts`/`chat-streams-host.ts`/`use-chat-session.ts`/`use-chat-stream.ts` 的 `org_approval`→`tool_approval`、`OrgApprovalData`→`ToolApprovalData`、`appendLiveOrgApproval`→`appendLiveToolApproval`、`markOrgApprovalResolved`→`markToolApprovalResolved`。i18n `orgApproval.*` → `toolApproval.*`（工具标签 `tools.*` 保留，PR4 加 `workflow_*`）。
+- **回归护栏（关键）**：现有 org 审批测试（`orgtool_svc/approval_test.go`、`chat_svc/org_approval_test.go`、`blocks/org_approval_test.go`、前端 `org-approval/card.test.tsx`、`org-detail-agent.test.tsx`）+ group_create 审批测试（`group_svc/create_test.go`）**全部随之改名/迁移并保持绿**——这是「重构优于打补丁」下保证 org/group 零回归的安全网。
 
-- 后端：将 `OrgApprovalBlock` 泛化为 `ToolApprovalBlock`（含 `ToolKey`），`Begin/Finish/AnswerOrgApproval` 泛化为按 `requestID` 路由的通用方法；org 工具改为共享入口（保持其外部行为不变）。stream 事件 kind 统一为 `tool_approval`（携带 `toolKey` 供前端按需文案）。
-- 前端：审批块渲染器改为通用组件，按 `toolKey` 选标题/文案（org / workflow）。
-- **回归护栏**：泛化前先给 org 审批现有行为补/跑回归测试（批准执行 / 拒绝 / 超时 / 字段合并），泛化后必须全绿，保证 org 工具零回归。这是「重构优于打补丁」纪律下的安全网。
+> PR2 是 Part B 的前置重构（仅改名+上收 waiter，不改行为）；PR3 接入 workflow 时直接用 `BeginToolApproval(ToolKey="workflow")`，无需再碰审批 plumbing。
 
-> 该泛化是 Part B 的前置重构步骤，须在接入 workflow 工具前完成并验证。
+### 文件改动（Part B）
+
+- **改** `internal/pkg/agenttool/agenttool.go`：加 `KeyWorkflow` + registry。
+- **新增** `internal/service/workflowtool_svc/`（见上）+ `mock_workflowtool_svc/`。
+- **改** `internal/bootstrap/cago.go`：`gw.RegisterMCP("/mcp/workflow/", workflowtool_svc.Default().MCPHandler())`；注册 workflow 的 `TurnMCPProvider`；`RegisterDeps` 把 `workflow_svc` 适配为 `WorkflowQuery/Command`、复用 agent lookup 与（PR2 后的）通用审批网关。
+- **审批管线**：PR2 已完成通用 `tool_approval` 改名+统一 Answer；PR3 直接复用。
 
 ### 文件改动（Part B）
 

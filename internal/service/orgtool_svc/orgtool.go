@@ -17,8 +17,6 @@ type orgtoolSvc struct {
 	gatewayBaseURL  string
 	approvalTimeout time.Duration
 
-	waiters sync.Map // requestID(string) → chan bool;挂起的写工具等审批决议唤醒
-
 	orgQuery     OrgQuery
 	deptCommand  DeptCommand
 	agentCommand AgentCommand

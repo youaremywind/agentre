@@ -54,12 +54,12 @@ describe("useChatSession", () => {
     expect(live?.assistantMessageId).toBe(42);
   });
 
-  // Bug: 中途重开运行中的会话时,pending org_approval 卡来自 LoadSession overlay
+  // Bug: 中途重开运行中的会话时,pending tool_approval 卡来自 LoadSession overlay
   // (后端把内存 pending 块 overlay 进末条 assistant 消息投影 → 渲染走 messages 路径)。
   // 用户点批准/拒绝后 resolved 事件只反扫 liveBlocks → no-op → 卡片永远 pending。
-  // 修复:reattach 时把 pending org_approval 块从消息副本剥离并搬进 liveBlocks
+  // 修复:reattach 时把 pending tool_approval 块从消息副本剥离并搬进 liveBlocks
   // (单一真相源),resolved 事件自然命中,且不与消息路径双卡。
-  it("moves overlay pending org_approval blocks into liveBlocks on reattach", async () => {
+  it("moves overlay pending tool_approval blocks into liveBlocks on reattach", async () => {
     loadChatSession.mockResolvedValueOnce({
       session: {
         id: 9,
@@ -80,8 +80,8 @@ describe("useChatSession", () => {
           blocks: [
             { type: "text", text: "creating department..." },
             {
-              type: "org_approval",
-              orgApproval: {
+              type: "tool_approval",
+              toolApproval: {
                 requestId: "org-1",
                 toolName: "org_create_department",
                 toolInput: { name: "研发部" },
@@ -98,7 +98,7 @@ describe("useChatSession", () => {
 
     // ① 消息路径不再含该 pending 块(防双卡);其余块保留。
     const lastMsg = result.current.messages.at(-1)!;
-    expect((lastMsg.blocks ?? []).some((b) => b.type === "org_approval")).toBe(
+    expect((lastMsg.blocks ?? []).some((b) => b.type === "tool_approval")).toBe(
       false,
     );
     expect((lastMsg.blocks ?? []).some((b) => b.type === "text")).toBe(true);
@@ -108,13 +108,14 @@ describe("useChatSession", () => {
     expect(live?.assistantMessageId).toBe(42);
     expect(live?.liveBlocks).toHaveLength(1);
     expect(live?.liveBlocks[0]).toMatchObject({
-      type: "org_approval",
-      orgApproval: { requestId: "org-1", status: "pending" },
+      type: "tool_approval",
+      toolApproval: { requestId: "org-1", status: "pending" },
     });
 
     // ③ resolved 事件现在命中 liveBlocks,卡片翻 approved。
     act(() => {
-      useChatStreamsStore.getState().markOrgApprovalResolved(9, {
+      useChatStreamsStore.getState().markToolApprovalResolved(9, {
+        toolKey: "org",
         requestId: "org-1",
         toolName: "org_create_department",
         status: "approved",
@@ -123,14 +124,14 @@ describe("useChatSession", () => {
     });
     const updated = useChatStreamsStore.getState().streams.get(9)!
       .liveBlocks[0];
-    expect(updated.orgApproval).toMatchObject({
+    expect(updated.toolApproval).toMatchObject({
       status: "approved",
       result: "department created",
     });
   });
 
-  // 已决议(resolved)的 org_approval 块是持久化历史,留在 messages 路径,不搬不剥。
-  it("leaves resolved org_approval blocks in messages untouched on reattach", async () => {
+  // 已决议(resolved)的 tool_approval 块是持久化历史,留在 messages 路径,不搬不剥。
+  it("leaves resolved tool_approval blocks in messages untouched on reattach", async () => {
     loadChatSession.mockResolvedValueOnce({
       session: {
         id: 9,
@@ -149,8 +150,8 @@ describe("useChatSession", () => {
           role: "assistant",
           blocks: [
             {
-              type: "org_approval",
-              orgApproval: {
+              type: "tool_approval",
+              toolApproval: {
                 requestId: "org-0",
                 toolName: "org_delete_agent",
                 status: "approved",
@@ -169,7 +170,7 @@ describe("useChatSession", () => {
     expect(
       (lastMsg.blocks ?? []).some(
         (b) =>
-          b.type === "org_approval" && b.orgApproval?.status === "approved",
+          b.type === "tool_approval" && b.toolApproval?.status === "approved",
       ),
     ).toBe(true);
     expect(useChatStreamsStore.getState().streams.get(9)?.liveBlocks).toEqual(
@@ -179,7 +180,7 @@ describe("useChatSession", () => {
 
   // 同 tab 已有活跃流且 liveBlocks 已含同 requestId(流事件路径已写入)时,
   // mid-turn reload 返回的 overlay 块仍要从 messages 剥离,但不得重复注入。
-  it("dedupes overlay pending org_approval against an existing live block", async () => {
+  it("dedupes overlay pending tool_approval against an existing live block", async () => {
     act(() => {
       useChatStreamsStore.getState().openStream({
         name: "chat:event:9:42",
@@ -187,7 +188,8 @@ describe("useChatSession", () => {
         assistantMessageId: 42,
         streamStartedAt: 123,
       });
-      useChatStreamsStore.getState().appendLiveOrgApproval(9, {
+      useChatStreamsStore.getState().appendLiveToolApproval(9, {
+        toolKey: "org",
         requestId: "org-1",
         toolName: "org_create_department",
         status: "pending",
@@ -211,8 +213,8 @@ describe("useChatSession", () => {
           role: "assistant",
           blocks: [
             {
-              type: "org_approval",
-              orgApproval: {
+              type: "tool_approval",
+              toolApproval: {
                 requestId: "org-1",
                 toolName: "org_create_department",
                 status: "pending",
@@ -227,7 +229,7 @@ describe("useChatSession", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     const lastMsg = result.current.messages.at(-1)!;
-    expect((lastMsg.blocks ?? []).some((b) => b.type === "org_approval")).toBe(
+    expect((lastMsg.blocks ?? []).some((b) => b.type === "tool_approval")).toBe(
       false,
     );
     const live = useChatStreamsStore.getState().streams.get(9);

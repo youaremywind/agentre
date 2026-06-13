@@ -290,30 +290,31 @@ func (m *MockApprovalGateway) EXPECT() *MockApprovalGatewayMockRecorder {
 	return m.recorder
 }
 
-// BeginOrgApproval mocks base method.
-func (m *MockApprovalGateway) BeginOrgApproval(ctx context.Context, sessionID int64, blk *blocks.OrgApprovalBlock) error {
+// BeginToolApproval mocks base method.
+func (m *MockApprovalGateway) BeginToolApproval(ctx context.Context, sessionID int64, blk *blocks.ToolApprovalBlock) (<-chan bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "BeginOrgApproval", ctx, sessionID, blk)
+	ret := m.ctrl.Call(m, "BeginToolApproval", ctx, sessionID, blk)
+	ret0, _ := ret[0].(<-chan bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BeginToolApproval indicates an expected call of BeginToolApproval.
+func (mr *MockApprovalGatewayMockRecorder) BeginToolApproval(ctx, sessionID, blk any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BeginToolApproval", reflect.TypeOf((*MockApprovalGateway)(nil).BeginToolApproval), ctx, sessionID, blk)
+}
+
+// FinishToolApproval mocks base method.
+func (m *MockApprovalGateway) FinishToolApproval(ctx context.Context, sessionID int64, requestID, status, result string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FinishToolApproval", ctx, sessionID, requestID, status, result)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// BeginOrgApproval indicates an expected call of BeginOrgApproval.
-func (mr *MockApprovalGatewayMockRecorder) BeginOrgApproval(ctx, sessionID, blk any) *gomock.Call {
+// FinishToolApproval indicates an expected call of FinishToolApproval.
+func (mr *MockApprovalGatewayMockRecorder) FinishToolApproval(ctx, sessionID, requestID, status, result any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BeginOrgApproval", reflect.TypeOf((*MockApprovalGateway)(nil).BeginOrgApproval), ctx, sessionID, blk)
-}
-
-// FinishOrgApproval mocks base method.
-func (m *MockApprovalGateway) FinishOrgApproval(ctx context.Context, sessionID int64, requestID, status, result string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FinishOrgApproval", ctx, sessionID, requestID, status, result)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// FinishOrgApproval indicates an expected call of FinishOrgApproval.
-func (mr *MockApprovalGatewayMockRecorder) FinishOrgApproval(ctx, sessionID, requestID, status, result any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinishOrgApproval", reflect.TypeOf((*MockApprovalGateway)(nil).FinishOrgApproval), ctx, sessionID, requestID, status, result)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinishToolApproval", reflect.TypeOf((*MockApprovalGateway)(nil).FinishToolApproval), ctx, sessionID, requestID, status, result)
 }

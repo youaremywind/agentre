@@ -157,10 +157,11 @@ describe("buildRenderItems", () => {
     });
   });
 
-  it("org_approval block 产出一个 org_approval 渲染项", () => {
+  it("tool_approval block 产出一个 tool_approval 渲染项", () => {
     const approvalBlock = {
-      type: "org_approval",
-      orgApproval: {
+      type: "tool_approval",
+      toolApproval: {
+        toolKey: "org",
         requestId: "org-1",
         toolName: "org_create_department",
         toolInput: { name: "研发部" },
@@ -175,8 +176,8 @@ describe("buildRenderItems", () => {
 
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
-      type: "org_approval",
-      block: { orgApproval: { requestId: "org-1", status: "pending" } },
+      type: "tool_approval",
+      block: { toolApproval: { requestId: "org-1", status: "pending" } },
     });
   });
 

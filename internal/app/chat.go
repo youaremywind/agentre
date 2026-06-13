@@ -1,6 +1,9 @@
 package app
 
 import (
+	"github.com/cago-frame/cago/pkg/i18n"
+
+	"github.com/agentre-ai/agentre/internal/pkg/code"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc/ipc"
 )
@@ -141,6 +144,19 @@ func (a *App) AnswerUserQuestion(req *chat_svc.AnswerUserQuestionRequest) (*chat
 // 让 SDK 内化为后续 allow rule。当前仅 claudecode 后端支持。
 func (a *App) AnswerToolPermission(req *chat_svc.AnswerToolPermissionRequest) (*chat_svc.AnswerToolPermissionResponse, error) {
 	return chat_svc.Chat().AnswerToolPermission(a.ctx, req)
+}
+
+// AnswerToolApproval agent 内置工具(org / group_create / workflow 等)写操作的审批决策
+// (批准/拒绝),按 requestID 路由唤醒挂起的工具调用。各工具不再各自持 waiter / Answer,
+// 统一经此入口落到 chat_svc 的通用审批管线。
+func (a *App) AnswerToolApproval(req *chat_svc.AnswerToolApprovalRequest) (*chat_svc.AnswerToolApprovalResponse, error) {
+	if req == nil {
+		return nil, i18n.NewError(a.ctx, code.InvalidParameter)
+	}
+	if err := chat_svc.Chat().AnswerToolApproval(a.ctx, req.SessionID, req.RequestID, req.Allow); err != nil {
+		return nil, err
+	}
+	return &chat_svc.AnswerToolApprovalResponse{}, nil
 }
 
 // ResolvePlanAction 计划审批/历史计划 actionId 的入口。前端按 provider-neutral

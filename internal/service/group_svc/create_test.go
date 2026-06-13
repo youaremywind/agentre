@@ -101,17 +101,16 @@ func TestHandleGroupCreate_ApprovedExecutes(t *testing.T) {
 			return nil
 		}).Times(2)
 
-		// 审批:截 Begin 的 requestID → 主测试里 Answer(true)
-		begun := make(chan string, 1)
-		var begunBlk *blocks.OrgApprovalBlock
-		gw.EXPECT().BeginGroupCreateApproval(gomock.Any(), int64(99), gomock.Any()).DoAndReturn(
-			func(_ context.Context, _ int64, blk *blocks.OrgApprovalBlock) error {
+		// 审批:Begin 返回测试持有的 channel,push true 模拟批准(经 chat_svc.AnswerToolApproval)。
+		apvCh := make(chan bool, 1)
+		var begunBlk *blocks.ToolApprovalBlock
+		gw.EXPECT().BeginToolApproval(gomock.Any(), int64(99), gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ int64, blk *blocks.ToolApprovalBlock) (<-chan bool, error) {
 				begunBlk = blk
-				begun <- blk.RequestID
-				return nil
+				return apvCh, nil
 			})
 		var finishedResult string
-		gw.EXPECT().FinishGroupCreateApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).DoAndReturn(
+		gw.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).DoAndReturn(
 			func(_ context.Context, _ int64, _, _, result string) error {
 				finishedResult = result
 				return nil
@@ -125,12 +124,11 @@ func TestHandleGroupCreate_ApprovedExecutes(t *testing.T) {
 			defer close(done)
 			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "按设计稿重构 UI,验收:e2e 通过")
 		}()
-		reqID := <-begun
-		_, aerr := svc.AnswerGroupCreateApproval(context.Background(), &group_svc.AnswerGroupCreateApprovalRequest{SessionID: 99, RequestID: reqID, Allow: true})
-		So(aerr, ShouldBeNil)
+		apvCh <- true
 		<-done
 
 		So(err, ShouldBeNil)
+		So(begunBlk.ToolKey, ShouldEqual, "group_create")
 		So(begunBlk.ToolName, ShouldEqual, "group_create")
 		So(begunBlk.Status, ShouldEqual, "pending")
 		So(createdGroup.Title, ShouldEqual, "新功能开发组")
@@ -164,13 +162,9 @@ func TestHandleGroupCreate_Denied(t *testing.T) {
 			{ID: 8, Name: "开发", Status: consts.ACTIVE},
 		}, nil)
 
-		begun := make(chan string, 1)
-		gw.EXPECT().BeginGroupCreateApproval(gomock.Any(), int64(99), gomock.Any()).DoAndReturn(
-			func(_ context.Context, _ int64, blk *blocks.OrgApprovalBlock) error {
-				begun <- blk.RequestID
-				return nil
-			})
-		gw.EXPECT().FinishGroupCreateApproval(gomock.Any(), int64(99), gomock.Any(), "denied", "").Return(nil)
+		apvCh := make(chan bool, 1)
+		gw.EXPECT().BeginToolApproval(gomock.Any(), int64(99), gomock.Any()).Return((<-chan bool)(apvCh), nil)
+		gw.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "denied", "").Return(nil)
 
 		svc := group_svc.NewForTestWithNames(gw, map[int64]string{7: "部门负责人", 8: "开发"})
 		done := make(chan struct{})
@@ -180,9 +174,7 @@ func TestHandleGroupCreate_Denied(t *testing.T) {
 			defer close(done)
 			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief")
 		}()
-		reqID := <-begun
-		_, aerr := svc.AnswerGroupCreateApproval(context.Background(), &group_svc.AnswerGroupCreateApprovalRequest{SessionID: 99, RequestID: reqID, Allow: false})
-		So(aerr, ShouldBeNil)
+		apvCh <- false // 经 chat_svc 返回的 channel 模拟前端拒绝
 		<-done
 
 		So(err, ShouldBeNil)
@@ -203,8 +195,8 @@ func TestHandleGroupCreate_Timeout(t *testing.T) {
 		agentRepo.EXPECT().List(gomock.Any()).Return([]*agent_entity.Agent{
 			{ID: 8, Name: "开发", Status: consts.ACTIVE},
 		}, nil)
-		gw.EXPECT().BeginGroupCreateApproval(gomock.Any(), int64(99), gomock.Any()).Return(nil)
-		gw.EXPECT().FinishGroupCreateApproval(gomock.Any(), int64(99), gomock.Any(), "expired", "").Return(nil)
+		gw.EXPECT().BeginToolApproval(gomock.Any(), int64(99), gomock.Any()).Return((<-chan bool)(make(chan bool)), nil)
+		gw.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "expired", "").Return(nil)
 
 		svc := group_svc.NewForTestWithNames(gw, map[int64]string{7: "部门负责人", 8: "开发"})
 		group_svc.SetApprovalTimeoutForTest(svc, 50*time.Millisecond)

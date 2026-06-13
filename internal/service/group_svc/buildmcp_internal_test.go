@@ -41,10 +41,10 @@ func (fakeRosterGW) DeleteSession(context.Context, int64) error {
 func (fakeRosterGW) AgentBackendHasCapability(context.Context, int64, capability.Capability) (bool, error) {
 	return true, nil
 }
-func (fakeRosterGW) BeginGroupCreateApproval(context.Context, int64, *chatblocks.OrgApprovalBlock) error {
-	return nil
+func (fakeRosterGW) BeginToolApproval(context.Context, int64, *chatblocks.ToolApprovalBlock) (<-chan bool, error) {
+	return nil, nil
 }
-func (fakeRosterGW) FinishGroupCreateApproval(context.Context, int64, string, string, string) error {
+func (fakeRosterGW) FinishToolApproval(context.Context, int64, string, string, string) error {
 	return nil
 }
 

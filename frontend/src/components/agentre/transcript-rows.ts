@@ -64,7 +64,7 @@ export type RenderItem =
       _consumed?: boolean;
       type: "tool_permission_request";
     }
-  | { block: ChatBlockData; type: "org_approval" }
+  | { block: ChatBlockData; type: "tool_approval" }
   | { block: ChatBlockData; type: "unknown" }
   | { block: ChatBlockData; type: "compact_boundary" };
 
@@ -251,12 +251,12 @@ export function buildRenderItems({
         }
         break;
       }
-      case "org_approval":
-        // 组织架构写工具审批卡:不走 CanonicalToolRouter,直接按 block.type 路由到
-        // OrgApprovalCard(transcript-row-view)。持久化/overlay 与 live 两路都到这里 ——
-        // block.orgApproval.status 自身就是 truth(后端 finalize 已把悬空 pending 落成
+      case "tool_approval":
+        // 内置写工具审批卡:不走 CanonicalToolRouter,直接按 block.type 路由到
+        // ToolApprovalCard(transcript-row-view)。持久化/overlay 与 live 两路都到这里 ——
+        // block.toolApproval.status 自身就是 truth(后端 finalize 已把悬空 pending 落成
         // expired),前端不按会话活跃度推断。
-        items.push({ block: b, type: "org_approval" });
+        items.push({ block: b, type: "tool_approval" });
         break;
       case "compact_boundary":
         // CLI 通报上下文已压缩 (manual /compact 或 auto)。在 transcript 中嵌一条
@@ -491,8 +491,8 @@ export function stableBlockIdentity(block?: ChatBlockData): string | undefined {
   if (block.askUserQuestion?.requestId) {
     return `ask:${block.askUserQuestion.requestId}`;
   }
-  if (block.orgApproval?.requestId) {
-    return `org:${block.orgApproval.requestId}`;
+  if (block.toolApproval?.requestId) {
+    return `tool-approval:${block.toolApproval.requestId}`;
   }
   const canonical = (block as { canonical?: unknown }).canonical;
   if (!canonical || typeof canonical !== "object") return undefined;

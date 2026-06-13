@@ -21,10 +21,11 @@ type ChatGateway interface {
 	// 的 ACTIVE 会话经 ListAgents 的 IncludingGroups 变体残留在 agent 侧栏)。
 	DeleteSession(ctx context.Context, sessionID int64) error
 	AgentBackendHasCapability(ctx context.Context, agentID int64, wantCap capability.Capability) (bool, error)
-	// BeginGroupCreateApproval / FinishGroupCreateApproval 把 group_create 的审批卡
-	// 路由到发起 agent 的单聊流(复用 chat_svc 的 org_approval block 管线,无新 UI 形态)。
-	BeginGroupCreateApproval(ctx context.Context, sessionID int64, blk *chatblocks.OrgApprovalBlock) error
-	FinishGroupCreateApproval(ctx context.Context, sessionID int64, requestID, status, result string) error
+	// BeginToolApproval / FinishToolApproval 把 group_create 的审批卡路由到发起 agent 的
+	// 单聊流(走 chat_svc 通用工具审批管线,ToolKey=group_create,无新 UI 形态);Begin 返回
+	// 等待 channel,waiter 与前端应答路由由 chat_svc 统一持有。
+	BeginToolApproval(ctx context.Context, sessionID int64, blk *chatblocks.ToolApprovalBlock) (<-chan bool, error)
+	FinishToolApproval(ctx context.Context, sessionID int64, requestID, status, result string) error
 }
 
 // chatSvcGateway 委托给 chat_svc 默认单例。
@@ -55,10 +56,10 @@ func (chatSvcGateway) AgentBackendHasCapability(ctx context.Context, agentID int
 	return chat_svc.Chat().AgentBackendHasCapability(ctx, agentID, wantCap)
 }
 
-func (chatSvcGateway) BeginGroupCreateApproval(ctx context.Context, sessionID int64, blk *chatblocks.OrgApprovalBlock) error {
-	return chat_svc.Chat().BeginOrgApproval(ctx, sessionID, blk)
+func (chatSvcGateway) BeginToolApproval(ctx context.Context, sessionID int64, blk *chatblocks.ToolApprovalBlock) (<-chan bool, error) {
+	return chat_svc.Chat().BeginToolApproval(ctx, sessionID, blk)
 }
 
-func (chatSvcGateway) FinishGroupCreateApproval(ctx context.Context, sessionID int64, requestID, status, result string) error {
-	return chat_svc.Chat().FinishOrgApproval(ctx, sessionID, requestID, status, result)
+func (chatSvcGateway) FinishToolApproval(ctx context.Context, sessionID int64, requestID, status, result string) error {
+	return chat_svc.Chat().FinishToolApproval(ctx, sessionID, requestID, status, result)
 }

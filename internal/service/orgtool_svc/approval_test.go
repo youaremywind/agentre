@@ -41,15 +41,15 @@ func newWriteSvc(ctrl *gomock.Controller) (*orgtoolSvc, *writeDeps) {
 	return s, d
 }
 
-// captureBegin 让 BeginOrgApproval mock 把 handler 生成的随机 requestID 抓出来(测试不知道
-// uuid 值,只能从 Begin 的入参里截获),通过 channel 回传给应答 goroutine。
-func captureBegin(d *writeDeps, sessionID int64, out chan<- string) *gomock.Call {
-	return d.apv.EXPECT().
-		BeginOrgApproval(gomock.Any(), sessionID, gomock.Any()).
-		DoAndReturn(func(_ any, _ int64, blk *blocks.OrgApprovalBlock) error {
-			out <- blk.RequestID
-			return nil
-		})
+// beginCh 让 BeginToolApproval mock 返回测试持有的审批 channel(buffered=1)——往里 push
+// true/false 即模拟前端经 chat_svc.AnswerToolApproval 唤醒(waiter 现归 chat_svc 持有,
+// orgtool 只 select 这个返回的 channel)。不 push 则触发超时分支。
+func beginCh(d *writeDeps, sessionID int64) chan bool {
+	apvCh := make(chan bool, 1)
+	d.apv.EXPECT().
+		BeginToolApproval(gomock.Any(), sessionID, gomock.Any()).
+		Return((<-chan bool)(apvCh), nil)
+	return apvCh
 }
 
 // callWrite 在 goroutine 里发一次写工具 tools/call(handler 会同步挂起),返回 recorder
@@ -67,26 +67,36 @@ func callWrite(s *orgtoolSvc, body, token string) (*httptest.ResponseRecorder, <
 }
 
 func TestOrgApproval_ApprovedExecutes(t *testing.T) {
-	Convey("写工具挂起 → Answer(allow=true) → exec 成功 → result 含成功文案;Begin/Finish(approved) 均调到", t, func() {
+	Convey("写工具挂起 → 应答 allow=true → exec 成功 → result 含成功文案;Begin(带 ToolKey=org)/Finish(approved) 均调到", t, func() {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		s, d := newWriteSvc(ctrl)
 		d.lookup.EXPECT().Find(gomock.Any(), int64(7)).Return(orgEnabledAgent(7), nil)
 
-		begun := make(chan string, 1)
-		captureBegin(d, 99, begun)
+		// 内联 Begin mock 以捕获 blk.ToolKey(So 不能跨 handler goroutine,mutex 保护后断言)。
+		apvCh := make(chan bool, 1)
+		var mu sync.Mutex
+		var gotToolKey string
+		d.apv.EXPECT().BeginToolApproval(gomock.Any(), int64(99), gomock.Any()).
+			DoAndReturn(func(_ any, _ int64, blk *blocks.ToolApprovalBlock) (<-chan bool, error) {
+				mu.Lock()
+				gotToolKey = blk.ToolKey
+				mu.Unlock()
+				return apvCh, nil
+			})
 		d.dept.EXPECT().Create(gomock.Any(), gomock.Any()).Return(
 			&department_svc.CreateDepartmentResponse{Item: &department_svc.DepartmentItem{ID: 7, Name: "市场部"}}, nil)
-		d.apv.EXPECT().FinishOrgApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).Return(nil)
+		d.apv.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).Return(nil)
 
 		token := s.mcpHandlerInit().MintToken(7, 99)
 		w, done := callWrite(s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"org_create_department","arguments":{"name":"市场部"}}}`, token)
 
-		reqID := <-begun
-		_, err := s.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: reqID, Allow: true})
-		So(err, ShouldBeNil)
+		apvCh <- true
 		<-done
 
+		mu.Lock()
+		So(gotToolKey, ShouldEqual, "org")
+		mu.Unlock()
 		So(w.Code, ShouldEqual, http.StatusOK)
 		So(w.Body.String(), ShouldContainSubstring, "市场部")
 		So(w.Body.String(), ShouldContainSubstring, "id=7")
@@ -100,14 +110,13 @@ func TestOrgApproval_ApprovedButExecError(t *testing.T) {
 		s, d := newWriteSvc(ctrl)
 		d.lookup.EXPECT().Find(gomock.Any(), int64(7)).Return(orgEnabledAgent(7), nil)
 
-		begun := make(chan string, 1)
-		captureBegin(d, 99, begun)
+		apvCh := beginCh(d, 99)
 		d.dept.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil, assertErr("循环挂载"))
 		// So() 不能在 handler goroutine 的 mock 回调里跑(goconvey gls 不跨协程)——
 		// 回调只做 mutex 保护的值捕获,<-done 后在主 goroutine 上断言。
 		var mu sync.Mutex
 		var finishResult string
-		d.apv.EXPECT().FinishOrgApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).
+		d.apv.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).
 			DoAndReturn(func(_ any, _ int64, _, _, result string) error {
 				mu.Lock()
 				finishResult = result
@@ -118,8 +127,7 @@ func TestOrgApproval_ApprovedButExecError(t *testing.T) {
 		token := s.mcpHandlerInit().MintToken(7, 99)
 		w, done := callWrite(s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"org_create_department","arguments":{"name":"x"}}}`, token)
 
-		reqID := <-begun
-		_, _ = s.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: reqID, Allow: true})
+		apvCh <- true
 		<-done
 
 		mu.Lock()
@@ -131,23 +139,20 @@ func TestOrgApproval_ApprovedButExecError(t *testing.T) {
 }
 
 func TestOrgApproval_Denied(t *testing.T) {
-	Convey("Answer(allow=false) → Finish(denied) + result 含「用户拒绝」;不 exec", t, func() {
+	Convey("应答 allow=false → Finish(denied) + result 含「用户拒绝」;不 exec", t, func() {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		s, d := newWriteSvc(ctrl)
 		d.lookup.EXPECT().Find(gomock.Any(), int64(7)).Return(orgEnabledAgent(7), nil)
 
-		begun := make(chan string, 1)
-		captureBegin(d, 99, begun)
+		apvCh := beginCh(d, 99)
 		// 无 dept.Create EXPECT:拒绝不该执行
-		d.apv.EXPECT().FinishOrgApproval(gomock.Any(), int64(99), gomock.Any(), "denied", gomock.Any()).Return(nil)
+		d.apv.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "denied", gomock.Any()).Return(nil)
 
 		token := s.mcpHandlerInit().MintToken(7, 99)
 		w, done := callWrite(s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"org_create_department","arguments":{"name":"x"}}}`, token)
 
-		reqID := <-begun
-		_, err := s.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: reqID, Allow: false})
-		So(err, ShouldBeNil)
+		apvCh <- false
 		<-done
 
 		So(w.Code, ShouldEqual, http.StatusOK)
@@ -163,14 +168,12 @@ func TestOrgApproval_Timeout(t *testing.T) {
 		s.approvalTimeout = 50 * time.Millisecond
 		d.lookup.EXPECT().Find(gomock.Any(), int64(7)).Return(orgEnabledAgent(7), nil)
 
-		begun := make(chan string, 1)
-		captureBegin(d, 99, begun)
-		d.apv.EXPECT().FinishOrgApproval(gomock.Any(), int64(99), gomock.Any(), "expired", gomock.Any()).Return(nil)
+		beginCh(d, 99) // 返回 channel 但故意不 push,触发超时分支
+		d.apv.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "expired", gomock.Any()).Return(nil)
 
 		token := s.mcpHandlerInit().MintToken(7, 99)
 		w, done := callWrite(s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"org_create_department","arguments":{"name":"x"}}}`, token)
 
-		<-begun // 收到 Begin 但故意不应答
 		<-done
 
 		So(w.Code, ShouldEqual, http.StatusOK)
@@ -178,60 +181,13 @@ func TestOrgApproval_Timeout(t *testing.T) {
 	})
 }
 
-func TestOrgApproval_AnswerInvalid(t *testing.T) {
-	Convey("AnswerOrgApproval 未知 / 空 requestID / 重复应答 → InvalidParameter", t, func() {
-		ctrl := gomock.NewController(t)
-		defer ctrl.Finish()
-		s, _ := newWriteSvc(ctrl)
-
-		Convey("空 requestID", func() {
-			_, err := s.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: "", Allow: true})
-			So(err, ShouldNotBeNil)
-		})
-		Convey("nil req", func() {
-			_, err := s.AnswerOrgApproval(t.Context(), nil)
-			So(err, ShouldNotBeNil)
-		})
-		Convey("未知 requestID", func() {
-			_, err := s.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: "no-such", Allow: true})
-			So(err, ShouldNotBeNil)
-		})
-		Convey("重复应答 → 第二次 InvalidParameter", func() {
-			d := &writeDeps{
-				lookup: mock_orgtool_svc.NewMockAgentLookup(ctrl),
-				query:  mock_orgtool_svc.NewMockOrgQuery(ctrl),
-				dept:   mock_orgtool_svc.NewMockDeptCommand(ctrl),
-				agent:  mock_orgtool_svc.NewMockAgentCommand(ctrl),
-				apv:    mock_orgtool_svc.NewMockApprovalGateway(ctrl),
-			}
-			s2 := &orgtoolSvc{approvalTimeout: 4 * time.Minute}
-			s2.RegisterDeps(d.query, d.dept, d.agent, d.lookup, d.apv)
-			d.lookup.EXPECT().Find(gomock.Any(), int64(7)).Return(orgEnabledAgent(7), nil)
-			begun := make(chan string, 1)
-			captureBegin(d, 99, begun)
-			d.dept.EXPECT().Create(gomock.Any(), gomock.Any()).Return(
-				&department_svc.CreateDepartmentResponse{Item: &department_svc.DepartmentItem{ID: 1, Name: "x"}}, nil)
-			d.apv.EXPECT().FinishOrgApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).Return(nil)
-
-			token := s2.mcpHandlerInit().MintToken(7, 99)
-			_, done := callWrite(s2, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"org_create_department","arguments":{"name":"x"}}}`, token)
-			reqID := <-begun
-			_, err1 := s2.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: reqID, Allow: true})
-			So(err1, ShouldBeNil)
-			<-done
-			_, err2 := s2.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: reqID, Allow: true})
-			So(err2, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestOrgApproval_BeginFails(t *testing.T) {
-	Convey("BeginOrgApproval 报错(无活跃 turn)→ rpc error「审批通道不可用」,无挂起", t, func() {
+	Convey("BeginToolApproval 报错(无活跃 turn)→ rpc error「审批通道不可用」,无挂起", t, func() {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		s, d := newWriteSvc(ctrl)
 		d.lookup.EXPECT().Find(gomock.Any(), int64(7)).Return(orgEnabledAgent(7), nil)
-		d.apv.EXPECT().BeginOrgApproval(gomock.Any(), int64(99), gomock.Any()).Return(assertErr("no active turn"))
+		d.apv.EXPECT().BeginToolApproval(gomock.Any(), int64(99), gomock.Any()).Return((<-chan bool)(nil), assertErr("no active turn"))
 		// 无 Finish / 无 exec EXPECT
 
 		token := s.mcpHandlerInit().MintToken(7, 99)
@@ -260,8 +216,7 @@ func TestOrgApproval_UpdateDepartmentMove(t *testing.T) {
 				{ID: 5, Name: "旧名", Description: "旧述", Icon: "i", AccentColor: "c", ParentID: 2, LeadAgentID: 3},
 			},
 		}, nil)
-		begun := make(chan string, 1)
-		captureBegin(d, 99, begun)
+		apvCh := beginCh(d, 99)
 
 		// So() 不能在 handler goroutine 的 mock 回调里跑(goconvey gls 不跨协程)——
 		// 回调只做 mutex 保护的值捕获,<-done 后在主 goroutine 上断言。
@@ -285,12 +240,11 @@ func TestOrgApproval_UpdateDepartmentMove(t *testing.T) {
 				mu.Unlock()
 				return &department_svc.MoveDepartmentResponse{}, nil
 			})
-		d.apv.EXPECT().FinishOrgApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).Return(nil)
+		d.apv.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).Return(nil)
 
 		token := s.mcpHandlerInit().MintToken(7, 99)
 		w, done := callWrite(s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"org_update_department","arguments":{"id":5,"name":"新名","parentId":9}}}`, token)
-		reqID := <-begun
-		_, _ = s.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: reqID, Allow: true})
+		apvCh <- true
 		<-done
 
 		So(w.Code, ShouldEqual, http.StatusOK)
@@ -317,8 +271,7 @@ func TestOrgApproval_CreateAgentInheritsBackend(t *testing.T) {
 		// 一次 Find 用于开关校验,一次用于继承 backend —— 都返回 caller。
 		d.lookup.EXPECT().Find(gomock.Any(), int64(7)).Return(caller, nil).Times(2)
 
-		begun := make(chan string, 1)
-		captureBegin(d, 99, begun)
+		apvCh := beginCh(d, 99)
 		// So() 不能在 handler goroutine 的 mock 回调里跑(goconvey gls 不跨协程)——
 		// 回调只做 mutex 保护的值捕获,<-done 后在主 goroutine 上断言。
 		var mu sync.Mutex
@@ -330,12 +283,11 @@ func TestOrgApproval_CreateAgentInheritsBackend(t *testing.T) {
 				mu.Unlock()
 				return &agent_svc.CreateAgentResponse{Item: &department_svc.AgentItem{ID: 11, Name: "新人"}}, nil
 			})
-		d.apv.EXPECT().FinishOrgApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).Return(nil)
+		d.apv.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "approved", gomock.Any()).Return(nil)
 
 		token := s.mcpHandlerInit().MintToken(7, 99)
 		w, done := callWrite(s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"org_create_agent","arguments":{"name":"新人","departmentId":1}}}`, token)
-		reqID := <-begun
-		_, _ = s.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: reqID, Allow: true})
+		apvCh <- true
 		<-done
 
 		mu.Lock()

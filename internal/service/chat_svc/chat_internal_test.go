@@ -65,12 +65,13 @@ func TestToChatMessage_BlockTypes(t *testing.T) {
 	assert.Contains(t, cm.Blocks[4].Text, "Inspect files")
 }
 
-// TestToChatMessage_OrgApprovalBlock 验证 OrgApprovalBlock 经 toChatMessage 投影成
-// type="org_approval" + OrgApproval 字段保真。
-func TestToChatMessage_OrgApprovalBlock(t *testing.T) {
+// TestToChatMessage_ToolApprovalBlock 验证 ToolApprovalBlock 经 toChatMessage 投影成
+// type="tool_approval" + ToolApproval 字段保真(含 ToolKey)。
+func TestToChatMessage_ToolApprovalBlock(t *testing.T) {
 	m := &chat_entity.Message{ID: 1, SessionID: 9, Role: "assistant"}
 	require.NoError(t, m.SetBlocks([]blocks.ContentBlock{
-		chatblocks.OrgApprovalBlock{
+		chatblocks.ToolApprovalBlock{
+			ToolKey:   "org",
 			RequestID: "org-req-42",
 			ToolName:  "org_invite",
 			ToolInput: map[string]any{"user_id": "u-99"},
@@ -81,12 +82,13 @@ func TestToChatMessage_OrgApprovalBlock(t *testing.T) {
 	cm, err := toChatMessage(m)
 	require.NoError(t, err)
 	require.Len(t, cm.Blocks, 1)
-	assert.Equal(t, "org_approval", cm.Blocks[0].Type)
-	require.NotNil(t, cm.Blocks[0].OrgApproval)
-	assert.Equal(t, "org-req-42", cm.Blocks[0].OrgApproval.RequestID)
-	assert.Equal(t, "org_invite", cm.Blocks[0].OrgApproval.ToolName)
-	assert.Equal(t, "u-99", cm.Blocks[0].OrgApproval.ToolInput["user_id"])
-	assert.Equal(t, "pending", cm.Blocks[0].OrgApproval.Status)
+	assert.Equal(t, "tool_approval", cm.Blocks[0].Type)
+	require.NotNil(t, cm.Blocks[0].ToolApproval)
+	assert.Equal(t, "org", cm.Blocks[0].ToolApproval.ToolKey)
+	assert.Equal(t, "org-req-42", cm.Blocks[0].ToolApproval.RequestID)
+	assert.Equal(t, "org_invite", cm.Blocks[0].ToolApproval.ToolName)
+	assert.Equal(t, "u-99", cm.Blocks[0].ToolApproval.ToolInput["user_id"])
+	assert.Equal(t, "pending", cm.Blocks[0].ToolApproval.Status)
 }
 
 // 历史:ToolResultMetaBlock 已整删,meta 字段改走 raw tool_result.Meta 字节透传

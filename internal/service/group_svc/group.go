@@ -63,8 +63,6 @@ type GroupSvc interface {
 	// HandleGroupCreate 是 group_create MCP tool 的服务端入口:单聊轮经审批门拉起团队
 	// (发起者=主持人,项目继承发起会话)。拒绝/超时编码为返回文本(nil err),error 仅内部故障。
 	HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string) (string, error)
-	// AnswerGroupCreateApproval 前端审批决议入口:唤醒挂起的 group_create 调用。
-	AnswerGroupCreateApproval(ctx context.Context, req *AnswerGroupCreateApprovalRequest) (*AnswerGroupCreateApprovalResponse, error)
 	// BuildCreateTurnMCP 实现 chat_svc.TurnMCPProvider:给普通单聊轮注入 group_create(群成员轮跳过)。
 	BuildCreateTurnMCP(ctx context.Context, a *agent_entity.Agent, sessionID, groupID int64) []agentruntime.MCPServerSpec
 	StopGroup(ctx context.Context, id int64) error
@@ -92,7 +90,6 @@ type groupSvc struct {
 	mcp            *groupMCP                                       // group_send MCP server，注册到 gateway
 	gatewayBaseURL string                                          // 本机 gateway base，由 bootstrap 注入
 
-	createWaiters   sync.Map      // requestID(string) → chan bool;挂起的 group_create 等审批决议
 	approvalTimeout time.Duration // group_create 审批超时(默认 4min,对齐 orgtool 的 CLI 硬顶余量)
 }
 

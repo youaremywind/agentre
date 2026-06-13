@@ -360,7 +360,7 @@
       "waiting": "WAITING · 等待回复"
     }
   },
-  "orgApproval": {
+  "toolApproval": {
     "title": "组织架构操作审批",
     "approve": "批准",
     "deny": "拒绝",

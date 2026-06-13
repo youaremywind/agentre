@@ -48,18 +48,10 @@ export const department_svc = {
   MoveDepartmentRequest: ModelClass,
 };
 
-export const orgtool_svc = {
-  AnswerOrgApprovalRequest: ModelClass,
-  AnswerOrgApprovalResponse: ModelClass,
-};
-
-export const group_svc = {
-  AnswerGroupCreateApprovalRequest: ModelClass,
-  AnswerGroupCreateApprovalResponse: ModelClass,
-};
-
 export const httpgateway = {};
 
 export const chat_svc = {
   SendRequest: ModelClass,
+  AnswerToolApprovalRequest: ModelClass,
+  AnswerToolApprovalResponse: ModelClass,
 };

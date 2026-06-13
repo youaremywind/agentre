@@ -166,8 +166,3 @@ func (a *App) GroupSetPinned(id int64, pinned bool) error {
 func (a *App) GroupDelete(id int64, deleteSessions bool) error {
 	return group_svc.Default().DeleteGroup(a.ctx, id, deleteSessions)
 }
-
-// AnswerGroupCreateApproval group_create 拉起团队的审批决策(批准/拒绝)。
-func (a *App) AnswerGroupCreateApproval(req *group_svc.AnswerGroupCreateApprovalRequest) (*group_svc.AnswerGroupCreateApprovalResponse, error) {
-	return group_svc.Default().AnswerGroupCreateApproval(a.ctx, req)
-}

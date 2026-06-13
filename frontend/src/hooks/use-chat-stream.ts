@@ -43,7 +43,7 @@ export type ChatStreamEvent = {
     | "ask_user_question"
     | "plan_update"
     | "tool_permission_request"
-    | "org_approval"
+    | "tool_approval"
     | "session_status"
     | "usage"
     | "compact_boundary"
@@ -91,10 +91,12 @@ export type ChatStreamEvent = {
   // （Resolved=true，前端按 requestId 找到既有 block 更新）。
   toolPermission?: chat_svc.ChatBlockToolPermission;
 
-  // org_approval: 组织架构写工具审批。status="pending" 为新卡(appendLiveOrgApproval),
-  // "approved"|"denied"|"expired" 为决议更新(markOrgApprovalResolved,同 requestId)。
+  // tool_approval: agent 内置写工具审批。status="pending" 为新卡(appendLiveToolApproval),
+  // "approved"|"denied"|"expired" 为决议更新(markToolApprovalResolved,同 requestId)。
   // 这些字段平铺在事件上(不像 toolPermission 走一个嵌套对象),ChatStreamsHost 据此
-  // 合成 OrgApprovalData。requestId 同时被 org_approval 与未来其它按 id 关联的事件共用。
+  // 合成 ToolApprovalData。toolKey 标识来源工具(org / group_create / ...);requestId
+  // 同时被 tool_approval 与未来其它按 id 关联的事件共用。
+  toolKey?: string;
   requestId?: string;
   status?: string;
   result?: string;

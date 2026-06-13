@@ -7,17 +7,18 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestOrgApprovalBlock_TypeAndAudience(t *testing.T) {
-	Convey("OrgApprovalBlock 类型 + Audience", t, func() {
-		b := OrgApprovalBlock{}
-		So(b.Type(), ShouldEqual, "org_approval")
+func TestToolApprovalBlock_TypeAndAudience(t *testing.T) {
+	Convey("ToolApprovalBlock 类型 + Audience", t, func() {
+		b := ToolApprovalBlock{}
+		So(b.Type(), ShouldEqual, "tool_approval")
 		So(b.Audience(), ShouldEqual, cagoblocks.ToUI)
 	})
 }
 
-func TestOrgApprovalBlock_FactoryRoundTrip(t *testing.T) {
-	Convey("OrgApprovalBlock Encode/Decode round-trip", t, func() {
-		b := &OrgApprovalBlock{
+func TestToolApprovalBlock_FactoryRoundTrip(t *testing.T) {
+	Convey("ToolApprovalBlock Encode/Decode round-trip", t, func() {
+		b := &ToolApprovalBlock{
+			ToolKey:   "org",
 			RequestID: "org-req-1",
 			ToolName:  "org_invite",
 			ToolInput: map[string]any{"user_id": "u-42"},
@@ -26,12 +27,13 @@ func TestOrgApprovalBlock_FactoryRoundTrip(t *testing.T) {
 		}
 		sb, err := cagoblocks.Encode(b)
 		So(err, ShouldBeNil)
-		So(sb.Type, ShouldEqual, "org_approval")
+		So(sb.Type, ShouldEqual, "tool_approval")
 
 		decoded, err := cagoblocks.Decode(sb)
 		So(err, ShouldBeNil)
-		got, ok := decoded.(OrgApprovalBlock)
+		got, ok := decoded.(ToolApprovalBlock)
 		So(ok, ShouldBeTrue)
+		So(got.ToolKey, ShouldEqual, "org")
 		So(got.RequestID, ShouldEqual, "org-req-1")
 		So(got.ToolName, ShouldEqual, "org_invite")
 		So(got.ToolInput["user_id"], ShouldEqual, "u-42")

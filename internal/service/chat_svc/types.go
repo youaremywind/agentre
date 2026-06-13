@@ -247,8 +247,8 @@ type ChatBlock struct {
 	// tool_permission_request block 专用：工具审批载荷与决策状态。
 	ToolPermission *ChatBlockToolPermission `json:"toolPermission,omitempty"`
 
-	// org_approval block 专用：组织架构工具审批卡。
-	OrgApproval *ChatBlockOrgApproval `json:"orgApproval,omitempty"`
+	// tool_approval block 专用：agent 内置工具(org / group_create / workflow 等)写操作审批卡。
+	ToolApproval *ChatBlockToolApproval `json:"toolApproval,omitempty"`
 
 	// Canonical 是 runtime translator 算出的统一工具识别投影 — wire 形态由
 	// chat_svc/view/CanonicalDTO 提供。前端按 kind 分发到 canonical-tool/<kind>/card.tsx。
@@ -311,8 +311,10 @@ type ChatBlockToolPermission struct {
 	AlwaysAllow bool           `json:"alwaysAllow,omitempty"`
 }
 
-// ChatBlockOrgApproval 组织架构工具审批卡的前端投影。
-type ChatBlockOrgApproval struct {
+// ChatBlockToolApproval agent 内置工具(org / group_create / workflow 等)写操作审批卡的前端投影。
+// ToolKey 标识来源工具,前端据此选标题/文案与 approved 后处理。
+type ChatBlockToolApproval struct {
+	ToolKey   string         `json:"toolKey"`
 	RequestID string         `json:"requestId"`
 	ToolName  string         `json:"toolName"`
 	ToolInput map[string]any `json:"toolInput,omitempty"`

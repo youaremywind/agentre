@@ -7,50 +7,24 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cago-frame/cago/pkg/i18n"
 	"github.com/google/uuid"
 
-	"github.com/agentre-ai/agentre/internal/pkg/code"
+	"github.com/agentre-ai/agentre/internal/pkg/agenttool"
 	"github.com/agentre-ai/agentre/internal/service/agent_svc"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
 	"github.com/agentre-ai/agentre/internal/service/department_svc"
 )
 
-// AnswerOrgApprovalRequest 前端审批入口(wails binding)。
-type AnswerOrgApprovalRequest struct {
-	SessionID int64  `json:"sessionId"`
-	RequestID string `json:"requestId"`
-	Allow     bool   `json:"allow"`
-}
-
-// AnswerOrgApprovalResponse 应答返回(无字段)。
-type AnswerOrgApprovalResponse struct{}
-
-// AnswerOrgApproval 唤醒挂起的写工具调用。重复应答/已超时/未知 → InvalidParameter。
-func (s *orgtoolSvc) AnswerOrgApproval(ctx context.Context, req *AnswerOrgApprovalRequest) (*AnswerOrgApprovalResponse, error) {
-	if req == nil || req.RequestID == "" {
-		return nil, i18n.NewError(ctx, code.InvalidParameter)
-	}
-	chAny, ok := s.waiters.LoadAndDelete(req.RequestID)
-	if !ok {
-		return nil, i18n.NewError(ctx, code.InvalidParameter)
-	}
-	chAny.(chan bool) <- req.Allow
-	return &AnswerOrgApprovalResponse{}, nil
-}
-
-// handleWriteTool 写工具统一入口:登记审批 → 挂起等待 → 终态分发。
+// handleWriteTool 写工具统一入口:经 chat_svc 通用网关登记审批 → 挂起等返回的 channel →
+// 终态分发。waiter 与前端应答路由(AnswerToolApproval)由 chat_svc 统一持有。
 func (s *orgtoolSvc) handleWriteTool(w http.ResponseWriter, r *http.Request, rpcID json.RawMessage, ref orgRef, tool string, rawArgs json.RawMessage) {
 	var input map[string]any
 	_ = json.Unmarshal(rawArgs, &input)
 	requestID := uuid.NewString()
-	blk := &blocks.OrgApprovalBlock{RequestID: requestID, ToolName: tool, ToolInput: input, Status: "pending"}
+	blk := &blocks.ToolApprovalBlock{ToolKey: agenttool.KeyOrg, RequestID: requestID, ToolName: tool, ToolInput: input, Status: "pending"}
 
-	ch := make(chan bool, 1)
-	s.waiters.Store(requestID, ch)
-	defer s.waiters.Delete(requestID)
-
-	if err := s.approval.BeginOrgApproval(r.Context(), ref.sessionID, blk); err != nil {
+	ch, err := s.approval.BeginToolApproval(r.Context(), ref.sessionID, blk)
+	if err != nil {
 		writeRPCError(w, rpcID, -32000, "审批通道不可用: "+err.Error())
 		return
 	}
@@ -58,25 +32,25 @@ func (s *orgtoolSvc) handleWriteTool(w http.ResponseWriter, r *http.Request, rpc
 	select {
 	case allow := <-ch:
 		if !allow {
-			_ = s.approval.FinishOrgApproval(r.Context(), ref.sessionID, requestID, "denied", "")
+			_ = s.approval.FinishToolApproval(r.Context(), ref.sessionID, requestID, "denied", "")
 			writeRPCResult(w, rpcID, textResult("用户拒绝了此操作"))
 			return
 		}
-		result, err := s.execWriteTool(r.Context(), ref, tool, rawArgs)
-		if err != nil {
+		result, execErr := s.execWriteTool(r.Context(), ref, tool, rawArgs)
+		if execErr != nil {
 			// 业务校验失败(循环挂载/CEO 不可删等)也算 approved 终态,错误进 Result 给 agent 纠错
-			_ = s.approval.FinishOrgApproval(r.Context(), ref.sessionID, requestID, "approved", "执行失败: "+err.Error())
-			writeRPCResult(w, rpcID, textResult("已批准但执行失败: "+err.Error()))
+			_ = s.approval.FinishToolApproval(r.Context(), ref.sessionID, requestID, "approved", "执行失败: "+execErr.Error())
+			writeRPCResult(w, rpcID, textResult("已批准但执行失败: "+execErr.Error()))
 			return
 		}
-		_ = s.approval.FinishOrgApproval(r.Context(), ref.sessionID, requestID, "approved", result)
+		_ = s.approval.FinishToolApproval(r.Context(), ref.sessionID, requestID, "approved", result)
 		writeRPCResult(w, rpcID, textResult(result))
 	case <-time.After(s.approvalTimeout):
-		_ = s.approval.FinishOrgApproval(r.Context(), ref.sessionID, requestID, "expired", "")
+		_ = s.approval.FinishToolApproval(r.Context(), ref.sessionID, requestID, "expired", "")
 		writeRPCResult(w, rpcID, textResult("审批超时，操作未执行"))
 	case <-r.Context().Done():
 		// 请求 ctx 已死,用 Background 调 Finish
-		_ = s.approval.FinishOrgApproval(context.Background(), ref.sessionID, requestID, "expired", "")
+		_ = s.approval.FinishToolApproval(context.Background(), ref.sessionID, requestID, "expired", "")
 	}
 }
 

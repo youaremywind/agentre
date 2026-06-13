@@ -186,20 +186,17 @@ func TestOrgMCP_OrgGetReturnsLoadResult(t *testing.T) {
 
 func TestOrgMCP_WriteToolRouting(t *testing.T) {
 	Convey("写工具经 handleWriteTool(登记审批);非组织工具 → JSON-RPC error(-32601 unknown tool)", t, func() {
-		Convey("org 写工具 → 走审批编排(BeginOrgApproval 被调到),拒绝后返回成功体", func() {
+		Convey("org 写工具 → 走审批编排(BeginToolApproval 被调到),拒绝后返回成功体", func() {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 			s, d := newWriteSvc(ctrl)
 			d.lookup.EXPECT().Find(gomock.Any(), int64(7)).Return(orgEnabledAgent(7), nil)
-			begun := make(chan string, 1)
-			captureBegin(d, 99, begun)
-			d.apv.EXPECT().FinishOrgApproval(gomock.Any(), int64(99), gomock.Any(), "denied", gomock.Any()).Return(nil)
+			apvCh := beginCh(d, 99)
+			d.apv.EXPECT().FinishToolApproval(gomock.Any(), int64(99), gomock.Any(), "denied", gomock.Any()).Return(nil)
 
 			token := s.mcpHandlerInit().MintToken(7, 99)
 			w, done := callWrite(s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"org_create_department","arguments":{"name":"x"}}}`, token)
-			reqID := <-begun // 已登记审批 → 接线生效
-			_, err := s.AnswerOrgApproval(t.Context(), &AnswerOrgApprovalRequest{SessionID: 99, RequestID: reqID, Allow: false})
-			So(err, ShouldBeNil)
+			apvCh <- false // 经 chat_svc 返回的 channel 模拟前端拒绝
 			<-done
 			So(w.Code, ShouldEqual, http.StatusOK)
 		})

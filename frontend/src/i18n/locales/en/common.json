@@ -360,7 +360,7 @@
       "waiting": "WAITING · Awaiting reply"
     }
   },
-  "orgApproval": {
+  "toolApproval": {
     "title": "Org structure operation approval",
     "approve": "Approve",
     "deny": "Reject",

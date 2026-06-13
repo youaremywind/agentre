@@ -28,7 +28,7 @@ import { CanonicalToolRouter } from "./canonical-tool/registry";
 import { CompactBoundaryDivider } from "./compact-boundary-divider";
 import { MarkdownText, StreamingMarkdown } from "./markdown-text";
 import { MessageRow, MessageCopyButton } from "./message-row";
-import { OrgApprovalCard } from "./org-approval/card";
+import { ToolApprovalCard } from "./tool-approval/card";
 import { ThinkingBlock } from "./thinking-block";
 import type { TranscriptRow, TranscriptRowItem } from "./transcript-rows";
 import type { AgentColor } from "./types";
@@ -527,12 +527,12 @@ function RenderItemView({ item }: { item: TranscriptRowItem }) {
           tabStateKey={ctx?.tabStateKey}
         />
       );
-    case "org_approval":
-      // 组织架构写工具审批卡:不走 CanonicalToolRouter,按 block.type 直接路由。
-      // approval 从 block.orgApproval 取,sessionId 从渲染上下文取(同 tool 卡)。
-      return item.block.orgApproval ? (
-        <OrgApprovalCard
-          approval={item.block.orgApproval}
+    case "tool_approval":
+      // 内置写工具审批卡:不走 CanonicalToolRouter,按 block.type 直接路由。
+      // approval 从 block.toolApproval 取,sessionId 从渲染上下文取(同 tool 卡)。
+      return item.block.toolApproval ? (
+        <ToolApprovalCard
+          approval={item.block.toolApproval}
           sessionId={ctx?.sessionId ?? 0}
         />
       ) : null;

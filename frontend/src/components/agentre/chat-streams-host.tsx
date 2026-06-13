@@ -53,11 +53,11 @@ export function ChatStreamsHost(): React.ReactElement | null {
   const markToolPermissionResolved = useChatStreamsStore(
     (s) => s.markToolPermissionResolved,
   );
-  const appendLiveOrgApproval = useChatStreamsStore(
-    (s) => s.appendLiveOrgApproval,
+  const appendLiveToolApproval = useChatStreamsStore(
+    (s) => s.appendLiveToolApproval,
   );
-  const markOrgApprovalResolved = useChatStreamsStore(
-    (s) => s.markOrgApprovalResolved,
+  const markToolApprovalResolved = useChatStreamsStore(
+    (s) => s.markToolApprovalResolved,
   );
   const patchLiveUsage = useChatStreamsStore((s) => s.patchLiveUsage);
   const patchLiveContextWindow = useChatStreamsStore(
@@ -175,11 +175,12 @@ export function ChatStreamsHost(): React.ReactElement | null {
             );
           }
           return;
-        case "org_approval": {
-          // 组织架构写工具审批。pending=新卡,其余=同 requestId 决议更新。
+        case "tool_approval": {
+          // 内置写工具审批。pending=新卡,其余=同 requestId 决议更新。
           if (!ev.requestId) return;
           clearLiveRetry(sessionId);
           const payload = {
+            toolKey: ev.toolKey ?? "",
             requestId: ev.requestId,
             toolName: ev.toolName ?? "",
             toolInput: ev.toolInput,
@@ -188,9 +189,9 @@ export function ChatStreamsHost(): React.ReactElement | null {
           };
           if (ev.status === "pending") {
             bumpSessionTabToAfterPinned(sessionId);
-            appendLiveOrgApproval(sessionId, payload);
+            appendLiveToolApproval(sessionId, payload);
           } else {
-            markOrgApprovalResolved(sessionId, payload);
+            markToolApprovalResolved(sessionId, payload);
           }
           return;
         }
@@ -307,8 +308,8 @@ export function ChatStreamsHost(): React.ReactElement | null {
       markAskUserQuestionAnswered,
       appendLiveToolPermissionRequest,
       markToolPermissionResolved,
-      appendLiveOrgApproval,
-      markOrgApprovalResolved,
+      appendLiveToolApproval,
+      markToolApprovalResolved,
       patchLiveUsage,
       patchLiveContextWindow,
       appendLiveCompactBoundary,
