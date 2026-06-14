@@ -1,11 +1,25 @@
 package claudeskill
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/agentre-ai/agentre/internal/pkg/agentskill"
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+// mustSkill 在 skillsDir 下造一个合法 skill 目录(含 SKILL.md)。
+func mustSkill(t *testing.T, skillsDir, name string) {
+	t.Helper()
+	dir := filepath.Join(skillsDir, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: "+name+"\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestParsePluginList(t *testing.T) {
 	Convey("解析 plugin list --json", t, func() {
@@ -20,6 +34,8 @@ func TestParsePluginList(t *testing.T) {
 		So(packs[0].Name, ShouldEqual, "superpowers") // id 取 @ 前段
 		So(packs[0].Installed, ShouldBeTrue)
 		So(packs[0].Source, ShouldEqual, agentskill.SourceInstalled)
+		So(packs[0].GloballyEnabled, ShouldBeTrue)  // superpowers enabled:true
+		So(packs[1].GloballyEnabled, ShouldBeFalse) // opsctl enabled:false
 		Convey("空/坏 JSON → 空,不 panic", func() {
 			p, _ := parsePluginList([]byte(""))
 			So(p, ShouldResemble, []agentskill.SkillPack{})
@@ -31,6 +47,43 @@ func TestParsePluginList(t *testing.T) {
 			So(len(p), ShouldEqual, 1)
 			So(p[0].ID, ShouldEqual, "barepack")
 			So(p[0].Name, ShouldEqual, "barepack")
+		})
+		Convey("installPath 命中 → Skills 填上包内 skill 名", func() {
+			root := t.TempDir()
+			skills := filepath.Join(root, "skills")
+			mustSkill(t, skills, "alpha")
+			mustSkill(t, skills, "beta")
+			raw := []byte(`[{"id":"sp@x","enabled":true,"scope":"user","installPath":"` + root + `"}]`)
+			p, _ := parsePluginList(raw)
+			So(len(p), ShouldEqual, 1)
+			So(p[0].Skills, ShouldResemble, []string{"alpha", "beta"})
+		})
+		Convey("无 installPath → Skills 为空(不 panic)", func() {
+			So(packs[0].Skills, ShouldBeEmpty)
+		})
+	})
+}
+
+func TestScanSkills(t *testing.T) {
+	Convey("扫描 plugin installPath 下的 skills/*/SKILL.md", t, func() {
+		root := t.TempDir()
+		skills := filepath.Join(root, "skills")
+		mustSkill(t, skills, "brainstorming")
+		mustSkill(t, skills, "tdd")
+		// 没有 SKILL.md 的目录不算 skill
+		So(os.MkdirAll(filepath.Join(skills, "not-a-skill"), 0o755), ShouldBeNil)
+		// skills 下的散落文件不算
+		So(os.WriteFile(filepath.Join(skills, "README.md"), []byte("x"), 0o644), ShouldBeNil)
+
+		So(scanSkills(root), ShouldResemble, []string{"brainstorming", "tdd"})
+
+		Convey("installPath 为空 → nil", func() {
+			So(scanSkills(""), ShouldBeNil)
+		})
+		Convey("没有 skills 目录(纯命令插件)→ nil", func() {
+			cmdOnly := t.TempDir()
+			So(os.MkdirAll(filepath.Join(cmdOnly, "commands"), 0o755), ShouldBeNil)
+			So(scanSkills(cmdOnly), ShouldBeNil)
 		})
 	})
 }

@@ -6,10 +6,10 @@ import { ListAgentSkillPacks } from "@/../wailsjs/go/app/App";
 import type { CatalogItem } from "../capability/catalog";
 import { skillPacksToCatalog } from "./skill-catalog";
 
-// useSkillCatalog 懒加载某 agent 的技能目录。组件应在「打开添加弹窗」时
-// 调一次 load(false)，「重新扫描」时 load(true)。不在 mount 时自动拉，
-// 避免每次打开面板都跑后端 CLI(plugin list)。
-export function useSkillCatalog(agentId: number) {
+// useSkillCatalog 加载某 agent 的技能目录。默认懒加载——组件在「打开添加弹窗」
+// 时调一次 load(false)，「重新扫描」时 load(true)。
+// 传入 autoLoad=true 时在 mount 时自动拉一次（技能区可见时用），默认 false 保持懒加载。
+export function useSkillCatalog(agentId: number, autoLoad = false) {
   const { t } = useTranslation();
   const [items, setItems] = React.useState<CatalogItem[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -32,6 +32,10 @@ export function useSkillCatalog(agentId: number) {
     },
     [agentId, t],
   );
+
+  React.useEffect(() => {
+    if (autoLoad) void load(false);
+  }, [autoLoad, load]);
 
   return { items, loading, error, fetched, load, reload: () => load(false) };
 }

@@ -98,10 +98,11 @@ function renderPanel(
   return { onUpdate, onDelete, onUploadAvatar, onDeleteAvatar };
 }
 
-function withCaps(caps: string[]) {
+function withCaps(caps: string[], packs: Array<Record<string, unknown>> = []) {
   // 面板渲染即调 GetBackendCapabilities（经 useBackendCapabilities）。
   // 该 binding 走真实 wailsjs App.js（读 window.go.app.App.*），故测试
   // 把返回挂到 window.go 上覆盖默认空能力（与 chat-panel 等既有模式一致）。
+  // 技能区在 caps 含 "skills" 时挂载即拉目录，故 packs 可注入 globallyEnabled 等。
   window.go = {
     app: {
       App: {
@@ -109,7 +110,7 @@ function withCaps(caps: string[]) {
           capabilities: caps,
           permissionModeMeta: null,
         }),
-        ListAgentSkillPacks: vi.fn().mockResolvedValue({ packs: [] }),
+        ListAgentSkillPacks: vi.fn().mockResolvedValue({ packs }),
       },
     },
   };
@@ -257,7 +258,7 @@ describe("OrgDetailAgent", () => {
     ]);
     expect(await screen.findByText("Skills · Skill Packs")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Add Skill" }),
+      screen.getByRole("button", { name: "Manage skills" }),
     ).toBeInTheDocument();
   });
 
@@ -329,5 +330,76 @@ describe("OrgDetailAgent", () => {
     );
     await screen.findByText("Tools · TOOLS");
     expect(screen.getByText("Org Structure")).toBeInTheDocument();
+  });
+
+  it("renders a globally-on pack as a locked (non-removable) inherited chip", async () => {
+    withCaps(
+      ["skills"],
+      [
+        {
+          id: "global-on@m",
+          name: "global-on",
+          description: "globally enabled pack",
+          skills: ["a", "b"],
+          source: "m",
+          recommended: false,
+          installed: true,
+          enabled: true,
+          globallyEnabled: true,
+        },
+      ],
+    );
+    // agent 本地无 override：芯片纯由全局已启用 overlay 派生 → 锁定不可移除。
+    renderPanel({ agentBackendId: 5, skills: [] }, [
+      backend({ id: 5, type: "claudecode" }),
+    ]);
+    const chip = await screen.findByText("global-on");
+    expect(chip).toBeInTheDocument();
+    // 继承芯片无移除按钮（locked）。
+    expect(
+      screen.queryByRole("button", { name: "Remove global-on" }),
+    ).toBeNull();
+  });
+
+  it("forces a globally-off installed pack to off and saves enabled:false", async () => {
+    withCaps(
+      ["skills"],
+      [
+        {
+          id: "global-off@m",
+          name: "global-off",
+          description: "installed, globally disabled",
+          skills: ["c"],
+          source: "m",
+          recommended: false,
+          installed: true,
+          enabled: false,
+          globallyEnabled: false,
+        },
+      ],
+    );
+    const user = userEvent.setup();
+    const { onUpdate } = renderPanel({ agentBackendId: 5, skills: [] }, [
+      backend({ id: 5, type: "claudecode" }),
+    ]);
+    await user.click(
+      await screen.findByRole("button", { name: "Manage skills" }),
+    );
+    // 三态行的「Off」分段：把该 installed pack 强制关。
+    await user.click(await screen.findByRole("button", { name: "Off" }));
+    await user.click(screen.getByText("Done"));
+    const saveBtn = screen
+      .getAllByRole("button")
+      .find((b) => b.textContent?.trim() === "Save");
+    if (!saveBtn) throw new Error("Save button not found");
+    await user.click(saveBtn);
+    await waitFor(() => expect(onUpdate).toHaveBeenCalled());
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skills: expect.arrayContaining([
+          expect.objectContaining({ id: "global-off@m", enabled: false }),
+        ]),
+      }),
+    );
   });
 });

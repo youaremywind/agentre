@@ -98,36 +98,30 @@ func (s *Service) ListAgentSkillPacks(ctx context.Context, agentID int64, _ bool
 	dto := make([]SkillPackDTO, 0, len(mr.packs))
 	for i, p := range mr.packs {
 		dto = append(dto, SkillPackDTO{
-			ID:          p.ID,
-			Name:        p.Name,
-			Description: p.Description,
-			Skills:      p.Skills,
-			Source:      string(p.Source),
-			Recommended: p.Recommended,
-			Installed:   p.Installed,
-			Enabled:     mr.enabled[i],
+			ID:              p.ID,
+			Name:            p.Name,
+			Description:     p.Description,
+			Skills:          p.Skills,
+			Source:          string(p.Source),
+			Recommended:     p.Recommended,
+			Installed:       p.Installed,
+			Enabled:         mr.enabled[i],
+			GloballyEnabled: p.GloballyEnabled,
 		})
 	}
 	return SkillCatalogDTO{Packs: dto}, nil
 }
 
-// EnabledPluginsMap 全部已安装 → 是否授予(含 false,用于约束子集)。注入用。
+// EnabledPluginsMap 返回该 agent 的显式覆盖(强制开=true / 强制关=false)。
+// 其余(含全局已开但未覆盖)不出现在 map → CLI 沿用全局 enabledPlugins,实现继承。
 func (s *Service) EnabledPluginsMap(ctx context.Context, agentID int64) (map[string]bool, error) {
 	a, err := s.agent.Find(ctx, agentID)
 	if err != nil || a == nil {
 		return nil, err
 	}
-	installed, err := s.discover(ctx, a)
-	if err != nil {
-		return nil, err
-	}
-	granted := map[string]bool{}
-	for _, id := range a.GetEnabledPackIDs() {
-		granted[id] = true
-	}
 	out := map[string]bool{}
-	for _, p := range installed {
-		out[p.ID] = granted[p.ID]
+	for _, it := range a.GetSkills() {
+		out[it.ID] = it.Enabled
 	}
 	return out, nil
 }

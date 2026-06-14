@@ -7,6 +7,8 @@ export type GrantedChip = {
   label: string;
   count?: number;
   badge?: string; // already-resolved string (e.g. "需审批")
+  tone?: "inherit" | "on" | "off"; // 默认 on
+  locked?: boolean; // true = 不可移除(继承)
 };
 
 type Props = {
@@ -45,33 +47,56 @@ export function GrantedChips(props: Props) {
             {props.emptyLabel}
           </span>
         )}
-        {props.chips.map((chip) => (
-          <span
-            key={chip.id}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1"
-          >
-            <Icon className="size-3 text-primary-text" aria-hidden="true" />
-            <span className="font-mono text-2xs font-medium">{chip.label}</span>
-            {typeof chip.count === "number" && (
-              <span className="rounded bg-secondary px-1 font-mono text-2xs text-muted-foreground">
-                {chip.count}
-              </span>
-            )}
-            {chip.badge && (
-              <span className="rounded bg-status-waiting-bg px-1 font-mono text-2xs text-status-waiting">
-                {chip.badge}
-              </span>
-            )}
-            <button
-              type="button"
-              aria-label={props.removeLabel(chip.label)}
-              onClick={() => props.onRemove(chip.id)}
-              className="text-muted-foreground hover:text-foreground"
+        {props.chips.map((chip) => {
+          const tone = chip.tone ?? "on";
+          const toneClass =
+            tone === "inherit"
+              ? "border-border bg-secondary/60 text-muted-foreground"
+              : tone === "off"
+                ? "border-destructive/30 bg-destructive/10 text-destructive"
+                : "border-border bg-card";
+          const iconClass =
+            tone === "off" ? "text-destructive" : "text-primary-text";
+          return (
+            <span
+              key={chip.id}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-2 py-1",
+                toneClass,
+              )}
             >
-              <X className="size-3" />
-            </button>
-          </span>
-        ))}
+              <Icon className={cn("size-3", iconClass)} aria-hidden="true" />
+              <span
+                className={cn(
+                  "font-mono text-2xs font-medium",
+                  tone === "off" && "line-through",
+                )}
+              >
+                {chip.label}
+              </span>
+              {typeof chip.count === "number" && (
+                <span className="rounded bg-secondary px-1 font-mono text-2xs text-muted-foreground">
+                  {chip.count}
+                </span>
+              )}
+              {chip.badge && (
+                <span className="rounded bg-status-waiting-bg px-1 font-mono text-2xs text-status-waiting">
+                  {chip.badge}
+                </span>
+              )}
+              {!chip.locked && (
+                <button
+                  type="button"
+                  aria-label={props.removeLabel(chip.label)}
+                  onClick={() => props.onRemove(chip.id)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-3" />
+                </button>
+              )}
+            </span>
+          );
+        })}
         <button
           type="button"
           aria-label={props.addLabel}

@@ -1799,8 +1799,9 @@
       "savedAt": "已保存 · {{time}}",
       "skills": {
         "sectionTitle": "技能 · SKILL PACKS",
-        "enabledCount": "{{count}} 已启用",
-        "add": "添加技能",
+        "manage": "管理技能",
+        "count": "继承 {{inherit}} · 强制开 {{on}} · 强制关 {{off}}",
+        "inheritNote": "灰=继承全局已启用 · 蓝=仅此 agent 强制开 · 红=仅此 agent 强制关(不动全局)。改动下次起新会话生效。",
         "empty": "未授予技能包",
         "personalNote": "始终可用 · 个人技能（~/.claude/skills）不可单独开关",
         "summary": "{{enabled}} 启用 · {{disabled}} 禁用",
@@ -1834,16 +1835,13 @@
       },
       "skillCatalog": {
         "group": {
-          "recommended": "推荐 · AGENTRE 精选",
-          "installed": "已安装 · 发现自此后端",
-          "available": "可安装 · MARKETPLACE"
+          "available": "可安装 · MARKETPLACE",
+          "inheritedOn": "继承(全局已开)",
+          "enableable": "可启用(已安装·全局未开)"
         },
-        "badge": {
-          "recommended": "推荐",
-          "installed": "已装",
-          "needInstall": "需先安装"
-        },
-        "needInstall": "需先安装"
+        "needInstall": "需先安装",
+        "globalEnabled": "全局已启用",
+        "globalDisabled": "全局未启用"
       },
       "systemPrompt": "系统提示词",
       "systemPromptHint": "风格 / 语气 / 边界都写进 system prompt — 不另设字段。",
@@ -2366,6 +2364,11 @@
       "selected": "已选 {{count}} 项 · 保存后下次起新会话生效",
       "remove": "移除 {{name}}",
       "close": "关闭"
+    },
+    "triState": {
+      "inherit": "继承",
+      "on": "开",
+      "off": "关"
     }
   }
 }

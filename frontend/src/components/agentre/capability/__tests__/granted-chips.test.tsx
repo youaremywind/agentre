@@ -57,4 +57,27 @@ describe("GrantedChips", () => {
     setup({ chips: [], emptyLabel: "未授予技能包" });
     expect(screen.getByText("未授予技能包")).toBeInTheDocument();
   });
+
+  it("inherited chips have no remove button; off chips are struck through", () => {
+    render(
+      <GrantedChips
+        title="技能"
+        chipIcon={Boxes}
+        chips={[
+          { id: "i@m", label: "inherited-pack", tone: "inherit", locked: true },
+          { id: "off@m", label: "off-pack", tone: "off" },
+        ]}
+        addLabel="管理技能"
+        removeLabel={(name) => `移除 ${name}`}
+        onRemove={() => {}}
+        onAdd={() => {}}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "移除 inherited-pack" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "移除 off-pack" }),
+    ).toBeInTheDocument();
+  });
 });

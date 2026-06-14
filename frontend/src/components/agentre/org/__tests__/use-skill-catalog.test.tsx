@@ -66,4 +66,11 @@ describe("useSkillCatalog", () => {
     });
     await waitFor(() => expect(result.current.error).toBeTruthy());
   });
+
+  it("auto-loads once on mount when autoLoad is true", async () => {
+    const fn = stubBinding([]);
+    renderHook(() => useSkillCatalog(7, true));
+    await waitFor(() => expect(fn).toHaveBeenCalledTimes(1));
+    expect(fn).toHaveBeenCalledWith(7, false);
+  });
 });

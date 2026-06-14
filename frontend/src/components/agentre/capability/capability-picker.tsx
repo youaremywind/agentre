@@ -6,10 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
+import { TriStateToggle } from "./tri-state-toggle";
 import {
   groupCatalogItems,
   type CatalogBadgeTone,
   type CatalogItem,
+  type TriState,
 } from "./catalog";
 
 type Props = {
@@ -21,6 +23,9 @@ type Props = {
   loading?: boolean;
   footerNote?: string; // 已 t() 解析（如个人技能只读提示）
   onToggle: (id: string) => void;
+  onSetState?: (id: string, next: TriState) => void;
+  triLabels?: Record<TriState, string>; // 已 t() 解析,三态行用
+  footerSummary?: string; // 已 t() 解析,替代默认"已选 N"
   onConfirm: () => void;
   onCancel: () => void;
   onRescan?: () => void;
@@ -138,6 +143,54 @@ export function CapabilityPicker(props: Props) {
                   )}
                   {g.items.map((it) => {
                     const disabled = Boolean(it.disabledReason);
+                    if (it.state && props.triLabels) {
+                      return (
+                        <div
+                          key={it.id}
+                          className={cn(
+                            "flex items-center gap-2.5 rounded-md border border-border bg-card px-2.5 py-2",
+                            disabled && "opacity-50",
+                          )}
+                        >
+                          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                            <span className="truncate text-xs font-semibold">
+                              {it.name}
+                            </span>
+                            <span className="truncate font-mono text-2xs text-muted-foreground">
+                              {it.description}
+                            </span>
+                          </span>
+                          {it.badges && it.badges.length > 0 && (
+                            <span className="flex shrink-0 items-center gap-1">
+                              {it.badges.map((b) => (
+                                <span
+                                  key={b.label}
+                                  className={cn(
+                                    "rounded px-1.5 py-0.5 font-mono text-2xs font-semibold",
+                                    badgeToneClass[b.tone],
+                                  )}
+                                >
+                                  {b.label}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                          {disabled ? (
+                            <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+                              {it.disabledReason}
+                            </span>
+                          ) : (
+                            <TriStateToggle
+                              value={it.state}
+                              labels={props.triLabels}
+                              onChange={(next) =>
+                                props.onSetState?.(it.id, next)
+                              }
+                            />
+                          )}
+                        </div>
+                      );
+                    }
                     return (
                       <button
                         key={it.id}
@@ -210,7 +263,8 @@ export function CapabilityPicker(props: Props) {
           {/* footer */}
           <div className="flex items-center gap-2.5 border-t border-border bg-secondary/30 px-[18px] py-3">
             <span className="flex-1 font-mono text-2xs text-muted-foreground">
-              {t("capability.picker.selected", { count: selectedCount })}
+              {props.footerSummary ??
+                t("capability.picker.selected", { count: selectedCount })}
             </span>
             <Button variant="outline" size="sm" onClick={props.onCancel}>
               {t("common.cancel")}

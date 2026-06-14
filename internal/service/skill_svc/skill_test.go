@@ -30,7 +30,7 @@ func TestListAgentSkillPacks(t *testing.T) {
 		al.EXPECT().Find(gomock.Any(), int64(1)).Return(ag, nil).AnyTimes()
 		bl.EXPECT().Find(gomock.Any(), int64(9)).Return(&agent_backend_entity.AgentBackend{Type: string(agent_backend_entity.TypeClaudeCode)}, nil).AnyTimes()
 		restore := agentskill.SwapDiscovererForTest(agent_backend_entity.TypeClaudeCode, fakeDisc{[]agentskill.SkillPack{
-			{ID: "superpowers@claude-plugins-official", Name: "superpowers", Installed: true, Source: agentskill.SourceInstalled},
+			{ID: "superpowers@claude-plugins-official", Name: "superpowers", Installed: true, Source: agentskill.SourceInstalled, GloballyEnabled: true},
 			{ID: "opsctl@opskat", Name: "opsctl", Installed: true, Source: agentskill.SourceInstalled},
 		}})
 		defer restore()
@@ -50,12 +50,22 @@ func TestListAgentSkillPacks(t *testing.T) {
 			So(byID["code-review@claude-plugins-official"].Recommended, ShouldBeTrue)
 			So(byID["code-review@claude-plugins-official"].Installed, ShouldBeFalse)
 			So(byID["code-review@claude-plugins-official"].Enabled, ShouldBeFalse)
+			So(byID["superpowers@claude-plugins-official"].GloballyEnabled, ShouldBeTrue)
+			So(byID["opsctl@opskat"].GloballyEnabled, ShouldBeFalse)
 		})
-		Convey("EnabledPluginsMap = 全部已安装 → 是否授予(含 false)", func() {
+		Convey("EnabledPluginsMap 只发 agent 显式覆盖(true/false),其余继承", func() {
+			ag.SetSkills([]agent_entity.AgentSkillItem{
+				{ID: "superpowers@claude-plugins-official", Enabled: true},      // 强制开
+				{ID: "frontend-design@claude-plugins-official", Enabled: false}, // 强制关(全局开的也能关)
+			})
 			m, err := s.EnabledPluginsMap(context.Background(), 1)
 			So(err, ShouldBeNil)
 			So(m["superpowers@claude-plugins-official"], ShouldBeTrue)
-			So(m["opsctl@opskat"], ShouldBeFalse) // 已装未授予 → 显式 false(约束子集)
+			val, hasFD := m["frontend-design@claude-plugins-official"]
+			So(hasFD, ShouldBeTrue)
+			So(val, ShouldBeFalse)
+			_, hasOpsctl := m["opsctl@opskat"] // 已装、未覆盖 → 不在 map(继承全局)
+			So(hasOpsctl, ShouldBeFalse)
 		})
 	})
 }

@@ -47,6 +47,7 @@ import {
   type agent_backend_svc,
 } from "../../../../wailsjs/go/models";
 
+import type { TriState } from "../capability/catalog";
 import { useBackendCapabilities } from "../capability/use-backend-capabilities";
 import { CapabilityPicker } from "../capability/capability-picker";
 import { GrantedChips, type GrantedChip } from "../capability/granted-chips";
@@ -134,7 +135,8 @@ export function OrgDetailAgent(props: Props) {
     (props.agent.backend?.id === backendId ? props.agent.backend : undefined);
 
   const { caps } = useBackendCapabilities(selectedBackend?.type);
-  const skillCatalog = useSkillCatalog(props.agent.id);
+  const skillsCapOn = caps?.has("skills") ?? false;
+  const skillCatalog = useSkillCatalog(props.agent.id, skillsCapOn);
   const [skillPickerOpen, setSkillPickerOpen] = React.useState(false);
 
   const handleSave = async () => {
@@ -197,39 +199,71 @@ export function OrgDetailAgent(props: Props) {
     for (const it of skillCatalog.items) m.set(it.id, it.contents?.length ?? 0);
     return m;
   }, [skillCatalog.items]);
-  const skillChips: GrantedChip[] = skills
-    .filter((s) => s.enabled)
-    .map((s) => ({
+  const globallyOn = React.useMemo(
+    () =>
+      new Set(
+        skillCatalog.items.filter((i) => i.globallyEnabled).map((i) => i.id),
+      ),
+    [skillCatalog.items],
+  );
+
+  const skillStateOf = (id: string): TriState => {
+    const s = skills.find((x) => x.id === id);
+    if (!s) return "inherit";
+    return s.enabled ? "on" : "off";
+  };
+  const setSkillState = (id: string, next: TriState) =>
+    setSkills((prev) => {
+      const rest = prev.filter((s) => s.id !== id);
+      if (next === "inherit") return rest;
+      return [
+        ...rest,
+        department_svc.AgentSkillDTO.createFrom({ id, enabled: next === "on" }),
+      ];
+    });
+
+  const triLabels: Record<TriState, string> = {
+    inherit: t("capability.triState.inherit"),
+    on: t("capability.triState.on"),
+    off: t("capability.triState.off"),
+  };
+
+  const onSkills = skills.filter((s) => s.enabled);
+  const offSkills = skills.filter((s) => !s.enabled);
+  const overriddenIds = new Set(skills.map((s) => s.id));
+  const inheritedIds = [...globallyOn].filter((id) => !overriddenIds.has(id));
+  const skillChips: GrantedChip[] = [
+    ...inheritedIds.map((id) => ({
+      id,
+      label: idToName(id),
+      count: skillCountById.get(id),
+      tone: "inherit" as const,
+      locked: true,
+    })),
+    ...onSkills.map((s) => ({
       id: s.id,
       label: idToName(s.id),
       count: skillCountById.get(s.id),
-    }));
+      tone: "on" as const,
+    })),
+    ...offSkills.map((s) => ({
+      id: s.id,
+      label: idToName(s.id),
+      count: skillCountById.get(s.id),
+      tone: "off" as const,
+    })),
+  ];
 
-  // 弹窗 items：目录 overlay 本地选择态(本地优先于后端 enabled)
-  const localEnabled = React.useMemo(
-    () => new Set(skills.filter((s) => s.enabled).map((s) => s.id)),
-    [skills],
-  );
   const pickerItems = skillCatalog.items.map((it) => ({
     ...it,
-    enabled: localEnabled.has(it.id),
+    state: it.state ? skillStateOf(it.id) : undefined,
   }));
 
   const openSkillPicker = () => {
     setSkillPickerOpen(true);
     if (!skillCatalog.fetched) void skillCatalog.load(false);
   };
-  const toggleSkillGrant = (id: string) => {
-    setSkills((prev) => {
-      const idx = prev.findIndex((s) => s.id === id);
-      if (idx >= 0) return prev.filter((s) => s.id !== id); // 取消授予 = 移除
-      return [
-        ...prev,
-        department_svc.AgentSkillDTO.createFrom({ id, enabled: true }),
-      ];
-    });
-  };
-  const removeSkill = (id: string) =>
+  const removeSkillOverride = (id: string) =>
     setSkills((prev) => prev.filter((s) => s.id !== id));
 
   const promptCharCount = prompt.replace(/\s/g, "").length;
@@ -475,17 +509,19 @@ export function OrgDetailAgent(props: Props) {
             <>
               <GrantedChips
                 title={t("org.agent.skills.sectionTitle")}
-                countLabel={t("org.agent.skills.enabledCount", {
-                  count: skillChips.length,
+                countLabel={t("org.agent.skills.count", {
+                  inherit: inheritedIds.length,
+                  on: onSkills.length,
+                  off: offSkills.length,
                 })}
                 chipIcon={Boxes}
                 chips={skillChips}
-                addLabel={t("org.agent.skills.add")}
+                addLabel={t("org.agent.skills.manage")}
                 removeLabel={(name) => t("capability.picker.remove", { name })}
-                onRemove={removeSkill}
+                onRemove={removeSkillOverride}
                 onAdd={openSkillPicker}
                 emptyLabel={t("org.agent.skills.empty")}
-                footerNote={t("org.agent.skills.personalNote")}
+                footerNote={t("org.agent.skills.inheritNote")}
               />
               <CapabilityPicker
                 open={skillPickerOpen}
@@ -494,8 +530,15 @@ export function OrgDetailAgent(props: Props) {
                 searchPlaceholder={t("org.agent.skillPicker.searchPlaceholder")}
                 items={pickerItems}
                 loading={skillCatalog.loading}
+                triLabels={triLabels}
+                footerSummary={t("org.agent.skills.count", {
+                  inherit: inheritedIds.length,
+                  on: onSkills.length,
+                  off: offSkills.length,
+                })}
                 footerNote={t("org.agent.skillPicker.personalNote")}
-                onToggle={toggleSkillGrant}
+                onToggle={() => {}}
+                onSetState={setSkillState}
                 onConfirm={() => setSkillPickerOpen(false)}
                 onCancel={() => setSkillPickerOpen(false)}
                 onRescan={() => void skillCatalog.load(true)}

@@ -96,6 +96,36 @@ describe("CapabilityPicker", () => {
     expect(onConfirm).toHaveBeenCalled();
   });
 
+  it("renders a tri-state toggle for items with state and calls onSetState", async () => {
+    const user = userEvent.setup();
+    const onSetState = vi.fn();
+    render(
+      <CapabilityPicker
+        open
+        title="管理技能"
+        searchPlaceholder="搜索"
+        items={[
+          {
+            id: "sp@m",
+            name: "superpowers",
+            description: "d",
+            group: "继承",
+            enabled: true,
+            state: "inherit",
+            globallyEnabled: true,
+          },
+        ]}
+        triLabels={{ inherit: "继承", on: "开", off: "关" }}
+        onToggle={() => {}}
+        onSetState={onSetState}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "关" }));
+    expect(onSetState).toHaveBeenCalledWith("sp@m", "off");
+  });
+
   it("shows loading and empty states", () => {
     const { rerender } = render(<div />) as unknown as { rerender: never };
     void rerender;

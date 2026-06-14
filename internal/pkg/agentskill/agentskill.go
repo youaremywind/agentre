@@ -19,13 +19,14 @@ const (
 
 // SkillPack 一个技能包(= 一个 Claude Code plugin)。ID = "name@marketplace"。
 type SkillPack struct {
-	ID          string
-	Name        string
-	Description string
-	Skills      []string // 包内 skill 名(用于 UI 展开/文案)
-	Source      Source
-	Recommended bool
-	Installed   bool
+	ID              string
+	Name            string
+	Description     string
+	Skills          []string // 包内 skill 名(用于 UI 展开/文案)
+	Source          Source
+	Recommended     bool
+	Installed       bool
+	GloballyEnabled bool // CLI 全局是否启用(claude plugin list --json 的 enabled)
 }
 
 // Recommended 返回 agentre 精选包(静态,纯函数)。id 用官方 marketplace 全名。

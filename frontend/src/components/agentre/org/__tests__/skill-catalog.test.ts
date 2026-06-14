@@ -13,38 +13,45 @@ const pack = (over: Record<string, unknown> = {}) => ({
   recommended: false,
   installed: true,
   enabled: false,
+  globallyEnabled: false,
   ...over,
 });
 
 describe("skillPacksToCatalog", () => {
-  it("maps a recommended+installed pack into the recommended group with both badges", () => {
+  it("globally-enabled pack → inherited group, tri-state, with global-enabled note", () => {
     const [it0] = skillPacksToCatalog(
-      [pack({ recommended: true, installed: true, enabled: true })],
+      [pack({ installed: true, globallyEnabled: true })],
       t,
     );
-    expect(it0.group).toBe(t("org.agent.skillCatalog.group.recommended"));
-    expect(it0.enabled).toBe(true);
-    expect(it0.contents).toEqual(["a", "b"]);
-    expect(it0.badges?.map((b) => b.tone).sort()).toEqual([
-      "installed",
-      "recommended",
-    ]);
+    expect(it0.group).toBe(t("org.agent.skillCatalog.group.inheritedOn"));
+    expect(it0.state).toBe("inherit");
+    expect(it0.globallyEnabled).toBe(true);
+    expect(it0.description).toContain(
+      t("org.agent.skillCatalog.globalEnabled"),
+    );
     expect(it0.disabledReason).toBeUndefined();
   });
 
-  it("maps an installed-only pack into the installed group", () => {
-    const [it0] = skillPacksToCatalog([pack()], t);
-    expect(it0.group).toBe(t("org.agent.skillCatalog.group.installed"));
-    expect(it0.badges?.map((b) => b.tone)).toEqual(["installed"]);
+  it("installed but globally-off pack → enableable group", () => {
+    const [it0] = skillPacksToCatalog(
+      [pack({ installed: true, globallyEnabled: false })],
+      t,
+    );
+    expect(it0.group).toBe(t("org.agent.skillCatalog.group.enableable"));
+    expect(it0.state).toBe("inherit");
+    expect(it0.description).toContain(
+      t("org.agent.skillCatalog.globalDisabled"),
+    );
+    expect(it0.disabledReason).toBeUndefined();
   });
 
-  it("maps an available (not installed) pack as disabled with needInstall badge", () => {
+  it("not-installed pack → available group, disabled with needInstall", () => {
     const [it0] = skillPacksToCatalog(
-      [pack({ source: "available", installed: false })],
+      [pack({ source: "available", installed: false, globallyEnabled: false })],
       t,
     );
     expect(it0.group).toBe(t("org.agent.skillCatalog.group.available"));
     expect(it0.disabledReason).toBe(t("org.agent.skillCatalog.needInstall"));
-    expect(it0.badges?.map((b) => b.tone)).toEqual(["needInstall"]);
+    expect(it0.state).toBeUndefined();
   });
 });

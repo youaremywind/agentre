@@ -1799,8 +1799,9 @@
       "savedAt": "Saved · {{time}}",
       "skills": {
         "sectionTitle": "Skills · Skill Packs",
-        "enabledCount": "{{count}} enabled",
-        "add": "Add Skill",
+        "manage": "Manage skills",
+        "count": "{{inherit}} inherited · {{on}} on · {{off}} off",
+        "inheritNote": "Gray = inherited from global · Blue = forced on for this agent · Red = forced off for this agent (global untouched). Changes apply on the agent's next new session.",
         "empty": "No skill packs granted",
         "personalNote": "Always available · personal skills (~/.claude/skills) can't be toggled individually",
         "summary": "{{enabled}} enabled · {{disabled}} disabled",
@@ -1834,16 +1835,13 @@
       },
       "skillCatalog": {
         "group": {
-          "recommended": "Recommended · Agentre picks",
-          "installed": "Installed · discovered on this backend",
-          "available": "Available · Marketplace"
+          "available": "Available · Marketplace",
+          "inheritedOn": "Inherited (on globally)",
+          "enableable": "Available to enable (installed)"
         },
-        "badge": {
-          "recommended": "Recommended",
-          "installed": "Installed",
-          "needInstall": "Install first"
-        },
-        "needInstall": "Install first"
+        "needInstall": "Install first",
+        "globalEnabled": "Globally enabled",
+        "globalDisabled": "Globally disabled"
       },
       "systemPrompt": "System Prompt",
       "systemPromptHint": "Put style, tone, and boundaries in the system prompt. No separate fields are used.",
@@ -2366,6 +2364,11 @@
       "selected": "{{count}} selected · applies on the agent's next new session after save",
       "remove": "Remove {{name}}",
       "close": "Close"
+    },
+    "triState": {
+      "inherit": "Inherit",
+      "on": "On",
+      "off": "Off"
     }
   }
 }
