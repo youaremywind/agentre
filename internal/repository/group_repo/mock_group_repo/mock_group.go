@@ -196,6 +196,20 @@ func (mr *MockGroupMemberRepoMockRecorder) ListByGroup(ctx, groupID any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByGroup", reflect.TypeOf((*MockGroupMemberRepo)(nil).ListByGroup), ctx, groupID)
 }
 
+// SetNickname mocks base method.
+func (m *MockGroupMemberRepo) SetNickname(ctx context.Context, id int64, nickname string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetNickname", ctx, id, nickname)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetNickname indicates an expected call of SetNickname.
+func (mr *MockGroupMemberRepoMockRecorder) SetNickname(ctx, id, nickname any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetNickname", reflect.TypeOf((*MockGroupMemberRepo)(nil).SetNickname), ctx, id, nickname)
+}
+
 // Update mocks base method.
 func (m_2 *MockGroupMemberRepo) Update(ctx context.Context, m *group_entity.GroupMember) error {
 	m_2.ctrl.T.Helper()

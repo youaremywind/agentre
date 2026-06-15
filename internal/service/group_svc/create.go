@@ -3,6 +3,7 @@ package group_svc
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cago-frame/cago/pkg/consts"
@@ -43,7 +44,7 @@ func (s *groupSvc) BuildCreateTurnMCP(_ context.Context, a *agent_entity.Agent, 
 // 批准后建群(发起者=主持人,项目继承发起会话)+ system 拉起消息 + brief 作为首条群消息
 // 投主持人触发首轮。返回写回 CLI 的 result 文本;拒绝/超时也是文本(nil err),镜像 orgtool ——
 // error 仅用于内部故障/校验失败。
-func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64) (string, error) {
+func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64, memberNicknames map[string]string) (string, error) {
 	// 按 DB 现状校验发起会话(token 无状态,签发后会话可能已归档/换 agent)。
 	sess, err := chat_repo.Session().Find(ctx, sessionID)
 	if err != nil {
@@ -64,7 +65,7 @@ func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int
 	// ToolKey=group_create;waiter 与前端应答路由 AnswerToolApproval 由 chat_svc 持有)。
 	requestID := uuid.NewString()
 	blk := &chatblocks.ToolApprovalBlock{ToolKey: toolKeyGroupCreate, RequestID: requestID, ToolName: "group_create",
-		ToolInput: map[string]any{"title": title, "memberNames": memberNames, "brief": brief, "workflowId": workflowID}, Status: "pending"}
+		ToolInput: map[string]any{"title": title, "memberNames": memberNames, "brief": brief, "workflowId": workflowID, "memberNicknames": memberNicknames}, Status: "pending"}
 	ch, err := s.gw.BeginToolApproval(ctx, sessionID, blk)
 	if err != nil {
 		return "", fmt.Errorf("审批通道不可用: %w", err)
@@ -97,6 +98,8 @@ func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int
 		return "已批准但执行失败: " + err.Error(), nil //nolint:nilerr // 失败编码进返回文本给 agent,不作 RPC error(镜像 orgtool)
 	}
 	g := detail.Group
+	// 群昵称(可选):建群后逐个落库(复用 SetMemberNickname 的唯一性校验),冲突/失败只 Warn。
+	s.applyCreateNicknames(ctx, detail.Members, memberNicknames)
 	// 群已落库即算成功,后续消息失败只 Warn 不回滚:agent 拿到 group id 后可在群内补发;
 	// 回滚反而会让用户已批准的操作凭空消失。
 	if _, perr := s.persistMessage(ctx, g, group_entity.SenderKindSystem, 0,
@@ -114,6 +117,25 @@ func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int
 	logger.Ctx(ctx).Info("group_svc.HandleGroupCreate: created",
 		zap.Int64("groupID", g.ID), zap.Int64("hostAgentID", agentID), zap.Int64("sessionID", sessionID))
 	return result, nil
+}
+
+// applyCreateNicknames 建群后把 group_create 带来的群昵称落到对应成员(best-effort)。
+// nicknames 键=成员显示名(建群此刻=agent 全局名,尚无昵称);经 SetMemberNickname 复用唯一性
+// 校验与事件推送,冲突/失败只 Warn 不阻断(群已建成,昵称属增益)。
+func (s *groupSvc) applyCreateNicknames(ctx context.Context, members []*group_entity.GroupMember, nicknames map[string]string) {
+	if len(nicknames) == 0 {
+		return
+	}
+	for _, m := range members {
+		nick := strings.TrimSpace(nicknames[s.names(ctx, m.AgentID)])
+		if nick == "" {
+			continue
+		}
+		if err := s.SetMemberNickname(ctx, m.ID, nick); err != nil {
+			logger.Ctx(ctx).Warn("group_svc.HandleGroupCreate: apply nickname failed",
+				zap.Int64("memberId", m.ID), zap.String("nickname", nick), zap.Error(err))
+		}
+	}
 }
 
 // resolveCreateMembers 把成员显示名解析成 agent id(池=全部 active agent,与 invite 同口径;

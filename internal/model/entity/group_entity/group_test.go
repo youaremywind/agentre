@@ -64,6 +64,15 @@ func TestGroupMemberIsHost(t *testing.T) {
 	})
 }
 
+func TestGroupMemberDisplayName(t *testing.T) {
+	Convey("DisplayName: 有群昵称用昵称, 否则回落 agent 名(含空白与 nil 防御)", t, func() {
+		So((&group_entity.GroupMember{Nickname: "前端工程师"}).DisplayName("Claude Code"), ShouldEqual, "前端工程师")
+		So((&group_entity.GroupMember{Nickname: ""}).DisplayName("Claude Code"), ShouldEqual, "Claude Code")
+		So((&group_entity.GroupMember{Nickname: "   "}).DisplayName("Claude Code"), ShouldEqual, "Claude Code")
+		So((*group_entity.GroupMember)(nil).DisplayName("Claude Code"), ShouldEqual, "Claude Code")
+	})
+}
+
 func TestGroup_PinnedField(t *testing.T) {
 	Convey("Group.Pinned 字段", t, func() {
 		So((&group_entity.Group{Pinned: true}).Pinned, ShouldBeTrue)

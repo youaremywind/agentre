@@ -62,13 +62,16 @@ type GroupSvc interface {
 	HandleTaskCancel(ctx context.Context, callerMemberID int64, taskNo int, reason string) (*group_entity.GroupTask, error)
 	// HandleGroupCreate 是 group_create MCP tool 的服务端入口:单聊轮经审批门拉起团队
 	// (发起者=主持人,项目继承发起会话)。拒绝/超时编码为返回文本(nil err),error 仅内部故障。
-	HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64) (string, error)
+	HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64, memberNicknames map[string]string) (string, error)
 	// BuildCreateTurnMCP 实现 chat_svc.TurnMCPProvider:给普通单聊轮注入 group_create(群成员轮跳过)。
 	BuildCreateTurnMCP(ctx context.Context, a *agent_entity.Agent, sessionID, groupID int64) []agentruntime.MCPServerSpec
 	StopGroup(ctx context.Context, id int64) error
 	PauseGroup(ctx context.Context, id int64) error
 	ResumeGroup(ctx context.Context, id int64) error
 	RenameGroup(ctx context.Context, id int64, title string) error
+	// SetMemberNickname 设/清某成员在本群的群昵称(群内有效名);空白=清除回落 agent 名,
+	// 非空须不与同群其它成员有效名冲突(@mention 唯一)。
+	SetMemberNickname(ctx context.Context, memberID int64, nickname string) error
 	SetGroupPinned(ctx context.Context, id int64, pinned bool) error
 	// DeleteGroup 删除群(软删 status=DELETE)。deleteSessions=true 时一并软删全群成员的
 	// backing session;false 时保留会话原样(仍带 group_id)。
@@ -605,7 +608,7 @@ func (s *groupSvc) buildGroupSystemPrompt(g *group_entity.Group, members []*grou
 	fmt.Fprintf(&b, "\n\n## 群聊「%s」\n你是本群的%s。", g.Title, role)
 	b.WriteString("\n当前成员：")
 	for _, m := range members {
-		fmt.Fprintf(&b, "\n- %s（%s）", s.names(bg, m.AgentID), m.Role)
+		fmt.Fprintf(&b, "\n- %s（%s）", s.memberDisplayName(bg, m), m.Role)
 	}
 	b.WriteString("\n\n你只会收到 @ 到你的消息。要发言请调用 `group_send` 工具：body=正文，mentions=收件成员显示名数组（@用户 = 回复人类）。一个回合可多次调用、可分别对不同人发不同内容。**不调用 group_send 的内容不会进群**。")
 	b.WriteString("\n回复路由：消息抬头「(来自 X)」标明来源，回复时默认 mentions 该来源——来源是用户时用 mentions:[\"用户\"]。除非任务确实需要协作，不要主动 @ 其他成员；任务完成直接向来源汇报，不要转发给主持人或其他成员。")
@@ -654,7 +657,7 @@ func (s *groupSvc) openTaskSnapshot(ctx context.Context, g *group_entity.Group, 
 	nameOf := func(memberID int64) string {
 		for _, m := range members {
 			if m.ID == memberID {
-				return s.names(ctx, m.AgentID)
+				return s.memberDisplayName(ctx, m)
 			}
 		}
 		return "?"
@@ -759,6 +762,50 @@ func (s *groupSvc) RenameGroup(ctx context.Context, id int64, title string) erro
 	}
 	g.Title = title
 	return group_repo.Group().Update(ctx, g)
+}
+
+// memberDisplayName 给出某成员在本群的有效显示名:设了群昵称用昵称, 否则回落 agent 全局名。
+// roster / @mention 匹配 / 注入 AI 的群名单 / 投递抬头 都经此口径(单一真相)。
+func (s *groupSvc) memberDisplayName(ctx context.Context, m *group_entity.GroupMember) string {
+	if m == nil {
+		return ""
+	}
+	return m.DisplayName(s.names(ctx, m.AgentID))
+}
+
+// SetMemberNickname 设/清某成员在本群的群昵称(群内有效名)。空白=清除回落 agent 名。
+// 非空时校验不与同群其它成员有效名冲突(@mention 须唯一), 冲突报 GroupNicknameTaken。
+func (s *groupSvc) SetMemberNickname(ctx context.Context, memberID int64, nickname string) error {
+	m, err := group_repo.Member().Find(ctx, memberID)
+	if err != nil || m == nil {
+		return i18n.NewError(ctx, code.GroupMemberNotFound)
+	}
+	trimmed := strings.TrimSpace(nickname)
+	if trimmed != "" {
+		members, err := group_repo.Member().ListByGroup(ctx, m.GroupID)
+		if err != nil {
+			return err
+		}
+		for _, other := range members {
+			if other.ID == memberID || !other.IsActive() {
+				continue
+			}
+			if s.memberDisplayName(ctx, other) == trimmed {
+				return i18n.NewError(ctx, code.GroupNicknameTaken)
+			}
+		}
+	}
+	if err := group_repo.Member().SetNickname(ctx, memberID, trimmed); err != nil {
+		return err
+	}
+	m.Nickname = trimmed
+	s.emitter.Emit(ctx, groupEventName(m.GroupID), map[string]any{
+		"kind":   "member_updated",
+		"member": toGroupMemberEvent(m),
+	})
+	logger.Ctx(ctx).Info("group_svc.SetMemberNickname: set",
+		zap.Int64("memberId", memberID), zap.Int64("groupId", m.GroupID), zap.String("nickname", trimmed))
+	return nil
 }
 
 // SetGroupPinned 切换群用户置顶（侧栏混排列表浮顶）。

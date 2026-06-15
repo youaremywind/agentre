@@ -80,7 +80,7 @@ func (s *groupSvc) HandleTaskCreate(ctx context.Context, callerMemberID int64, a
 		logger.Ctx(ctx).Warn("group_svc.HandleTaskCreate: persist failed", zap.Error(err))
 	}
 	s.emitTaskUpdated(ctx, t)
-	s.enqueueDeliveries(g.ID, []int64{assignee.ID}, content, s.names(ctx, caller.AgentID), caller.ID)
+	s.enqueueDeliveries(g.ID, []int64{assignee.ID}, content, s.memberDisplayName(ctx, caller), caller.ID)
 	s.kick(ctx, g.ID)
 	logger.Ctx(ctx).Info("group_svc.HandleTaskCreate: created",
 		zap.Int64("groupId", g.ID), zap.Int("taskNo", no), zap.Int64("assignee", assignee.ID))
@@ -137,7 +137,7 @@ func (s *groupSvc) HandleTaskComplete(ctx context.Context, callerMemberID int64,
 		logger.Ctx(ctx).Warn("group_svc.HandleTaskComplete: persist failed", zap.Error(err))
 	}
 	s.emitTaskUpdated(ctx, t)
-	s.enqueueDeliveries(g.ID, recipients, content, s.names(ctx, caller.AgentID), caller.ID)
+	s.enqueueDeliveries(g.ID, recipients, content, s.memberDisplayName(ctx, caller), caller.ID)
 	s.kick(ctx, g.ID)
 	logger.Ctx(ctx).Info("group_svc.HandleTaskComplete: done",
 		zap.Int64("groupId", g.ID), zap.Int("taskNo", taskNo),
@@ -192,7 +192,7 @@ func (s *groupSvc) HandleTaskCancel(ctx context.Context, callerMemberID int64, t
 		logger.Ctx(ctx).Warn("group_svc.HandleTaskCancel: persist failed", zap.Error(err))
 	}
 	s.emitTaskUpdated(ctx, t)
-	s.enqueueDeliveries(g.ID, notify, content, s.names(ctx, caller.AgentID), caller.ID)
+	s.enqueueDeliveries(g.ID, notify, content, s.memberDisplayName(ctx, caller), caller.ID)
 	s.kick(ctx, g.ID)
 	logger.Ctx(ctx).Info("group_svc.HandleTaskCancel: canceled",
 		zap.Int64("groupId", g.ID), zap.Int("taskNo", taskNo), zap.Int64s("notify", notify))
@@ -246,7 +246,7 @@ func activeMemberByID(members []*group_entity.GroupMember, id int64) *group_enti
 // memberByName 在群成员里按显示名找 active 成员(找不到返回 nil)。
 func (s *groupSvc) memberByName(ctx context.Context, members []*group_entity.GroupMember, name string) *group_entity.GroupMember {
 	for _, m := range members {
-		if m.IsActive() && s.names(ctx, m.AgentID) == name {
+		if m.IsActive() && s.memberDisplayName(ctx, m) == name {
 			return m
 		}
 	}

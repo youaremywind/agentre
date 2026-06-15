@@ -678,6 +678,13 @@
       "backToGroup": "← Back to group",
       "openMember": "Open member"
     },
+    "nickname": {
+      "edit": "Set group nickname",
+      "title": "Group nickname",
+      "identity": "Agent global name · won't change",
+      "hint": "Leave blank to use the real name \"{{name}}\". Visible in this group only.",
+      "taken": "\"{{name}}\" is already used by another member; pick another"
+    },
     "runStatus": {
       "running": "Running",
       "waitingUser": "Waiting for you",

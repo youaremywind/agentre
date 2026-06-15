@@ -28,6 +28,8 @@ type GroupRepo interface {
 type GroupMemberRepo interface {
 	Create(ctx context.Context, m *group_entity.GroupMember) error
 	Update(ctx context.Context, m *group_entity.GroupMember) error
+	// SetNickname 定向写某成员的群昵称(单列, 不碰其它字段)。空串=清除昵称。
+	SetNickname(ctx context.Context, id int64, nickname string) error
 	Find(ctx context.Context, id int64) (*group_entity.GroupMember, error)
 	FindByGroupAndAgent(ctx context.Context, groupID, agentID int64) (*group_entity.GroupMember, error)
 	ListByGroup(ctx context.Context, groupID int64) ([]*group_entity.GroupMember, error)
@@ -125,6 +127,13 @@ func (r *memberRepo) Update(ctx context.Context, m *group_entity.GroupMember) er
 			"role":               m.Role,
 			"status":             m.Status,
 		}).Error
+}
+
+// SetNickname 定向写某成员的群昵称(单列 UPDATE)。空串=清除昵称, 回落 agent 全局名。
+func (r *memberRepo) SetNickname(ctx context.Context, id int64, nickname string) error {
+	return db.Ctx(ctx).Model(&group_entity.GroupMember{}).
+		Where("id = ?", id).
+		Update("nickname", nickname).Error
 }
 
 func (r *memberRepo) Find(ctx context.Context, id int64) (*group_entity.GroupMember, error) {

@@ -41,7 +41,7 @@ type groupMCP struct {
 	// groupCreate 是 group_create tool 的回调:审批 + 建群在 svc 层完成,返回写回 CLI 的
 	// result 文本。error 仅用于内部故障;审批拒绝/超时必须编码为返回的 text(不走 RPC error,
 	// 镜像 orgtool 审批语义),否则 CLI 会把用户拒绝当工具故障。
-	groupCreate func(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64) (string, error)
+	groupCreate func(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64, memberNicknames map[string]string) (string, error)
 }
 
 func newGroupMCP(ingest func(context.Context, int64, string, []string) error) *groupMCP {
@@ -138,16 +138,17 @@ func (h *groupMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ProtocolVersion string `json:"protocolVersion"`
 			Name            string `json:"name"`
 			Arguments       struct {
-				Body        string   `json:"body"`
-				Mentions    []string `json:"mentions"`
-				AgentNames  []string `json:"agentNames"`
-				AgentIDs    []int64  `json:"agentIds"`
-				Reason      string   `json:"reason"`
-				Assignee    string   `json:"assignee"`
-				Title       string   `json:"title"`
-				Brief       string   `json:"brief"`
-				MemberNames []string `json:"memberNames"`
-				WorkflowID  int64    `json:"workflowId"`
+				Body            string            `json:"body"`
+				Mentions        []string          `json:"mentions"`
+				AgentNames      []string          `json:"agentNames"`
+				AgentIDs        []int64           `json:"agentIds"`
+				Reason          string            `json:"reason"`
+				Assignee        string            `json:"assignee"`
+				Title           string            `json:"title"`
+				Brief           string            `json:"brief"`
+				MemberNames     []string          `json:"memberNames"`
+				MemberNicknames map[string]string `json:"memberNicknames"`
+				WorkflowID      int64             `json:"workflowId"`
 				// ParentTaskID/TaskID 是任务编号(#N, per-group),不是 group_tasks.id。
 				ParentTaskID int    `json:"parentTaskId"`
 				TaskID       int    `json:"taskId"`
@@ -191,7 +192,7 @@ func (h *groupMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			text, err := h.groupCreate(r.Context(), cref.agentID, cref.sessionID,
 				rpc.Params.Arguments.Title, rpc.Params.Arguments.MemberNames, rpc.Params.Arguments.Brief,
-				rpc.Params.Arguments.WorkflowID)
+				rpc.Params.Arguments.WorkflowID, rpc.Params.Arguments.MemberNicknames)
 			if err != nil {
 				writeRPCError(w, rpc.ID, -32000, err.Error())
 				return
@@ -366,10 +367,11 @@ func groupCreateToolSchema() map[string]any {
 			"type":     "object",
 			"required": []string{"title", "memberNames", "brief"},
 			"properties": map[string]any{
-				"title":       map[string]any{"type": "string", "description": "群标题"},
-				"memberNames": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "初始成员显示名(不含你自己;最多 7 个,主持人占 1 席)"},
-				"brief":       map[string]any{"type": "string", "description": "完整需求转述 + 验收标准(首条群消息,拆任务的依据)"},
-				"workflowId":  map[string]any{"type": "integer", "description": "可选;绑定一个协作流程(SOP)的 id,主持人每轮注入其最新正文。先用 workflow_list 查或 workflow_create 建;省略或 0 = 不绑定。"},
+				"title":           map[string]any{"type": "string", "description": "群标题"},
+				"memberNames":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "初始成员显示名(不含你自己;最多 7 个,主持人占 1 席)"},
+				"memberNicknames": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "可选;成员显示名→该成员在本群的备注名(群昵称)的映射,如 {\"Codex\":\"后端工程师\"}。只在本群显示、不改 Agent 全局名;未列出的成员沿用原名。"},
+				"brief":           map[string]any{"type": "string", "description": "完整需求转述 + 验收标准(首条群消息,拆任务的依据)"},
+				"workflowId":      map[string]any{"type": "integer", "description": "可选;绑定一个协作流程(SOP)的 id,主持人每轮注入其最新正文。先用 workflow_list 查或 workflow_create 建;省略或 0 = 不绑定。"},
 			},
 		},
 	}

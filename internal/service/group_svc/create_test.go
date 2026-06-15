@@ -122,7 +122,7 @@ func TestHandleGroupCreate_ApprovedExecutes(t *testing.T) {
 		var err error
 		go func() {
 			defer close(done)
-			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "按设计稿重构 UI,验收:e2e 通过", 5)
+			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "按设计稿重构 UI,验收:e2e 通过", 5, nil)
 		}()
 		apvCh <- true
 		<-done
@@ -174,7 +174,7 @@ func TestHandleGroupCreate_Denied(t *testing.T) {
 		var err error
 		go func() {
 			defer close(done)
-			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief", 0)
+			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief", 0, nil)
 		}()
 		apvCh <- false // 经 chat_svc 返回的 channel 模拟前端拒绝
 		<-done
@@ -203,7 +203,7 @@ func TestHandleGroupCreate_Timeout(t *testing.T) {
 		svc := group_svc.NewForTestWithNames(gw, map[int64]string{7: "部门负责人", 8: "开发"})
 		group_svc.SetApprovalTimeoutForTest(svc, 50*time.Millisecond)
 
-		text, err := svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief", 0)
+		text, err := svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief", 0, nil)
 		So(err, ShouldBeNil)
 		So(text, ShouldContainSubstring, "审批超时")
 	})
@@ -221,7 +221,7 @@ func TestHandleGroupCreate_Guards(t *testing.T) {
 		}, nil)
 
 		svc := group_svc.NewForTest(gw)
-		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", []string{"开发"}, "b", 0)
+		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", []string{"开发"}, "b", 0, nil)
 		So(err, ShouldNotBeNil)
 		var httpErr *httputils.Error
 		So(errors.As(err, &httpErr), ShouldBeTrue)
@@ -236,7 +236,7 @@ func TestHandleGroupCreate_Guards(t *testing.T) {
 		svc := group_svc.NewForTest(gw)
 
 		sessRepo.EXPECT().Find(gomock.Any(), int64(99)).Return(nil, nil)
-		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", nil, "b", 0)
+		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", nil, "b", 0, nil)
 		So(err, ShouldNotBeNil)
 		var httpErr *httputils.Error
 		So(errors.As(err, &httpErr), ShouldBeTrue)
@@ -245,7 +245,7 @@ func TestHandleGroupCreate_Guards(t *testing.T) {
 		sessRepo.EXPECT().Find(gomock.Any(), int64(99)).Return(&chat_entity.Session{
 			ID: 99, AgentID: 8, GroupID: 0, Status: consts.ACTIVE,
 		}, nil)
-		_, err = svc.HandleGroupCreate(context.Background(), 7, 99, "t", nil, "b", 0)
+		_, err = svc.HandleGroupCreate(context.Background(), 7, 99, "t", nil, "b", 0, nil)
 		So(err, ShouldNotBeNil)
 		So(errors.As(err, &httpErr), ShouldBeTrue)
 		So(httpErr.Code, ShouldEqual, code.GroupCreateSessionInvalid)
@@ -265,7 +265,7 @@ func TestHandleGroupCreate_Guards(t *testing.T) {
 		}, nil)
 
 		svc := group_svc.NewForTest(gw)
-		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", []string{"测试"}, "b", 0)
+		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", []string{"测试"}, "b", 0, nil)
 		So(err, ShouldNotBeNil)
 		var httpErr *httputils.Error
 		So(errors.As(err, &httpErr), ShouldBeTrue)

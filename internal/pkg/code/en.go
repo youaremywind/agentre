@@ -166,6 +166,7 @@ var enUS = map[int]string{
 	GroupCreateSessionInvalid: "invalid session, cannot create group",
 	GroupCreateNested:         "group members cannot create another group",
 	GroupCreateMemberUnknown:  "no available agent named: %v",
+	GroupNicknameTaken:        "group nickname is already taken by another member",
 
 	// Server
 	ServerURLInvalid:          "invalid Server URL",

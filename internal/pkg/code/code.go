@@ -222,6 +222,7 @@ const (
 	GroupCreateSessionInvalid                // group_create: 会话无效(不存在/已归档/不属于该 agent)
 	GroupCreateNested                        // group_create: 群成员轮内禁止再拉群(防套娃)
 	GroupCreateMemberUnknown                 // group_create: 成员名找不到对应可用 agent
+	GroupNicknameTaken                       // 群昵称与同群其他成员的有效名冲突(@mention 须唯一)
 )
 
 // Server 接入 20300~20399

@@ -174,6 +174,22 @@ func TestGroupMemberRepo_Update(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestGroupMemberRepo_SetNickname 钉死群昵称只走 nickname 单列的定向 UPDATE,
+// 不碰 backing_session_id/role/status(避免 partial-member Update 误清昵称)。
+func TestGroupMemberRepo_SetNickname(t *testing.T) {
+	ctx, _, mock := testutils.Database(t)
+	group_repo.RegisterMember(group_repo.NewMember())
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `group_members` SET `nickname`=\\? WHERE id = \\?").
+		WithArgs("前端工程师", int64(3)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, group_repo.Member().SetNickname(ctx, 3, "前端工程师"))
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestGroupMemberRepo_ListByGroup(t *testing.T) {
 	t.Run("只返回 active 成员", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)

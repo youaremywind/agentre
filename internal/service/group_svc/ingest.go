@@ -51,7 +51,7 @@ func (s *groupSvc) IngestAgentMessage(ctx context.Context, memberID int64, body 
 	if _, err := s.persistMessage(ctx, g, group_entity.SenderKindAgent, sender.ID, body, recipientIDs, toUser, 0, 0, ""); err != nil {
 		logger.Ctx(ctx).Warn("group_svc.IngestAgentMessage: persist failed", zap.Error(err))
 	}
-	s.enqueueDeliveries(g.ID, recipientIDs, body, s.names(ctx, sender.AgentID), sender.ID)
+	s.enqueueDeliveries(g.ID, recipientIDs, body, s.memberDisplayName(ctx, sender), sender.ID)
 	s.kick(ctx, g.ID)
 	return nil
 }
@@ -85,7 +85,7 @@ func prependMissingMentions(body string, mentions []string) string {
 func (s *groupSvc) resolveMentionNames(ctx context.Context, g *group_entity.Group, members []*group_entity.GroupMember, sender *group_entity.GroupMember, names []string) ([]int64, bool) {
 	byName := map[string]int64{}
 	for _, m := range members {
-		if n := s.names(ctx, m.AgentID); n != "" {
+		if n := s.memberDisplayName(ctx, m); n != "" {
 			byName[n] = m.ID
 		}
 	}

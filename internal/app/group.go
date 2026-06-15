@@ -27,6 +27,8 @@ type GroupMemberItem struct {
 	// roster 的状态点用 RunState 表示该成员此刻是否在跑一轮 turn,空串按 idle 处理。
 	Status   string `json:"status"`
 	RunState string `json:"runState"`
+	// Nickname 是该成员在本群的群昵称(群内有效名);空串=前端回落 agent 全局名。
+	Nickname string `json:"nickname"`
 }
 
 type GroupMessageItem struct {
@@ -85,7 +87,7 @@ func toGroupItem(g *group_entity.Group) *GroupItem {
 }
 
 func toGroupMemberItem(m *group_entity.GroupMember) *GroupMemberItem {
-	return &GroupMemberItem{ID: m.ID, AgentID: m.AgentID, BackingSessionID: m.BackingSessionID, Role: m.Role, Status: m.Status}
+	return &GroupMemberItem{ID: m.ID, AgentID: m.AgentID, BackingSessionID: m.BackingSessionID, Role: m.Role, Status: m.Status, Nickname: m.Nickname}
 }
 
 func toGroupDetail(d *group_svc.GroupDetail) *GroupDetailResponse {
@@ -159,6 +161,11 @@ func (a *App) GroupResume(id int64) error {
 }
 func (a *App) GroupRename(id int64, title string) error {
 	return group_svc.Default().RenameGroup(a.ctx, id, title)
+}
+
+// GroupSetMemberNickname 设/清某成员在本群的群昵称(空串=清除回落 agent 名)。
+func (a *App) GroupSetMemberNickname(memberID int64, nickname string) error {
+	return group_svc.Default().SetMemberNickname(a.ctx, memberID, nickname)
 }
 func (a *App) GroupSetPinned(id int64, pinned bool) error {
 	return group_svc.Default().SetGroupPinned(a.ctx, id, pinned)

@@ -103,6 +103,49 @@ describe("GroupRoster project", () => {
   });
 });
 
+describe("GroupRoster nickname editor", () => {
+  function renderRoster(onSetMemberNickname = vi.fn()) {
+    render(
+      <GroupRoster
+        members={members()}
+        // member 1 的有效名=前端工程师(已设昵称),member 2 的有效名=Codex。
+        memberName={(id) => (id === 1 ? "前端工程师" : "Codex")}
+        agentNameOf={(m) => (m.agentID === 3 ? "Codex" : "Claude Code")}
+        onSetMemberNickname={onSetMemberNickname}
+        onOpenMember={() => {}}
+        onInvite={() => {}}
+        onDelete={() => {}}
+        tasks={[]}
+        onAnchorTask={vi.fn()}
+        onOpenMemberById={vi.fn()}
+      />,
+    );
+    return onSetMemberNickname;
+  }
+
+  it("saves a trimmed nickname via onSetMemberNickname(memberId, value)", () => {
+    const onSet = renderRoster();
+    // 打开 member 2(Codex)的群昵称编辑器。
+    fireEvent.click(screen.getAllByTestId("member-nickname-edit")[1]);
+    fireEvent.change(screen.getByTestId("member-nickname-input"), {
+      target: { value: "  后端工程师  " },
+    });
+    fireEvent.click(screen.getByTestId("member-nickname-save"));
+    expect(onSet).toHaveBeenCalledWith(2, "后端工程师");
+  });
+
+  it("blocks a nickname colliding with another member's effective name", () => {
+    const onSet = renderRoster();
+    fireEvent.click(screen.getAllByTestId("member-nickname-edit")[1]);
+    fireEvent.change(screen.getByTestId("member-nickname-input"), {
+      target: { value: "前端工程师" }, // = member 1 的有效名
+    });
+    expect(screen.getByTestId("member-nickname-error")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("member-nickname-save"));
+    expect(onSet).not.toHaveBeenCalled();
+  });
+});
+
 describe("GroupRoster delete", () => {
   function openDeleteDialog(onDelete: (deleteSessions: boolean) => void) {
     render(

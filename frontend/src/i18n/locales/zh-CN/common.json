@@ -678,6 +678,13 @@
       "backToGroup": "← 返回群聊",
       "openMember": "打开成员"
     },
+    "nickname": {
+      "edit": "设置群昵称",
+      "title": "群昵称",
+      "identity": "Agent 全局名 · 不会被改",
+      "hint": "留空 = 使用本名「{{name}}」。仅本群可见。",
+      "taken": "「{{name}}」已被其他成员使用，换一个"
+    },
     "runStatus": {
       "running": "运行中",
       "waitingUser": "等待你",

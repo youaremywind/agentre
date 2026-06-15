@@ -32,7 +32,7 @@ func TestGroupMCPGroupCreateTool(t *testing.T) {
 		var gotTitle, gotBrief string
 		var gotMembers []string
 		h := newGroupMCP(nil)
-		h.groupCreate = func(_ context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64) (string, error) {
+		h.groupCreate = func(_ context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64, _ map[string]string) (string, error) {
 			gotAgent, gotSession, gotTitle, gotMembers, gotBrief, gotWorkflow = agentID, sessionID, title, memberNames, brief, workflowID
 			return "group created: id=12 title=" + title, nil
 		}
@@ -50,7 +50,9 @@ func TestGroupMCPGroupCreateTool(t *testing.T) {
 
 	Convey("成员 token 调 group_create → 401;create token 调 group_send → 401", t, func() {
 		h := newGroupMCP(nil)
-		h.groupCreate = func(context.Context, int64, int64, string, []string, string, int64) (string, error) { return "", nil }
+		h.groupCreate = func(context.Context, int64, int64, string, []string, string, int64, map[string]string) (string, error) {
+			return "", nil
+		}
 		rr := postMCP(h, h.MintToken(5, 100), `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"group_create","arguments":{"title":"x","memberNames":["a"],"brief":"b"}}}`)
 		So(rr.Code, ShouldEqual, 401)
 		rr = postMCP(h, h.MintCreateToken(7, 99), `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"group_send","arguments":{"body":"hi"}}}`)
@@ -69,5 +71,25 @@ func TestGroupMCPGroupCreateTool(t *testing.T) {
 		rr := postMCP(h, "", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 		So(rr.Body.String(), ShouldContainSubstring, `"group_create"`)
 		So(rr.Body.String(), ShouldContainSubstring, `"workflowId"`)
+	})
+}
+
+func TestGroupMCPGroupCreateNicknames(t *testing.T) {
+	Convey("group_create 解码 memberNicknames(显示名→群昵称)并透传回调", t, func() {
+		var got map[string]string
+		h := newGroupMCP(nil)
+		h.groupCreate = func(_ context.Context, _, _ int64, _ string, _ []string, _ string, _ int64, memberNicknames map[string]string) (string, error) {
+			got = memberNicknames
+			return "group created: id=12 title=x", nil
+		}
+		rr := postMCP(h, h.MintCreateToken(7, 99), `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"group_create","arguments":{"title":"x","memberNames":["Codex","Claude Code"],"brief":"b","memberNicknames":{"Codex":"后端工程师","Claude Code":"前端工程师"}}}}`)
+		So(rr.Code, ShouldEqual, 200)
+		So(got, ShouldResemble, map[string]string{"Codex": "后端工程师", "Claude Code": "前端工程师"})
+	})
+
+	Convey("tools/list 的 group_create schema 含 memberNicknames", t, func() {
+		h := newGroupMCP(nil)
+		rr := postMCP(h, "", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+		So(rr.Body.String(), ShouldContainSubstring, "memberNicknames")
 	})
 }

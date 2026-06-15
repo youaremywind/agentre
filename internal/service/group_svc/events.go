@@ -24,6 +24,7 @@ type GroupMemberEvent struct {
 	BackingSessionID int64  `json:"backingSessionID"`
 	Role             string `json:"role"`
 	Status           string `json:"status"`
+	Nickname         string `json:"nickname"`
 }
 
 func toGroupMessageEvent(m *group_entity.GroupMessage) groupMessageEvent {
@@ -48,6 +49,7 @@ func toGroupMemberEvent(m *group_entity.GroupMember) GroupMemberEvent {
 		BackingSessionID: m.BackingSessionID,
 		Role:             m.Role,
 		Status:           m.Status,
+		Nickname:         m.Nickname,
 	}
 }
 

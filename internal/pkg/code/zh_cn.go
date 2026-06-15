@@ -166,6 +166,7 @@ var zhCN = map[int]string{
 	GroupCreateSessionInvalid: "会话无效,无法创建群聊",
 	GroupCreateNested:         "群聊成员不能再创建群聊",
 	GroupCreateMemberUnknown:  "找不到可用的成员: %v",
+	GroupNicknameTaken:        "群昵称已被同群其他成员占用,换一个",
 
 	// Server 接入
 	ServerURLInvalid:          "Server URL 不合法",

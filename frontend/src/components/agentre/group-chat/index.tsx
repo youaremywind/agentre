@@ -27,6 +27,7 @@ import {
   GroupPause,
   GroupResume,
   GroupSend,
+  GroupSetMemberNickname,
   GroupStop,
 } from "../../../../wailsjs/go/app/App";
 import { app } from "../../../../wailsjs/go/models";
@@ -120,14 +121,21 @@ function GroupChat({ groupId }: { groupId: number }) {
     [agents],
   );
 
-  // memberName: roster member id → 显示名。先取成员的 agentID,再走 nameOf 拿真实名字。
+  // memberDisplayName: 成员在本群的有效显示名 —— 设了群昵称(非空白)用昵称,否则回落
+  // agent 全局名。roster / 转录抬头 / @mention 命中 都经此口径(与后端 memberDisplayName 同义)。
+  const memberDisplayName = React.useCallback(
+    (m: GroupMemberItem) => m.nickname?.trim() || nameOf(m.agentID),
+    [nameOf],
+  );
+
+  // memberName: roster member id → 有效显示名(群昵称优先,否则 agent 全局名)。
   const memberName = React.useCallback(
     (memberId: number) => {
       const m = memberById.get(memberId);
       if (!m) return `#${memberId}`;
-      return nameOf(m.agentID);
+      return memberDisplayName(m);
     },
-    [memberById, nameOf],
+    [memberById, memberDisplayName],
   );
 
   const openMemberById = React.useCallback(
@@ -194,11 +202,22 @@ function GroupChat({ groupId }: { groupId: number }) {
     [groupId],
   );
 
+  // handleSetMemberNickname: 设/清某成员的群昵称(空串=清除回落原名)。后端落库后 emit
+  // member_updated → use-group 事件处理 patchMember 回灌 nickname,roster/转录随之刷新。
+  const handleSetMemberNickname = React.useCallback(
+    (memberId: number, nickname: string) => {
+      void GroupSetMemberNickname(memberId, nickname).catch((e: unknown) => {
+        console.error("[group] set member nickname failed", e);
+      });
+    },
+    [],
+  );
+
   // mentionRoster: 把成员映射成 MentionText 需要的 { memberId, name } 形态,
   // 供 transcript 里 @mention chip 按名字命中 + 点击跳转成员会话视图。
   const mentionRoster = React.useMemo(
-    () => members.map((m) => ({ memberId: m.id, name: nameOf(m.agentID) })),
-    [members, nameOf],
+    () => members.map((m) => ({ memberId: m.id, name: memberDisplayName(m) })),
+    [members, memberDisplayName],
   );
 
   // mentionDecorator: 挂在 MarkdownText 内联装饰器接缝上的 @mention chip,点击
@@ -386,6 +405,8 @@ function GroupChat({ groupId }: { groupId: number }) {
         tasks={tasks}
         onAnchorTask={(tk) => anchorTaskNo(tk.taskNo)}
         onOpenMemberById={openMemberById}
+        agentNameOf={(m) => nameOf(m.agentID)}
+        onSetMemberNickname={handleSetMemberNickname}
       />
     </div>
   );
