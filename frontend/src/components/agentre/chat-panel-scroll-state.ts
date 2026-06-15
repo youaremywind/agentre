@@ -11,6 +11,25 @@ type TranscriptScrollState = {
   anchorRowKey?: string;
 };
 
+// nextAutoFollow 维护「贴底跟随意图」(autoFollow),与「位置式是否在底部容差内」
+// (atBottom)是两回事。流式逐 chunk 输出时内容增长会快过滚动,使 scrollTop 暂时落后
+// 底部 >32px;若按位置直接判 atBottom=false 关掉跟随,转录区就会冻结、输出沉到折叠线下
+// (回归 bug)。所以这里让 autoFollow 对「内容增长把底部推远」免疫:
+//   - 回到底部容差内 → 跟随(true);
+//   - 用户主动上滚(scrollTop 明显变小)且不在底部 → 解除(false);
+//   - 其余(内容增长 / 程序化贴底,scrollTop 不变或变大)→ 保持原值(sticky)。
+export function nextAutoFollow(args: {
+  prev: boolean;
+  prevScrollTop: number;
+  scrollTop: number;
+  atBottom: boolean;
+}): boolean {
+  const { prev, prevScrollTop, scrollTop, atBottom } = args;
+  if (atBottom) return true;
+  if (scrollTop < prevScrollTop - 1) return false;
+  return prev;
+}
+
 const transcriptScrollStates = new Map<string, TranscriptScrollState>();
 const transcriptDraftStates = new Map<string, unknown>();
 

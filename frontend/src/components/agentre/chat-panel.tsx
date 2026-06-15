@@ -71,6 +71,7 @@ import { QueuedMessagesBar } from "./queued-messages-bar";
 import { BackgroundTasksChip } from "./background-tasks/background-tasks-chip";
 import {
   loadTranscriptScrollState,
+  nextAutoFollow,
   saveTranscriptScrollState,
 } from "./chat-panel-scroll-state";
 import { deriveBackgroundTasks } from "./background-tasks/derive";
@@ -571,6 +572,14 @@ function ChatPanel({
   const [transcriptElement, setTranscriptElement] =
     React.useState<HTMLElement | null>(null);
   const atBottomRef = React.useRef(true);
+  // autoFollowRef = 「贴底跟随意图」,与 atBottomRef(纯位置:距底 ≤32px)不同 ——
+  // 它对「内容增长把底部推远」免疫,只有用户主动上滚才置 false、滚回底部再置 true。
+  // 流式逐 chunk 的贴底必须用它做闸:位置式 atBottomRef 在内容增长快过滚动时(正是
+  // 流式)会被误判成"用户离开了底部"而永久关掉跟随,导致转录区冻结、输出沉到折叠线下。
+  const autoFollowRef = React.useRef(true);
+  // 记录上一次滚动后的 scrollTop,用来区分「用户上滚(scrollTop 变小)」与「内容增长/
+  // 程序化贴底(scrollTop 不变或变大)」—— 只有前者才解除 autoFollow。
+  const lastScrollTopRef = React.useRef(0);
   const [showBackToBottom, setShowBackToBottom] = React.useState(() => {
     const saved = loadTranscriptScrollState(scrollStateKey);
     return Boolean(saved && !saved.atBottom);
@@ -709,6 +718,9 @@ function ChatPanel({
     const el = transcriptRef.current;
     if (!el) return;
     const metrics = readScrollMetrics(el);
+    // prevScrollTop 留给 nextAutoFollow 区分「用户上滚」与「内容增长/程序化贴底」。
+    const prevScrollTop = lastScrollTopRef.current;
+    lastScrollTopRef.current = metrics.scrollTop;
     const guard = collapsedScrollSaveGuardRef.current;
     if (guard && guard.key === scrollStateKey) {
       if (restoreCollapsedScrollPosition()) return;
@@ -722,9 +734,17 @@ function ChatPanel({
     ) {
       el.scrollTop = metrics.maxScrollTop;
       saveScrollSnapshot({ atBottom: true, scrollTop: metrics.maxScrollTop });
+      autoFollowRef.current = true;
+      lastScrollTopRef.current = metrics.maxScrollTop;
       return;
     }
     const atBottom = isTranscriptAtBottom(metrics);
+    autoFollowRef.current = nextAutoFollow({
+      prev: autoFollowRef.current,
+      prevScrollTop,
+      scrollTop: metrics.scrollTop,
+      atBottom,
+    });
     // 非贴底才记锚点(贴底走 followOnAppend / 结构性 follow 还原,不需要)。
     const anchor = atBottom ? null : computeTopVisibleAnchor(el);
     saveScrollSnapshot({
@@ -955,26 +975,15 @@ function ChatPanel({
   // 但那条路只在「距底 ≤ 32px 钉底容差」时才钉:turn 开头结构性 follow 滚到的是
   // 占位行 estimate 高度的底部,真实流式文本测量出来更高 → 首帧就落后 >32px →
   // anchorTo:"end" 再也咬不回来,整轮转录区冻结、最新输出沉到折叠线下面(回归 bug)。
-  // 这里改成「意图驱动」:只要用户停在贴底(atBottomRef,上滚会被 handleTranscriptScroll
-  // 置 false),就随每个流式增量把滚动钉到真实底部。读的是已提交 DOM 的实时 scrollHeight
-  // (readScrollMetrics 同步触发 reflow),不是慢一帧的虚拟器 getTotalSize 估值,故不掉队;
-  // 钉到真实底部后虚拟器的 anchorTo:"end" 也回到容差内、自然协同而非互抢。
+  // 这里改成「意图驱动」:只要 autoFollowRef(贴底跟随意图,对内容增长免疫、仅用户上滚
+  // 才解除,见 nextAutoFollow)为真,就随每个流式增量把滚动钉到真实底部。读的是已提交 DOM
+  // 的实时 scrollHeight(readScrollMetrics 同步触发 reflow),不是慢一帧的虚拟器 getTotalSize
+  // 估值,故不掉队;钉到真实底部后虚拟器的 anchorTo:"end" 也回到容差内、自然协同而非互抢。
   React.useLayoutEffect(() => {
-    // __SF_DEBUG__
-    const el0 = transcriptRef.current;
-    (window as unknown as { __sf?: unknown[] }).__sf?.push({
-      t: performance.now(),
-      atBottom: atBottomRef.current,
-      pending: pendingScrollRestoreRef.current?.key === scrollStateKey,
-      clientH: el0?.clientHeight ?? -1,
-      before: el0 ? Math.round(el0.scrollTop) : -1,
-      maxTop: el0 ? Math.max(0, el0.scrollHeight - el0.clientHeight) : -1,
-      liveLen: (liveDelta ?? "").length,
-    });
     if (pendingScrollRestoreRef.current?.key === scrollStateKey) {
       return;
     }
-    if (!atBottomRef.current) {
+    if (!autoFollowRef.current) {
       return;
     }
     const el = transcriptRef.current;
@@ -982,11 +991,6 @@ function ChatPanel({
       return;
     }
     saveBottomScrollPosition(readScrollMetrics(el));
-    (window as unknown as { __sf?: unknown[] }).__sf?.push({
-      t: performance.now(),
-      after: Math.round(el.scrollTop),
-      ev: "pinned",
-    });
   }, [
     liveDelta,
     liveThinking,
@@ -1033,9 +1037,11 @@ function ChatPanel({
     const saved = loadTranscriptScrollState(scrollStateKey);
     if (saved && !saved.atBottom) {
       atBottomRef.current = false;
+      autoFollowRef.current = false;
       return;
     }
     atBottomRef.current = true;
+    autoFollowRef.current = true;
     restoredScrollStateKeyRef.current = null;
     pendingScrollRestoreRef.current = null;
   }, [scrollStateKey, sessionId]);
@@ -1043,6 +1049,8 @@ function ChatPanel({
   const handleBackToBottom = React.useCallback(() => {
     const el = transcriptRef.current;
     if (!el) return;
+    // 用户主动点「回到底部」= 明确想跟随,恢复 autoFollow(上滚解除后由此重新咬合)。
+    autoFollowRef.current = true;
     saveBottomScrollPosition(readScrollMetrics(el));
   }, [saveBottomScrollPosition]);
 
