@@ -41,9 +41,10 @@ test("agent self-initiated group creation chain", async ({ page }) => {
   );
   await main.locator('button[type="submit"]').click();
 
-  // 4. 审批卡出现(工具 label = orgApproval.tools.group_create,locale 双语兜底,
+  // 4. 审批卡出现(工具 label = toolApproval.tools.group_create,locale 双语兜底,
   //    与既有 spec 的 /Create group|创建群聊/ 写法同口径),点「批准」放行挂起的 MCP 调用。
-  const approvalCard = main.getByTestId("org-approval-card");
+  //    testid 随 PR2 审批管线泛化由 org-approval-card 改名 tool-approval-card。
+  const approvalCard = main.getByTestId("tool-approval-card");
   await expect(approvalCard).toBeVisible({ timeout: 20_000 });
   await expect(
     approvalCard.getByText(/Create group chat|创建群聊/),

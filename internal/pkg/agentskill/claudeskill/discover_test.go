@@ -1,6 +1,8 @@
 package claudeskill
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -60,6 +62,50 @@ func TestParsePluginList(t *testing.T) {
 		})
 		Convey("无 installPath → Skills 为空(不 panic)", func() {
 			So(packs[0].Skills, ShouldBeEmpty)
+		})
+	})
+}
+
+func TestDiscover(t *testing.T) {
+	Convey("Discover 经可注入 runner 取 plugin list 并解析", t, func() {
+		var gotName string
+		var gotArgs []string
+		d := Discoverer{run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			gotName, gotArgs = name, args
+			return []byte(`[{"id":"superpowers@official","enabled":true,"scope":"user"}]`), nil
+		}}
+		packs, err := d.Discover(context.Background(), agentskill.DiscoverQuery{})
+		So(err, ShouldBeNil)
+		So(gotName, ShouldEqual, "claude") // 空 CLIPath → 默认 binary
+		So(gotArgs, ShouldResemble, []string{"plugin", "list", "--json"})
+		So(len(packs), ShouldEqual, 1)
+		So(packs[0].ID, ShouldEqual, "superpowers@official")
+		So(packs[0].GloballyEnabled, ShouldBeTrue)
+
+		Convey("CLIPath 非空(含前后空白)→ trim 后用指定 binary 定位安装", func() {
+			d := Discoverer{run: func(_ context.Context, name string, _ ...string) ([]byte, error) {
+				gotName = name
+				return []byte("[]"), nil
+			}}
+			_, err := d.Discover(context.Background(), agentskill.DiscoverQuery{CLIPath: "  /opt/claude  "})
+			So(err, ShouldBeNil)
+			So(gotName, ShouldEqual, "/opt/claude")
+		})
+
+		Convey("CLI 报错 → 软降级空发现,不向上报错", func() {
+			d := Discoverer{run: func(context.Context, string, ...string) ([]byte, error) {
+				return nil, errors.New("claude: command not found")
+			}}
+			packs, err := d.Discover(context.Background(), agentskill.DiscoverQuery{})
+			So(err, ShouldBeNil)
+			So(packs, ShouldResemble, []agentskill.SkillPack{})
+		})
+
+		Convey("默认 runner(run=nil)走真实 exec;缺失 binary 时软降级、不 panic", func() {
+			d := Discoverer{}
+			packs, err := d.Discover(context.Background(), agentskill.DiscoverQuery{CLIPath: "agentre-no-such-binary-xyz"})
+			So(err, ShouldBeNil)
+			So(packs, ShouldResemble, []agentskill.SkillPack{})
 		})
 	})
 }

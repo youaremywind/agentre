@@ -122,7 +122,7 @@ func TestHandleGroupCreate_ApprovedExecutes(t *testing.T) {
 		var err error
 		go func() {
 			defer close(done)
-			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "按设计稿重构 UI,验收:e2e 通过")
+			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "按设计稿重构 UI,验收:e2e 通过", 5)
 		}()
 		apvCh <- true
 		<-done
@@ -133,7 +133,9 @@ func TestHandleGroupCreate_ApprovedExecutes(t *testing.T) {
 		So(begunBlk.Status, ShouldEqual, "pending")
 		So(createdGroup.Title, ShouldEqual, "新功能开发组")
 		So(createdGroup.HostAgentID, ShouldEqual, 7)
-		So(createdGroup.ProjectID, ShouldEqual, 3) // 项目继承自发起会话
+		So(createdGroup.ProjectID, ShouldEqual, 3)                  // 项目继承自发起会话
+		So(createdGroup.WorkflowID, ShouldEqual, 5)                 // workflowId 透传到群实体
+		So(begunBlk.ToolInput["workflowId"], ShouldEqual, int64(5)) // 审批卡展示绑定的流程
 		So(text, ShouldContainSubstring, "group created: id=12")
 		So(text, ShouldContainSubstring, "新功能开发组")
 		// 审批卡 result 与返回给 CLI 的文本同一契约(前端 GroupCreateCard 解析依据)。
@@ -172,7 +174,7 @@ func TestHandleGroupCreate_Denied(t *testing.T) {
 		var err error
 		go func() {
 			defer close(done)
-			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief")
+			text, err = svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief", 0)
 		}()
 		apvCh <- false // 经 chat_svc 返回的 channel 模拟前端拒绝
 		<-done
@@ -201,7 +203,7 @@ func TestHandleGroupCreate_Timeout(t *testing.T) {
 		svc := group_svc.NewForTestWithNames(gw, map[int64]string{7: "部门负责人", 8: "开发"})
 		group_svc.SetApprovalTimeoutForTest(svc, 50*time.Millisecond)
 
-		text, err := svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief")
+		text, err := svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief", 0)
 		So(err, ShouldBeNil)
 		So(text, ShouldContainSubstring, "审批超时")
 	})
@@ -219,7 +221,7 @@ func TestHandleGroupCreate_Guards(t *testing.T) {
 		}, nil)
 
 		svc := group_svc.NewForTest(gw)
-		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", []string{"开发"}, "b")
+		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", []string{"开发"}, "b", 0)
 		So(err, ShouldNotBeNil)
 		var httpErr *httputils.Error
 		So(errors.As(err, &httpErr), ShouldBeTrue)
@@ -234,7 +236,7 @@ func TestHandleGroupCreate_Guards(t *testing.T) {
 		svc := group_svc.NewForTest(gw)
 
 		sessRepo.EXPECT().Find(gomock.Any(), int64(99)).Return(nil, nil)
-		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", nil, "b")
+		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", nil, "b", 0)
 		So(err, ShouldNotBeNil)
 		var httpErr *httputils.Error
 		So(errors.As(err, &httpErr), ShouldBeTrue)
@@ -243,7 +245,7 @@ func TestHandleGroupCreate_Guards(t *testing.T) {
 		sessRepo.EXPECT().Find(gomock.Any(), int64(99)).Return(&chat_entity.Session{
 			ID: 99, AgentID: 8, GroupID: 0, Status: consts.ACTIVE,
 		}, nil)
-		_, err = svc.HandleGroupCreate(context.Background(), 7, 99, "t", nil, "b")
+		_, err = svc.HandleGroupCreate(context.Background(), 7, 99, "t", nil, "b", 0)
 		So(err, ShouldNotBeNil)
 		So(errors.As(err, &httpErr), ShouldBeTrue)
 		So(httpErr.Code, ShouldEqual, code.GroupCreateSessionInvalid)
@@ -263,7 +265,7 @@ func TestHandleGroupCreate_Guards(t *testing.T) {
 		}, nil)
 
 		svc := group_svc.NewForTest(gw)
-		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", []string{"测试"}, "b")
+		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", []string{"测试"}, "b", 0)
 		So(err, ShouldNotBeNil)
 		var httpErr *httputils.Error
 		So(errors.As(err, &httpErr), ShouldBeTrue)

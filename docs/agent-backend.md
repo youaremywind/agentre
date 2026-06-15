@@ -54,6 +54,7 @@ Each row is a **reverse channel** (host→backend), **except the final `CapAuton
 | `CapImageInput` / `"image_input"` | `RunRequest.UserBlocks` contains `blocks.ImageBlock` | ✅ | ✅ | ✅ | ✅ | the user message can carry PNG / JPEG / WebP images. builtin passes cago blocks through directly; claudecode encodes inline images into a base64 `image` content block of the stream-json user frame (image first, text after — natively supported by the CLI); codex materializes inline images into temporary local files and then goes through the app-server `localImage`; piagent passes the RPC image content through |
 | `CapGoal` / `"goal"` | `GoalController` | ❌ | ❌ | ✅ | ❌ | session/thread-level **objective** state: the host reads/sets/clears a persistent goal (`Objective` + `Status` + optional `TokenBudget`, plus `TokensUsed` / `TimeUsedSeconds` counters) bound to the provider thread. Only codex has it natively (app-server thread-goal protocol, `runtimes/codex/runtime.go` `GetGoal/SetGoal/ClearGoal`); chat_svc surfaces it via `GetGoal` / `SetGoal` / `StartGoal` / `ClearGoal`, and `remote.Runtime` forwards it over `runtime.goal.{get,set,clear}`. builtin / claudecode / piagent don't declare it, so chat_svc returns `ErrUnsupported` |
 | `CapMCPTools` / `"mcp_tools"` | `RunRequest.MCPServers` (no sub-interface) | ❌ | ✅ | ✅ | ❌ | host→backend **launch-time MCP injection**: the runtime accepts `RunRequest.MCPServers` (`[]MCPServerSpec`: `Name` / `URL` / `Headers`, http transport) and starts the turn with those extra MCP tool servers wired in. claudecode renders each spec into a `--mcp-config` entry (`{"mcpServers":{"<name>":{"type":"http","url":"...","headers":{...}}}}`) and auto-adds `mcp__<Name>__<tool>` entries to `--allowedTools`; codex renders each spec into one-shot `--config mcp_servers.<name>...` overrides (`url`, `http_headers`, `enabled_tools`, `default_tools_approval_mode="approve"`) and bypasses its persistent app-server cache for MCP-injected turns so launch-time config is always loaded. Group-chat orchestration is the first consumer: a member backend **must** declare this cap to be admitted to a group (`group_svc.backendSupportsGroup` → `chat_svc.AgentBackendHasCapability`); builtin / piagent ignore `RunRequest.MCPServers` |
+| `CapSkills` / `"skills"` | `RunRequest.EnabledPlugins` (no sub-interface) | ❌ | ✅ | ❌ | ❌ | host→backend **launch-time skill-pack (Claude Code plugin) injection**: the runtime accepts `RunRequest.EnabledPlugins` (`map[string]bool`, **sparse** — only the agent's explicit overrides: force-on=true / force-off=false; plugins not listed inherit the user's global `~/.claude` config). claudecode merges it into `--settings`'s `enabledPlugins` at spawn (`buildSkillsSettings`), so each chat session's subprocess gets its own skill set without mutating the shared `settings.json`. Granularity is **per-plugin only** (a single skill can't be toggled), and personal `~/.claude/skills/*` bare skills aren't governed by `enabledPlugins`. Only claudecode declares it; builtin / codex / piagent ignore `RunRequest.EnabledPlugins`. See §7 |
 | `CapAutonomousTurn` / `"autonomous_turn"` | `AutonomousTurnSource` | ❌ | ✅ | ❌ | ❌ | **the only forward channel (backend→host)**: the backend spontaneously runs a whole turn with *no* user input. claudecode's CLI, after a `run_in_background` Bash task completes, autonomously injects `<task-notification>` and runs a full turn (a second `result` frame); `pkg/claudecode.Session`'s persistent reader routes it to `AutonomousTurns()`, the runtime bridges each one to `agentruntime.AutonomousTurn`, and chat_svc's per-session watcher (`driveAutonomousTurn`) persists it as a **pure assistant turn (no user row)** and surfaces it live via the session-level `chat:autonomous:<sessionID>` event. Backends without this behavior simply don't declare the cap |
 
 > **Rule**: calling the corresponding interface of an undeclared cap must return `agentruntime.ErrUnsupported` (a sentinel error, transparent across processes, which chat_svc translates into a wire code accordingly). Declaring cap=true but not implementing the interface will be caught by the `TestXxxCapabilities` matrix test (type-assert failure).
@@ -229,6 +230,7 @@ Implement according to the Capabilities declaration (**if you declared cap=true,
 | `CapImageInput` | `RunRequest.UserBlocks` image blocks | supports multimodal user input; when unsupported, chat_svc rejects an image-carrying turn before calling the runtime |
 | `CapGoal` | `GoalController` | exposes a session/thread-level objective the host can get / set / clear (codex thread goal; remote-forwarded) |
 | `CapMCPTools` | `RunRequest.MCPServers` (no sub-interface) | the runtime consumes MCP tool servers injected at launch; orchestration (group chat) gates membership on this cap — see the matrix above |
+| `CapSkills` | `RunRequest.EnabledPlugins` (no sub-interface) | the runtime injects per-agent skill-pack (Claude Code plugin) overrides at launch; sparse map, unlisted plugins inherit global `~/.claude` — see the matrix above and §7 |
 | `CapAutonomousTurn` | `AutonomousTurnSource` | the backend spontaneously produces a turn with no user input (claudecode background-task auto-continue) — **the only forward channel**; see item I below |
 
 For caps you do not implement: **chat_svc returns `ErrUnsupported` when it receives the frontend request** — the error code has already been made a sentinel at the wire layer for transparent cross-process propagation, so **do not invent your own error**.
@@ -654,10 +656,9 @@ repo unit tests always use `testutils.Database(t)` + sqlmock, **never start a re
 
 ---
 
-## 7. 技能包（Skill Pack / plugin）注入 —— `CapSkills`（**计划中（分支 `feature/agent-skills`），尚未落地**）
+## 7. 技能包（Skill Pack / plugin）注入 —— `CapSkills`
 
-> 状态：设计完成、Claude Code CLI 机制已实测；实现计划 `superpowers/plans/2026-06-12-agent-skills-pr1-backend.md`，设计 `superpowers/specs/2026-06-12-agent-skills-tools-design.md`。
-> **下列 `CapSkills` / `RunRequest.EnabledPlugins` / `internal/pkg/agentskill` / `skill_svc` 等尚未进代码**（`git grep` 找不到属正常）。落地后请把 §7.3 并入上面的 capability 矩阵、删掉「计划中」标记。
+> 已落地，`CapSkills` 已并入 §0.5 矩阵。代码：`internal/pkg/agentskill`（leaf 目录域）+ `internal/service/skill_svc`（组合服务）+ `chat_svc/turn_skills.go`（注入接缝）+ `runtimes/claudecode/skills.go`（`--settings` 渲染）。设计 / CLI 实测快照见 `superpowers/specs/2026-06-12-agent-skills-tools-design.md` 与 `superpowers/plans/2026-06-12-agent-skills-pr1-backend.md`（归档稿，不随代码更新）。
 >
 > 给 agent 按 **Claude Code plugin（skill-pack）** 粒度配技能，是与 `CapMCPTools` 同构的 launch-time 注入：per-agent 配置 → spawn 时 CLI flag → 每会话子进程独立。
 
@@ -669,25 +670,25 @@ repo unit tests always use `testutils.Database(t)` + sqlmock, **never start a re
 | per-session 真相 | `--output-format stream-json` 的 `system.init` 帧带 `skills[]` / `plugins[]`（runtime 已解析此帧）。plugin skill 命名 `superpowers:brainstorming`，个人裸 skill `cago` |
 | 开关控制 | `--settings '{"enabledPlugins":{"<id>":true/false}}'` 在 **launch 时**完整控制 plugin 及其 skills。实测：关 `superpowers@claude-plugins-official` → init 帧 `skills` 从 32 降到 18（其 14 个整包消失，且从 `plugins[]` 移除） |
 | 粒度边界 | 只能按 **plugin** 开关；**单个 skill 不可**（`<name>@skills-dir:false` 无效）；个人 `~/.claude/skills/*` 裸 skill 不受 `enabledPlugins` 控制；`--disable-slash-commands` = 关全部 |
-| 约束到子集 | `--settings` 是叠加（additional）。要让 agent 只有「授予的包」，须注入**全量** `enabledPlugins`（每个已装 plugin → 是否授予，含 false），覆盖用户全局开关 |
+| 叠加语义 | `--settings` 的 `enabledPlugins` 叠加（additional）到全局：注入**全量**（每个已装 plugin → 含 false）→ 与全局完全隔离；注入**稀疏子集** → 未列出沿用全局。agentre 取后者（继承，见 §7.2） |
 
 ### 7.2 per-agent 独立怎么成立（共享安装也不冲突）
 
 同后端的多 agent 共用一份 `~/.claude/` 安装与 `settings.json`，但 agentre **不改共享文件**，而是**每次 spawn 子进程时单独传 `--settings`**：
 
 - 一 chat-session = 一 claude 子进程（LRU 按 `sessionKey(SessionID)`，`runtimes/claudecode/runtime.go`）；群成员各自 `BackingSessionID`（`group_svc/scheduler.go`）。
-- 传**全量** `enabledPlugins` map → 该 agent 技能集只由自己的覆盖决定，与全局 `settings.json` 无关；同后端两 agent 可并发跑不同技能集。
+- 传 agent 的**显式覆盖** map（强制开=true / 强制关=false，**稀疏**）→ 未列出的 plugin 沿用全局 `~/.claude`（继承），agent 在全局基线上叠加自己的开关；同后端两 agent 可并发跑不同技能集。
 - 与已上线 org 工具（per-agent `MCPServers`→`--mcp-config`，`session.go` `ccBuildClientOpts`）**同模式**。
 - **caveat**：launch-time 生效，cache-hit 复用不重下发 → 改授权**下次 spawn** 生效（新会话即时；活跃缓存会话下次重启）。无 per-call gateway，纯 launch-time（对比 org 工具有 gateway 每次调用复检）。
 
-### 7.3 计划接入的接口（落地后并入 §0.5 矩阵）
+### 7.3 接入的接口（已并入 §0.5 矩阵）
 
 | 接缝 | 形态 |
 | --- | --- |
 | 能力 | `capability.CapSkills`（仅 claudecode 声明）；前端 `caps.has("skills")` 门控技能区 |
-| RunRequest | 增 `EnabledPlugins map[string]bool`（全量已装→是否授予）；仅 `CapSkills` runtime 消费，其它忽略（软降级，同 `MCPServers`/`CapMCPTools`） |
-| claudecode | 纯函数 `buildSkillsSettings(map, base) string` 把 `{"enabledPlugins":…}` 合进 `--settings`（喂现成的 `ccLaunchSpec.Settings`，当前保留未用） |
+| RunRequest | `EnabledPlugins map[string]bool`（**稀疏**：仅 agent 显式覆盖；未列出沿用全局=继承）；仅 `CapSkills` runtime 消费，其它忽略（软降级，同 `MCPServers`/`CapMCPTools`） |
+| claudecode | 纯函数 `buildSkillsSettings(map, base) string`（`runtimes/claudecode/skills.go`）把 `{"enabledPlugins":…}` 合进 `--settings`；`acquireSession`（`runtime.go`）spawn 时调用 |
 | 目录域 | leaf `internal/pkg/agentskill`：`SkillPack` 类型 + `Recommended()` 静态精选 + `Discoverer` 按 backend 注册表（claudecode 实现 = 解析 `plugin list --json`，blank import 注册，仿 runtime/prober） |
-| 服务 | `skill_svc`：`ListAgentSkillPacks`（推荐+发现合并去重）/ `EnabledPluginsMap`（注入用）；保存复用 `agent_svc.Update`（`agents.skills_json` 存 `{id,enabled}`，id=plugin id） |
+| 服务 | `skill_svc`（消费者侧窄接口 `AgentLookup`/`BackendLookup` 注入）：`ListAgentSkillPacks`（推荐+发现合并去重，Wails 绑定 `App.ListAgentSkillPacks`）/ `EnabledPluginsMap`（注入用，回 agent 显式覆盖）；保存复用 `agent_svc.Update`（`agents.skills_json` 存 `{id,enabled}`，id=plugin id；迁移 `202606120001_agent_skills_reset` 把旧 `{label}` 清成 `{id}`） |
 | 注入点 | `chat_svc` `runTurn` 组 RunRequest 时按 `CapSkills` 填 `EnabledPlugins`（`turn_skills.go` 接缝，仿 `turn_mcp.go`） |
 | 远端 | 发现须在 claude 所在机器；远端 backend 经 daemon，v1 软降级（同 org-tool/group_send remote 限制） |

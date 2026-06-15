@@ -14,10 +14,12 @@ import (
 	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
 	fakert "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/fake"
+	"github.com/agentre-ai/agentre/internal/pkg/agenttool"
 	"github.com/agentre-ai/agentre/internal/repository/agent_backend_repo"
 	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
 	"github.com/agentre-ai/agentre/internal/service/agent_backend_svc"
 	"github.com/agentre-ai/agentre/internal/service/agent_svc"
+	"github.com/agentre-ai/agentre/internal/service/department_svc"
 )
 
 // Install 仅在 `-tags e2e` 构建中编译:
@@ -64,6 +66,9 @@ func Install(ctx context.Context) {
 		ID:             ceo.ID,
 		Name:           ceo.Name,
 		AgentBackendID: backendID,
+		// 开启流程管理工具:让 CEO 单聊轮注入 /mcp/workflow/,e2e 可验 workflow_create
+		// 审批 + 拉群带流程(workflow-tool.spec)。
+		Tools: []department_svc.AgentToolDTO{{Key: agenttool.KeyWorkflow, Enabled: true}},
 	}); err != nil {
 		logger.Ctx(ctx).Error("e2efakes.Install: attach backend to agent failed", zap.Error(err))
 		return

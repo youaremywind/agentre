@@ -377,7 +377,10 @@
       "org_create_agent": "Create agent",
       "org_update_agent": "Update agent",
       "org_delete_agent": "Delete agent",
-      "group_create": "Create group chat"
+      "group_create": "Create group chat",
+      "workflow_create": "Create workflow",
+      "workflow_update": "Update workflow",
+      "workflow_delete": "Delete workflow"
     }
   },
   "chat": {
@@ -1825,8 +1828,8 @@
         "add": "Add Tool",
         "empty": "No tools available",
         "approval": "Approval",
-        "names": { "org": "Org Structure" },
-        "descriptions": { "org": "Allow this agent to read and manage departments and members (writes require your approval)" }
+        "names": { "org": "Org Structure", "workflow": "Workflow Library" },
+        "descriptions": { "org": "Allow this agent to read and manage departments and members (writes require your approval)", "workflow": "Allow this agent to read and manage collaboration workflows (writes require your approval)" }
       },
       "toolPicker": {
         "title": "Add Tools",

@@ -184,19 +184,28 @@ func TestRun_SkipsGroupSendWithoutTool(t *testing.T) {
 	}
 }
 
-// 建群指令:三段冒号分隔(title:成员逗号分隔:brief),取指令所在行;缺段/空段 → !ok。
+// 建群指令:三段冒号分隔(title:成员逗号分隔:brief)+ 可选第四段 workflowId,取指令所在行;
+// 缺段/空段 → !ok。
 func TestParseGroupCreateDirective(t *testing.T) {
-	title, members, brief, ok := parseGroupCreateDirective("(来自 用户)\ne2e-group-create:拉起群:E2E Member:e2e-brief 建群冒烟")
+	title, members, brief, workflowID, ok := parseGroupCreateDirective("(来自 用户)\ne2e-group-create:拉起群:E2E Member:e2e-brief 建群冒烟")
 	require.True(t, ok)
 	assert.Equal(t, "拉起群", title)
 	assert.Equal(t, []string{"E2E Member"}, members)
 	assert.Equal(t, "e2e-brief 建群冒烟", brief)
+	assert.Equal(t, 0, workflowID) // 三段:不绑定流程
 
-	title, members, brief, ok = parseGroupCreateDirective("e2e-group-create:多人群: A , B ,:brief")
+	title, members, brief, workflowID, ok = parseGroupCreateDirective("e2e-group-create:多人群: A , B ,:brief")
 	require.True(t, ok)
 	assert.Equal(t, "多人群", title)
 	assert.Equal(t, []string{"A", "B"}, members) // 空段剔除,前后空白裁剪
 	assert.Equal(t, "brief", brief)
+	assert.Equal(t, 0, workflowID)
+
+	// 第四段 workflowId:拉群带流程。
+	_, _, brief, workflowID, ok = parseGroupCreateDirective("e2e-group-create:流程群:E2E Member:绑流程 brief:7")
+	require.True(t, ok)
+	assert.Equal(t, "绑流程 brief", brief)
+	assert.Equal(t, 7, workflowID)
 
 	for _, bad := range []string{
 		"无指令文本",
@@ -205,7 +214,19 @@ func TestParseGroupCreateDirective(t *testing.T) {
 		"e2e-group-create:群: ,:brief",        // 成员全空
 		"e2e-group-create:群:成员:",             // 空 brief
 	} {
-		_, _, _, ok := parseGroupCreateDirective(bad)
+		_, _, _, _, ok := parseGroupCreateDirective(bad)
+		assert.False(t, ok, "input=%q", bad)
+	}
+}
+
+// 流程建指令:e2e-workflow-create:<name>,取指令所在行;空段/无指令 → !ok。
+func TestParseWorkflowCreateDirective(t *testing.T) {
+	name, ok := parseWorkflowCreateDirective("(来自 用户)\ne2e-workflow-create:评审流程")
+	require.True(t, ok)
+	assert.Equal(t, "评审流程", name)
+
+	for _, bad := range []string{"无指令", "e2e-workflow-create:", "e2e-workflow-create:   "} {
+		_, ok := parseWorkflowCreateDirective(bad)
 		assert.False(t, ok, "input=%q", bad)
 	}
 }
@@ -284,6 +305,64 @@ func TestRun_SkipsGroupCreateWhenNoDirective(t *testing.T) {
 	}
 
 	assert.Empty(t, snapshot()["group_create"])
+}
+
+// 单聊轮带第四段 workflowId:fake 调 group_create 时透传 workflowId(拉群带流程)。
+func TestRun_PostsGroupCreateWithWorkflowId(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	srv, snapshot := taskCaptureServer(t)
+
+	r := New()
+	events, _, err := r.Run(ctx, agentruntime.RunRequest{
+		SessionID: 24,
+		UserText:  "e2e-group-create:流程群:E2E Member:e2e-brief 带流程:7",
+		MCPServers: []agentruntime.MCPServerSpec{{
+			Name:    "group",
+			URL:     srv.URL + "/mcp/group/",
+			Headers: map[string]string{"Authorization": "Bearer tok"},
+			Tools:   []string{"group_create"},
+		}},
+	})
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining
+	}
+
+	calls := snapshot()
+	require.Len(t, calls["group_create"], 1)
+	args := calls["group_create"][0]
+	assert.Equal(t, "流程群", args["title"])
+	assert.EqualValues(t, 7, args["workflowId"]) // JSON number → float64,用 EqualValues 比对
+}
+
+// 单聊轮注入 workflow 工具 + e2e-workflow-create 指令 → fake 调一次 workflow_create
+// (挂起等审批由 svc 侧负责,这里 server 即时应答)。
+func TestRun_PostsWorkflowCreateOnDirective(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	srv, snapshot := taskCaptureServer(t)
+
+	r := New()
+	events, _, err := r.Run(ctx, agentruntime.RunRequest{
+		SessionID: 25,
+		UserText:  "e2e-workflow-create:评审流程",
+		MCPServers: []agentruntime.MCPServerSpec{{
+			Name:    "workflow",
+			URL:     srv.URL + "/mcp/workflow/",
+			Headers: map[string]string{"Authorization": "Bearer tok"},
+			Tools:   []string{"workflow_create"},
+		}},
+	})
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining
+	}
+
+	calls := snapshot()
+	require.Len(t, calls["workflow_create"], 1)
+	args := calls["workflow_create"][0]
+	assert.Equal(t, "评审流程", args["name"])
+	assert.Equal(t, "e2e-workflow-content: 评审流程", args["content"])
+	assert.Empty(t, calls["group_create"]) // 只注入 workflow,绝不误调 group_create
 }
 
 func TestCapabilities_DeclaresMCPTools(t *testing.T) {

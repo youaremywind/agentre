@@ -52,7 +52,7 @@ import { useBackendCapabilities } from "../capability/use-backend-capabilities";
 import { CapabilityPicker } from "../capability/capability-picker";
 import { GrantedChips, type GrantedChip } from "../capability/granted-chips";
 import { resolveReportTo } from "./reporting";
-import { toolKeysToCatalog } from "./tool-catalog";
+import { toolKeysToCatalog, APPROVAL_TOOLS } from "./tool-catalog";
 import { useSkillCatalog } from "./use-skill-catalog";
 import { safeAgentColor, type OrgAgent, type OrgDepartment } from "./types";
 
@@ -180,7 +180,9 @@ export function OrgDetailAgent(props: Props) {
     .map((tl) => ({
       id: tl.key,
       label: t(`org.agent.tools.names.${tl.key}`),
-      badge: tl.key === "org" ? t("org.agent.tools.approval") : undefined,
+      badge: APPROVAL_TOOLS.has(tl.key)
+        ? t("org.agent.tools.approval")
+        : undefined,
     }));
   const toolItems = toolKeysToCatalog(props.availableTools ?? [], tools, t);
   const toggleToolGrant = (key: string) =>
@@ -332,7 +334,7 @@ export function OrgDetailAgent(props: Props) {
                 color={safeAgentColor(reportTarget.avatarColor)}
                 avatarDataUrl={reportTarget.avatarDataUrl}
                 avatarIcon={reportTarget.avatarIcon}
-                className="size-3.5 rounded-sm text-2xs"
+                className="size-5 rounded-sm text-2xs"
               />
               <span>{reportTarget.name}</span>
             </span>

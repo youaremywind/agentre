@@ -1,6 +1,7 @@
 package agenttool
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -8,7 +9,7 @@ import (
 
 func TestRegistry(t *testing.T) {
 	defs := Registry()
-	require.Len(t, defs, 1)
+	require.Len(t, defs, 2)
 	require.Equal(t, "org", defs[0].Key)
 	require.Equal(t, "/mcp/org/", defs[0].MCPPath)
 	require.Contains(t, defs[0].ToolNames, "org_get")
@@ -20,5 +21,23 @@ func TestRegistry(t *testing.T) {
 	_, ok = Lookup("nope")
 	require.False(t, ok)
 
-	require.Equal(t, []string{"org"}, Keys())
+	require.Equal(t, []string{"org", "workflow"}, Keys())
+}
+
+func TestRegistry_HasWorkflow(t *testing.T) {
+	d, ok := Lookup(KeyWorkflow)
+	if !ok {
+		t.Fatal("workflow not registered")
+	}
+	if d.MCPPath != "/mcp/workflow/" {
+		t.Fatalf("path=%s", d.MCPPath)
+	}
+	want := []string{"workflow_list", "workflow_create", "workflow_update", "workflow_delete"}
+	if !slices.Equal(d.ToolNames, want) {
+		t.Fatalf("tools=%v", d.ToolNames)
+	}
+	keys := Keys()
+	if !slices.Contains(keys, "workflow") || !slices.Contains(keys, "org") {
+		t.Fatalf("keys=%v", keys)
+	}
 }

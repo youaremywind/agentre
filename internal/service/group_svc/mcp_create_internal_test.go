@@ -27,29 +27,30 @@ func TestGroupMCPCreateToken(t *testing.T) {
 }
 
 func TestGroupMCPGroupCreateTool(t *testing.T) {
-	Convey("group_create → 回调收到 agentID/sessionID/title/memberNames/brief,响应回传回调 text", t, func() {
-		var gotAgent, gotSession int64
+	Convey("group_create → 回调收到 agentID/sessionID/title/memberNames/brief/workflowID,响应回传回调 text", t, func() {
+		var gotAgent, gotSession, gotWorkflow int64
 		var gotTitle, gotBrief string
 		var gotMembers []string
 		h := newGroupMCP(nil)
-		h.groupCreate = func(_ context.Context, agentID, sessionID int64, title string, memberNames []string, brief string) (string, error) {
-			gotAgent, gotSession, gotTitle, gotMembers, gotBrief = agentID, sessionID, title, memberNames, brief
+		h.groupCreate = func(_ context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64) (string, error) {
+			gotAgent, gotSession, gotTitle, gotMembers, gotBrief, gotWorkflow = agentID, sessionID, title, memberNames, brief, workflowID
 			return "group created: id=12 title=" + title, nil
 		}
 		tok := h.MintCreateToken(7, 99)
-		rr := postMCP(h, tok, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"group_create","arguments":{"title":"新功能开发组","memberNames":["开发","测试"],"brief":"按设计稿重构 UI,验收:e2e 通过"}}}`)
+		rr := postMCP(h, tok, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"group_create","arguments":{"title":"新功能开发组","memberNames":["开发","测试"],"brief":"按设计稿重构 UI,验收:e2e 通过","workflowId":5}}}`)
 		So(rr.Code, ShouldEqual, 200)
 		So(gotAgent, ShouldEqual, 7)
 		So(gotSession, ShouldEqual, 99)
 		So(gotTitle, ShouldEqual, "新功能开发组")
 		So(gotMembers, ShouldResemble, []string{"开发", "测试"})
 		So(gotBrief, ShouldEqual, "按设计稿重构 UI,验收:e2e 通过")
+		So(gotWorkflow, ShouldEqual, 5)
 		So(rr.Body.String(), ShouldContainSubstring, "group created: id=12")
 	})
 
 	Convey("成员 token 调 group_create → 401;create token 调 group_send → 401", t, func() {
 		h := newGroupMCP(nil)
-		h.groupCreate = func(context.Context, int64, int64, string, []string, string) (string, error) { return "", nil }
+		h.groupCreate = func(context.Context, int64, int64, string, []string, string, int64) (string, error) { return "", nil }
 		rr := postMCP(h, h.MintToken(5, 100), `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"group_create","arguments":{"title":"x","memberNames":["a"],"brief":"b"}}}`)
 		So(rr.Code, ShouldEqual, 401)
 		rr = postMCP(h, h.MintCreateToken(7, 99), `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"group_send","arguments":{"body":"hi"}}}`)
@@ -67,5 +68,6 @@ func TestGroupMCPGroupCreateTool(t *testing.T) {
 		h := newGroupMCP(nil)
 		rr := postMCP(h, "", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 		So(rr.Body.String(), ShouldContainSubstring, `"group_create"`)
+		So(rr.Body.String(), ShouldContainSubstring, `"workflowId"`)
 	})
 }

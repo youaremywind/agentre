@@ -13,15 +13,19 @@ type Definition struct {
 // KeyOrg 组织架构读写工具。
 const KeyOrg = "org"
 
-var registry = []Definition{{
-	Key:     KeyOrg,
-	MCPPath: "/mcp/org/",
-	ToolNames: []string{
+// KeyWorkflow 协作流程(SOP)读写工具。
+const KeyWorkflow = "workflow"
+
+var registry = []Definition{
+	{Key: KeyOrg, MCPPath: "/mcp/org/", ToolNames: []string{
 		"org_get",
 		"org_create_department", "org_update_department", "org_delete_department",
 		"org_create_agent", "org_update_agent", "org_delete_agent",
-	},
-}}
+	}},
+	{Key: KeyWorkflow, MCPPath: "/mcp/workflow/", ToolNames: []string{
+		"workflow_list", "workflow_create", "workflow_update", "workflow_delete",
+	}},
+}
 
 // Registry 返回全部内置工具定义(只读副本)。
 func Registry() []Definition {

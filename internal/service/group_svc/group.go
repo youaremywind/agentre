@@ -62,7 +62,7 @@ type GroupSvc interface {
 	HandleTaskCancel(ctx context.Context, callerMemberID int64, taskNo int, reason string) (*group_entity.GroupTask, error)
 	// HandleGroupCreate 是 group_create MCP tool 的服务端入口:单聊轮经审批门拉起团队
 	// (发起者=主持人,项目继承发起会话)。拒绝/超时编码为返回文本(nil err),error 仅内部故障。
-	HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string) (string, error)
+	HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64) (string, error)
 	// BuildCreateTurnMCP 实现 chat_svc.TurnMCPProvider:给普通单聊轮注入 group_create(群成员轮跳过)。
 	BuildCreateTurnMCP(ctx context.Context, a *agent_entity.Agent, sessionID, groupID int64) []agentruntime.MCPServerSpec
 	StopGroup(ctx context.Context, id int64) error

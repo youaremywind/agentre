@@ -17,8 +17,23 @@ func init() {
 	agentskill.RegisterDiscoverer(agent_backend_entity.TypeClaudeCode, Discoverer{})
 }
 
-// Discoverer 用 claude CLI 枚举已安装技能包。
-type Discoverer struct{}
+// commandRunner 执行 CLI 并返回 stdout。注入接缝:单测替换为假命令,免依赖真实 claude 二进制。
+type commandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+// Discoverer 用 claude CLI 枚举已安装技能包。run 为 nil 时走真实 exec(生产默认)。
+type Discoverer struct {
+	run commandRunner
+}
+
+// runner 取命令执行器:未注入 → 真实 exec.CommandContext().Output()。
+func (d Discoverer) runner() commandRunner {
+	if d.run != nil {
+		return d.run
+	}
+	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, args...).Output()
+	}
+}
 
 // rawPlugin 映射 `claude plugin list --json` 单元素。Enabled = CLI 全局启用态
 // (透出到 SkillPack.GloballyEnabled,供"继承"模型判定);Scope 暂不消费。
@@ -80,13 +95,12 @@ func parsePluginList(b []byte) ([]agentskill.SkillPack, error) {
 }
 
 // Discover 调用 claude plugin list --json 枚举已安装技能包。CLI 不可用时软降级返回空。
-func (Discoverer) Discover(ctx context.Context, q agentskill.DiscoverQuery) ([]agentskill.SkillPack, error) {
+func (d Discoverer) Discover(ctx context.Context, q agentskill.DiscoverQuery) ([]agentskill.SkillPack, error) {
 	bin := strings.TrimSpace(q.CLIPath)
 	if bin == "" {
 		bin = "claude"
 	}
-	cmd := exec.CommandContext(ctx, bin, "plugin", "list", "--json")
-	b, err := cmd.Output()
+	b, err := d.runner()(ctx, bin, "plugin", "list", "--json")
 	if err != nil {
 		return []agentskill.SkillPack{}, nil // CLI 不可用 → 软降级(空发现)
 	}

@@ -159,6 +159,31 @@ const KeyWorkflow = "workflow"
 
 ---
 
+## Part C — `group_create` 绑定流程（拉群带流程，2026-06-15 追加）
+
+### 动机
+
+让「agent 自己创建流程 → 选定 agent 拉群并用上这个流程」形成闭环。今天 `group_create` MCP 工具只收 `{title, memberNames, brief}`，**无法绑定流程**——只有人类建群弹窗（`group-new-dialog.tsx` 的「协作流程」下拉）能绑。`CreateGroup` 早已支持 `WorkflowID`（`group_entity.WorkflowID` 落库、主持人每轮注入最新正文），所以本期只需把这条入参从工具透传到 `CreateGroup`，**不改任何绑定/注入语义**（与「非目标：不改群绑定与注入」一致）。
+
+典型链路：agent 先用 Part B 的 `workflow_create` 建流程（结果文本回传 `id`），再用 `group_create` 携 `workflowId` 拉群；建群后主持人首轮即注入该流程正文。
+
+### 改动（`group_svc`，最小透传）
+
+- **工具 schema**（`mcp.go::groupCreateToolSchema`）：`properties` 加可选 `workflowId`（integer，描述：「可选；绑定一个协作流程(SOP)的 id，主持人每轮注入其最新正文。先用 workflow_list 查或 workflow_create 建，省略或 0=不绑定」）。**不进 `required`**。
+- **arguments 解码**（`mcp.go` 的 `Arguments` 匿名 struct）：加 `WorkflowID int64 \`json:"workflowId"\``。
+- **MCP 路由**（`mcp.go` 的 `group_create` 分支）：把 `rpc.Params.Arguments.WorkflowID` 作为新参传给 `h.groupCreate(...)`。
+- **回调类型**（`mcp.go` 的 `groupCreate func(...)` 字段）：签名末尾加 `workflowID int64`。
+- **接口 + 实现**（`group.go::GroupSvc.HandleGroupCreate` 接口、`create.go::HandleGroupCreate` 实现，`group.go:138` 的 `s.mcp.groupCreate = s.HandleGroupCreate` 绑定自动适配）：加 `workflowID int64` 形参；①填进审批卡 `ToolInput`（`map[string]any{... "workflowId": workflowID}`，让用户在审批时看到绑了哪个流程）；②透传 `CreateGroupRequest{... WorkflowID: workflowID}`。
+- **不做校验**：无效/不存在的 `workflowId` 沿用现有注入侧 `IsActive()` 软门——绑了但流程不存在/已删时，注入侧静默按「不绑定」处理（与人类弹窗绑定后流程被删的既有行为一致）。不额外报错，保持透传最小化。
+
+### 不变量
+
+- 仍只透传到既有 `CreateGroup`，不新增建群路径；`group_create` 仍走 PR2 通用 `tool_approval`（`ToolKey="group_create"`），审批门不变。
+- 群成员轮（`groupID>0`）不注入 `group_create`（防套娃）——本改动不触及该门控。
+- 无新迁移、无新错误码（`workflows` 表与 `groups.workflow_id` 列已存在）。
+
+---
+
 ## 分层与不变量校验
 
 - 前端只走 Wails binding（不加 HTTP-style app API）；管理弹窗经 `useWorkflows` → `app/workflow.go` → `workflow_svc`。
@@ -172,8 +197,9 @@ const KeyWorkflow = "workflow"
 - **PR2（Part B 前置重构）**：泛化 org 审批管线为通用「工具审批」（后端 block/begin/finish/answer + stream kind + 前端渲染器），org 工具改走共享入口；先补/跑 org 审批回归测试，泛化后全绿。
 - **PR3（Part B 后端）**：`agenttool` 注册 `KeyWorkflow` + `workflowtool_svc` + bootstrap 装配（MCP 挂载 / TurnMCPProvider / RegisterDeps 适配 `workflow_svc`）+ 后端测试。接共享审批管线。
 - **PR4（Part B 前端）**：`tool-catalog` 加 `workflow` + i18n 名称/描述；审批渲染按 `toolKey` 适配 workflow 文案。
+- **PR5（Part C 后端）**：`group_create` 工具加可选 `workflowId` 透传到 `CreateGroup.WorkflowID`（schema + arguments + 回调 + 接口/实现 + 审批卡 ToolInput）。独立于 Part B，但产品上「先建流程再拉群带流程」需 PR3 一起才闭环。
 
-> Part A（PR1）与 Part B（PR2→PR3→PR4）独立，可并行；Part B 内部 PR2 必须先于 PR3/PR4。
+> Part A（PR1）与 Part B（PR2→PR3→PR4）独立，可并行；Part B 内部 PR2 必须先于 PR3/PR4。Part C（PR5）只依赖既有 `group_create` + `CreateGroup`，与 Part B 解耦，可独立落；闭环演示需 PR3+PR5 都在。
 
 ## 开放决策 / 风险
 

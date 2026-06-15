@@ -43,7 +43,7 @@ func (s *groupSvc) BuildCreateTurnMCP(_ context.Context, a *agent_entity.Agent, 
 // 批准后建群(发起者=主持人,项目继承发起会话)+ system 拉起消息 + brief 作为首条群消息
 // 投主持人触发首轮。返回写回 CLI 的 result 文本;拒绝/超时也是文本(nil err),镜像 orgtool ——
 // error 仅用于内部故障/校验失败。
-func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string) (string, error) {
+func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64) (string, error) {
 	// 按 DB 现状校验发起会话(token 无状态,签发后会话可能已归档/换 agent)。
 	sess, err := chat_repo.Session().Find(ctx, sessionID)
 	if err != nil {
@@ -64,7 +64,7 @@ func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int
 	// ToolKey=group_create;waiter 与前端应答路由 AnswerToolApproval 由 chat_svc 持有)。
 	requestID := uuid.NewString()
 	blk := &chatblocks.ToolApprovalBlock{ToolKey: toolKeyGroupCreate, RequestID: requestID, ToolName: "group_create",
-		ToolInput: map[string]any{"title": title, "memberNames": memberNames, "brief": brief}, Status: "pending"}
+		ToolInput: map[string]any{"title": title, "memberNames": memberNames, "brief": brief, "workflowId": workflowID}, Status: "pending"}
 	ch, err := s.gw.BeginToolApproval(ctx, sessionID, blk)
 	if err != nil {
 		return "", fmt.Errorf("审批通道不可用: %w", err)
@@ -89,6 +89,7 @@ func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int
 		HostAgentID:    agentID,
 		ProjectID:      sess.ProjectID, // 群目录 = 发起会话的项目目录
 		MemberAgentIDs: memberIDs,
+		WorkflowID:     workflowID, // 可选绑定的协作流程(0=不绑定;注入侧 IsActive 软门)
 	})
 	if err != nil {
 		// 业务校验失败也算 approved 终态,错误进 Result 给 agent 纠错(镜像 orgtool)。

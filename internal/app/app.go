@@ -30,6 +30,8 @@ import (
 	watcher "github.com/agentre-ai/agentre/internal/service/remote_device_watcher_svc"
 	"github.com/agentre-ai/agentre/internal/service/server_svc"
 	"github.com/agentre-ai/agentre/internal/service/terminal_svc"
+	"github.com/agentre-ai/agentre/internal/service/workflow_svc"
+	"github.com/agentre-ai/agentre/internal/service/workflowtool_svc"
 
 	"github.com/cago-frame/cago/configs"
 	"github.com/cago-frame/cago/pkg/i18n"
@@ -215,6 +217,12 @@ func (a *App) registerChatService() {
 	orgtool_svc.Default().RegisterDeps(
 		department_svc.Department(), department_svc.Department(),
 		agent_svc.Agent(), agent_repo.Agent(), chat_svc.Chat(),
+	)
+
+	// workflow_svc.Workflow() 同时满足 WorkflowQuery + WorkflowCommand 两个窄接口。
+	workflowtool_svc.Default().RegisterDeps(
+		workflow_svc.Workflow(), workflow_svc.Workflow(),
+		agent_repo.Agent(), chat_svc.Chat(),
 	)
 }
 

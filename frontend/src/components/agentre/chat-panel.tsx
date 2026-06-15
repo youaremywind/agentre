@@ -947,11 +947,54 @@ function ChatPanel({
       return;
     }
     saveBottomScrollPosition(readScrollMetrics(el));
-    // 依赖里只留 messages(结构性变化:首屏加载 / 发送乐观追加 / turn 落定 reload),
-    // 不再挂 liveDelta/liveThinking/liveBlocks/liveRetry —— 流式逐 chunk 的贴底已交给
-    // 虚拟器的 anchorTo:"end"(见 chat.tsx)。这条手动 scrollTop=maxScrollTop 读的是
-    // 异步复测前的旧高度,每 chunk 跟随会慢一帧并和虚拟器抢滚动,故只在结构性变化时兜底。
+    // 依赖里只留 messages(结构性变化:首屏加载 / 发送乐观追加 / turn 落定 reload)。
+    // 流式逐 chunk 的贴底由下面单独的 effect 接管(挂 liveDelta/liveThinking/...)。
   }, [messages, scrollStateKey, saveBottomScrollPosition]);
+
+  // 流式逐 chunk 贴底。曾经把这件事完全交给虚拟器的 anchorTo:"end"(见 chat.tsx),
+  // 但那条路只在「距底 ≤ 32px 钉底容差」时才钉:turn 开头结构性 follow 滚到的是
+  // 占位行 estimate 高度的底部,真实流式文本测量出来更高 → 首帧就落后 >32px →
+  // anchorTo:"end" 再也咬不回来,整轮转录区冻结、最新输出沉到折叠线下面(回归 bug)。
+  // 这里改成「意图驱动」:只要用户停在贴底(atBottomRef,上滚会被 handleTranscriptScroll
+  // 置 false),就随每个流式增量把滚动钉到真实底部。读的是已提交 DOM 的实时 scrollHeight
+  // (readScrollMetrics 同步触发 reflow),不是慢一帧的虚拟器 getTotalSize 估值,故不掉队;
+  // 钉到真实底部后虚拟器的 anchorTo:"end" 也回到容差内、自然协同而非互抢。
+  React.useLayoutEffect(() => {
+    // __SF_DEBUG__
+    const el0 = transcriptRef.current;
+    (window as unknown as { __sf?: unknown[] }).__sf?.push({
+      t: performance.now(),
+      atBottom: atBottomRef.current,
+      pending: pendingScrollRestoreRef.current?.key === scrollStateKey,
+      clientH: el0?.clientHeight ?? -1,
+      before: el0 ? Math.round(el0.scrollTop) : -1,
+      maxTop: el0 ? Math.max(0, el0.scrollHeight - el0.clientHeight) : -1,
+      liveLen: (liveDelta ?? "").length,
+    });
+    if (pendingScrollRestoreRef.current?.key === scrollStateKey) {
+      return;
+    }
+    if (!atBottomRef.current) {
+      return;
+    }
+    const el = transcriptRef.current;
+    if (!el || el.clientHeight === 0) {
+      return;
+    }
+    saveBottomScrollPosition(readScrollMetrics(el));
+    (window as unknown as { __sf?: unknown[] }).__sf?.push({
+      t: performance.now(),
+      after: Math.round(el.scrollTop),
+      ev: "pinned",
+    });
+  }, [
+    liveDelta,
+    liveThinking,
+    liveBlocks,
+    liveRetry,
+    scrollStateKey,
+    saveBottomScrollPosition,
+  ]);
 
   // tab 从隐藏(display:none)切回可见时，上面的 useLayoutEffect 在隐藏期间
   // 会被 clientHeight===0 跳过。这里由父层 HostedPanel 传入的 active 信号

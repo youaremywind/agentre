@@ -56,8 +56,13 @@ const GroupInviteDirectivePrefix = "e2e-group-invite:"
 const SystemAssertDirectivePrefix = "e2e-assert-system:"
 
 // GroupCreateDirectivePrefix 触发单聊建群的用户指令:
-// e2e-group-create:<title>:<成员名逗号分隔>:<brief>。
+// e2e-group-create:<title>:<成员名逗号分隔>:<brief>[:<workflowId>]。
+// 末段 workflowId 可选(整数,>0 才透传),用于「拉群带流程」绑定。
 const GroupCreateDirectivePrefix = "e2e-group-create:"
+
+// WorkflowCreateDirectivePrefix 触发流程管理工具建流程的用户指令:
+// e2e-workflow-create:<name>。需 agent 开启 workflow 工具(注入 /mcp/workflow/)。
+const WorkflowCreateDirectivePrefix = "e2e-workflow-create:"
 
 // taskAssignedRe 匹配派活消息抬头「任务 #N：」(HandleTaskCreate 的 content 格式;
 // 完成回执是「任务 #N 已完成」、取消是「任务 #N 已取消」,编号后无全角冒号,不会误匹配)。
@@ -184,11 +189,25 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		// 该调用会挂起直到用户在 UI 批准(e2e spec 负责点批准);run ctx 取消
 		// (停止会话)会同步中断该 HTTP 请求,失败只写 stderr。
 		if spec, ok := findGroupToolServer(req.MCPServers, "group_create"); ok {
-			if title, members, brief, found := parseGroupCreateDirective(req.UserText); found {
-				if err := postToolCall(ctx, spec, "group_create", map[string]any{
-					"title": title, "memberNames": members, "brief": brief,
-				}); err != nil {
+			if title, members, brief, workflowID, found := parseGroupCreateDirective(req.UserText); found {
+				args := map[string]any{"title": title, "memberNames": members, "brief": brief}
+				if workflowID > 0 {
+					args["workflowId"] = workflowID // 拉群带流程:绑定已建流程
+				}
+				if err := postToolCall(ctx, spec, "group_create", args); err != nil {
 					fmt.Fprintf(os.Stderr, "fake: group_create failed: %v\n", err)
+				}
+			}
+		}
+		// 流程工具接缝:agent 开启 workflow 工具时注入 /mcp/workflow/;按 e2e-workflow-create
+		// 指令调 workflow_create(挂起等 UI 批准,e2e spec 负责点批准)。失败只写 stderr。
+		if spec, ok := findGroupToolServer(req.MCPServers, "workflow_create"); ok {
+			if name, found := parseWorkflowCreateDirective(req.UserText); found {
+				if err := postToolCall(ctx, spec, "workflow_create", map[string]any{
+					"name":    name,
+					"content": "e2e-workflow-content: " + name,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "fake: workflow_create failed: %v\n", err)
 				}
 			}
 		}
@@ -315,18 +334,20 @@ func parseTwoPartDirective(text, prefix string) (first, second string, ok bool) 
 // parseGroupCreateDirective 解析建群指令(取指令所在行;三段冒号分隔,成员逗号分隔;
 // 缺段/空段 → !ok)。title 不支持含冒号(SplitN 三段切分);e2e 指令是测试接缝,
 // 标题用时间戳即可。
-func parseGroupCreateDirective(text string) (title string, members []string, brief string, ok bool) {
+func parseGroupCreateDirective(text string) (title string, members []string, brief string, workflowID int, ok bool) {
 	idx := strings.Index(text, GroupCreateDirectivePrefix)
 	if idx < 0 {
-		return "", nil, "", false
+		return "", nil, "", 0, false
 	}
 	rest := text[idx+len(GroupCreateDirectivePrefix):]
 	if i := strings.IndexByte(rest, '\n'); i >= 0 {
 		rest = rest[:i]
 	}
-	parts := strings.SplitN(rest, ":", 3)
-	if len(parts) != 3 {
-		return "", nil, "", false
+	// 末段 workflowId 可选:limit 4 让 3 段(无 workflow)与 4 段(带 workflow)都解析,
+	// 且不破坏既有 3 段契约(brief 不含冒号,e2e 受控)。
+	parts := strings.SplitN(rest, ":", 4)
+	if len(parts) < 3 {
+		return "", nil, "", 0, false
 	}
 	title, brief = strings.TrimSpace(parts[0]), strings.TrimSpace(parts[2])
 	for _, m := range strings.Split(parts[1], ",") {
@@ -334,10 +355,20 @@ func parseGroupCreateDirective(text string) (title string, members []string, bri
 			members = append(members, m)
 		}
 	}
-	if title == "" || len(members) == 0 || brief == "" {
-		return "", nil, "", false
+	if len(parts) == 4 { // 可选 workflowId:非整数/缺省 → 0=不绑定
+		if n, err := strconv.Atoi(strings.TrimSpace(parts[3])); err == nil {
+			workflowID = n
+		}
 	}
-	return title, members, brief, true
+	if title == "" || len(members) == 0 || brief == "" {
+		return "", nil, "", 0, false
+	}
+	return title, members, brief, workflowID, true
+}
+
+// parseWorkflowCreateDirective 解出 e2e-workflow-create:<name>(取指令所在行;空段 → !ok)。
+func parseWorkflowCreateDirective(text string) (name string, ok bool) {
+	return parseOnePartDirective(text, WorkflowCreateDirectivePrefix)
 }
 
 // postToolCall 对注入的 group MCP server 发一次无状态 tools/call(原 postGroupSend 泛化)。

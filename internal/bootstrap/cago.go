@@ -37,6 +37,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/service/orgtool_svc"
 	"github.com/agentre-ai/agentre/internal/service/project_svc"
 	"github.com/agentre-ai/agentre/internal/service/skill_svc"
+	"github.com/agentre-ai/agentre/internal/service/workflowtool_svc"
 	"github.com/agentre-ai/agentre/migrations"
 
 	"github.com/cago-frame/cago"
@@ -162,6 +163,10 @@ func Init(ctx context.Context) (*Runtime, error) {
 	gw.RegisterMCP("/mcp/org/", orgtool_svc.Default().MCPHandler())
 	orgtool_svc.Default().SetGatewayBaseURL(gw.BaseURL())
 	chat_svc.RegisterTurnMCPProvider(orgtool_svc.Default().BuildTurnMCP)
+	// agent 开了流程库工具的会话 turn 注入该 MCP server(写操作审批在服务端,见 workflowtool_svc)。
+	gw.RegisterMCP("/mcp/workflow/", workflowtool_svc.Default().MCPHandler())
+	workflowtool_svc.Default().SetGatewayBaseURL(gw.BaseURL())
+	chat_svc.RegisterTurnMCPProvider(workflowtool_svc.Default().BuildTurnMCP)
 	// group_create:单聊轮注入(群成员轮在 provider 内按 groupID 跳过)。
 	chat_svc.RegisterTurnMCPProvider(group_svc.Default().BuildCreateTurnMCP)
 
