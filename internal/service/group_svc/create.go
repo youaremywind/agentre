@@ -15,21 +15,23 @@ import (
 	"github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
 	"github.com/agentre-ai/agentre/internal/model/entity/group_entity"
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agenttool"
 	"github.com/agentre-ai/agentre/internal/pkg/code"
 	"github.com/agentre-ai/agentre/internal/repository/agent_repo"
 	"github.com/agentre-ai/agentre/internal/repository/chat_repo"
 	chatblocks "github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
 )
 
-// toolKeyGroupCreate 是 group_create 在 chat_svc 通用工具审批管线里的 ToolKey
-// (group 工具无 agenttool registry 项,故就近定义)。
-const toolKeyGroupCreate = "group_create"
+// toolKeyGroupCreate 是 group_create 在 chat_svc 通用工具审批管线里的 ToolKey,
+// 与 agenttool 注册表 / 审批卡 ToolKey 同值(引用 canonical 常量防漂移)。
+const toolKeyGroupCreate = agenttool.KeyGroupCreate
 
 // BuildCreateTurnMCP 实现 chat_svc.TurnMCPProvider:给普通单聊轮注入 group_create。
 // 群成员轮(groupID>0)不注入 —— 防群中拉群套娃(spec §7.1);能力门控(CapMCPTools)
-// 由 chat_svc.appendTurnMCP 统一处理,这里不重复判。
+// 由 chat_svc.appendTurnMCP 统一处理,这里不重复判。per-agent 工具开关(group_create)
+// 默认关、按需开,镜像 orgtool.BuildTurnMCP 的 a.ToolEnabled 门控。
 func (s *groupSvc) BuildCreateTurnMCP(_ context.Context, a *agent_entity.Agent, sessionID, groupID int64) []agentruntime.MCPServerSpec {
-	if a == nil || groupID > 0 || s.gatewayBaseURL == "" {
+	if a == nil || groupID > 0 || s.gatewayBaseURL == "" || !a.ToolEnabled(agenttool.KeyGroupCreate) {
 		return nil
 	}
 	return []agentruntime.MCPServerSpec{{
@@ -55,6 +57,15 @@ func (s *groupSvc) HandleGroupCreate(ctx context.Context, agentID, sessionID int
 	}
 	if sess.GroupID > 0 { // 群成员轮内禁止再拉群(防套娃);正常注入下走不到,防御伪造/复用 token 场景
 		return "", i18n.NewError(ctx, code.GroupCreateNested)
+	}
+	// 实时复查 group_create 工具开关:create token 无状态,注入后用户可能在设置里关掉开关。
+	// 权限门控先于输入校验(成员解析)—— 工具关了就直接拒,不暴露成员解析结果(镜像 org/workflow mcp.go 的实时复查)。
+	a, err := agent_repo.Agent().Find(ctx, agentID)
+	if err != nil {
+		return "", err
+	}
+	if a == nil || !a.ToolEnabled(agenttool.KeyGroupCreate) {
+		return "", i18n.NewError(ctx, code.GroupCreateToolDisabled)
 	}
 	memberIDs, err := s.resolveCreateMembers(ctx, agentID, memberNames)
 	if err != nil {

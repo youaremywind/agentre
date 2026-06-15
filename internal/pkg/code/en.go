@@ -167,6 +167,7 @@ var enUS = map[int]string{
 	GroupCreateNested:         "group members cannot create another group",
 	GroupCreateMemberUnknown:  "no available agent named: %v",
 	GroupNicknameTaken:        "group nickname is already taken by another member",
+	GroupCreateToolDisabled:   "the create-group tool is disabled, cannot start a group",
 
 	// Server
 	ServerURLInvalid:          "invalid Server URL",

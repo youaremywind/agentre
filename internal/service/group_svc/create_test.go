@@ -49,6 +49,13 @@ func registerCreateMocks(ctrl *gomock.Controller) (
 	return sessRepo, agentRepo, groupRepo, memberRepo, msgRepo, taskRepo
 }
 
+// enabledCreateAgent 造一个已开启 group_create 工具的发起 agent(过实时复查门控)。
+func enabledCreateAgent(id int64, name string) *agent_entity.Agent {
+	a := &agent_entity.Agent{ID: id, Name: name, Status: consts.ACTIVE}
+	a.SetTools([]agent_entity.AgentToolItem{{Key: "group_create", Enabled: true}})
+	return a
+}
+
 func TestHandleGroupCreate_ApprovedExecutes(t *testing.T) {
 	Convey("批准 → 解析成员名建群(项目继承自发起会话)+ system 拉起消息 + brief 投主持人;result 文本含 group id", t, func() {
 		ctrl := gomock.NewController(t)
@@ -66,7 +73,7 @@ func TestHandleGroupCreate_ApprovedExecutes(t *testing.T) {
 			{ID: 8, Name: "开发", Status: consts.ACTIVE},
 		}, nil).AnyTimes()
 		agentRepo.EXPECT().Find(gomock.Any(), gomock.Any()).
-			Return(&agent_entity.Agent{ID: 7, Name: "部门负责人", Status: consts.ACTIVE}, nil).AnyTimes()
+			Return(enabledCreateAgent(7, "部门负责人"), nil).AnyTimes()
 		// CreateGroup 路径(host + 1 成员;backendSupportsGroup 走 gw)
 		gw.EXPECT().AgentBackendHasCapability(gomock.Any(), gomock.Any(), capability.CapMCPTools).Return(true, nil).AnyTimes()
 		var createdGroup group_entity.Group
@@ -160,6 +167,7 @@ func TestHandleGroupCreate_Denied(t *testing.T) {
 		sessRepo.EXPECT().Find(gomock.Any(), int64(99)).Return(&chat_entity.Session{
 			ID: 99, AgentID: 7, ProjectID: 3, GroupID: 0, Status: consts.ACTIVE,
 		}, nil)
+		agentRepo.EXPECT().Find(gomock.Any(), int64(7)).Return(enabledCreateAgent(7, "部门负责人"), nil)
 		agentRepo.EXPECT().List(gomock.Any()).Return([]*agent_entity.Agent{
 			{ID: 8, Name: "开发", Status: consts.ACTIVE},
 		}, nil)
@@ -194,6 +202,7 @@ func TestHandleGroupCreate_Timeout(t *testing.T) {
 		sessRepo.EXPECT().Find(gomock.Any(), int64(99)).Return(&chat_entity.Session{
 			ID: 99, AgentID: 7, ProjectID: 3, GroupID: 0, Status: consts.ACTIVE,
 		}, nil)
+		agentRepo.EXPECT().Find(gomock.Any(), int64(7)).Return(enabledCreateAgent(7, "部门负责人"), nil)
 		agentRepo.EXPECT().List(gomock.Any()).Return([]*agent_entity.Agent{
 			{ID: 8, Name: "开发", Status: consts.ACTIVE},
 		}, nil)
@@ -206,6 +215,30 @@ func TestHandleGroupCreate_Timeout(t *testing.T) {
 		text, err := svc.HandleGroupCreate(context.Background(), 7, 99, "新功能开发组", []string{"开发"}, "brief", 0, nil)
 		So(err, ShouldBeNil)
 		So(text, ShouldContainSubstring, "审批超时")
+	})
+}
+
+func TestHandleGroupCreate_ToolDisabled(t *testing.T) {
+	Convey("发起 agent 未开 group_create 工具 → GroupCreateToolDisabled,且不解析成员、不 Begin", t, func() {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		gw := mock_group_svc.NewMockChatGateway(ctrl)                // 零 EXPECT:Begin 调用即 fail
+		sessRepo, agentRepo, _, _, _, _ := registerCreateMocks(ctrl) // agentRepo.List 零 EXPECT:不应解析成员
+
+		sessRepo.EXPECT().Find(gomock.Any(), int64(99)).Return(&chat_entity.Session{
+			ID: 99, AgentID: 7, ProjectID: 3, GroupID: 0, Status: consts.ACTIVE,
+		}, nil)
+		// 实时复查(token 无状态):发起 agent 已在设置里关掉 group_create。
+		off := &agent_entity.Agent{ID: 7, Name: "部门负责人", Status: consts.ACTIVE}
+		off.SetTools([]agent_entity.AgentToolItem{{Key: "group_create", Enabled: false}})
+		agentRepo.EXPECT().Find(gomock.Any(), int64(7)).Return(off, nil)
+
+		svc := group_svc.NewForTest(gw)
+		_, err := svc.HandleGroupCreate(context.Background(), 7, 99, "t", []string{"开发"}, "b", 0, nil)
+		So(err, ShouldNotBeNil)
+		var httpErr *httputils.Error
+		So(errors.As(err, &httpErr), ShouldBeTrue)
+		So(httpErr.Code, ShouldEqual, code.GroupCreateToolDisabled)
 	})
 }
 
@@ -260,6 +293,7 @@ func TestHandleGroupCreate_Guards(t *testing.T) {
 		sessRepo.EXPECT().Find(gomock.Any(), int64(99)).Return(&chat_entity.Session{
 			ID: 99, AgentID: 7, GroupID: 0, Status: consts.ACTIVE,
 		}, nil)
+		agentRepo.EXPECT().Find(gomock.Any(), int64(7)).Return(enabledCreateAgent(7, "部门负责人"), nil)
 		agentRepo.EXPECT().List(gomock.Any()).Return([]*agent_entity.Agent{
 			{ID: 8, Name: "开发", Status: consts.ACTIVE},
 		}, nil)

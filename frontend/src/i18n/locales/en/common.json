@@ -1835,8 +1835,8 @@
         "add": "Add Tool",
         "empty": "No tools available",
         "approval": "Approval",
-        "names": { "org": "Org Structure", "workflow": "Workflow Library" },
-        "descriptions": { "org": "Allow this agent to read and manage departments and members (writes require your approval)", "workflow": "Allow this agent to read and manage collaboration workflows (writes require your approval)" }
+        "names": { "org": "Org Structure", "workflow": "Workflow Library", "group_create": "Create Group" },
+        "descriptions": { "org": "Allow this agent to read and manage departments and members (writes require your approval)", "workflow": "Allow this agent to read and manage collaboration workflows (writes require your approval)", "group_create": "Allow this agent to start a multi-agent collaboration group (requires your approval)" }
       },
       "toolPicker": {
         "title": "Add Tools",

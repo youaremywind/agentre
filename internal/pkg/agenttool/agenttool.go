@@ -16,6 +16,11 @@ const KeyOrg = "org"
 // KeyWorkflow 协作流程(SOP)读写工具。
 const KeyWorkflow = "workflow"
 
+// KeyGroupCreate 拉群带流程工具(group_create)。刻意等于 group_svc.toolKeyGroupCreate
+// 与审批卡 ToolKey,保持注入/审批/门控全链路同值。注入仍走专用 BuildCreateTurnMCP
+// (create token 与成员 token 不同),registry 项用于「可用工具清单 + ToolEnabled 查询」。
+const KeyGroupCreate = "group_create"
+
 var registry = []Definition{
 	{Key: KeyOrg, MCPPath: "/mcp/org/", ToolNames: []string{
 		"org_get",
@@ -25,6 +30,7 @@ var registry = []Definition{
 	{Key: KeyWorkflow, MCPPath: "/mcp/workflow/", ToolNames: []string{
 		"workflow_list", "workflow_create", "workflow_update", "workflow_delete",
 	}},
+	{Key: KeyGroupCreate, MCPPath: "/mcp/group/", ToolNames: []string{"group_create"}},
 }
 
 // Registry 返回全部内置工具定义(只读副本)。

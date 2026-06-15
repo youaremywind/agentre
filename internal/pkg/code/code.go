@@ -223,6 +223,7 @@ const (
 	GroupCreateNested                        // group_create: 群成员轮内禁止再拉群(防套娃)
 	GroupCreateMemberUnknown                 // group_create: 成员名找不到对应可用 agent
 	GroupNicknameTaken                       // 群昵称与同群其他成员的有效名冲突(@mention 须唯一)
+	GroupCreateToolDisabled                  // group_create: 发起 agent 未开启 group_create 工具(per-agent 门控)
 )
 
 // Server 接入 20300~20399

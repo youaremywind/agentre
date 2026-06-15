@@ -9,7 +9,7 @@ import (
 
 func TestRegistry(t *testing.T) {
 	defs := Registry()
-	require.Len(t, defs, 2)
+	require.Len(t, defs, 3)
 	require.Equal(t, "org", defs[0].Key)
 	require.Equal(t, "/mcp/org/", defs[0].MCPPath)
 	require.Contains(t, defs[0].ToolNames, "org_get")
@@ -21,7 +21,15 @@ func TestRegistry(t *testing.T) {
 	_, ok = Lookup("nope")
 	require.False(t, ok)
 
-	require.Equal(t, []string{"org", "workflow"}, Keys())
+	require.Equal(t, []string{"org", "workflow", "group_create"}, Keys())
+}
+
+func TestRegistry_HasGroupCreate(t *testing.T) {
+	d, ok := Lookup(KeyGroupCreate)
+	require.True(t, ok)
+	require.Equal(t, "group_create", d.Key)
+	require.Equal(t, "/mcp/group/", d.MCPPath)
+	require.Equal(t, []string{"group_create"}, d.ToolNames)
 }
 
 func TestRegistry_HasWorkflow(t *testing.T) {
