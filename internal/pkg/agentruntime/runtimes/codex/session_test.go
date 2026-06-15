@@ -51,3 +51,38 @@ func TestBuildLaunchSpec_MCPServers(t *testing.T) {
 		})
 	})
 }
+
+func TestBuildLaunchSpec_EnabledPlugins(t *testing.T) {
+	Convey("Given RunRequest 带 Codex plugin 显式覆盖", t, func() {
+		spec := buildLaunchSpec(agentruntime.RunRequest{
+			Backend: &agent_backend_entity.AgentBackend{
+				Type:    string(agent_backend_entity.TypeCodex),
+				EnvJSON: "{}",
+			},
+			EnabledPlugins: map[string]bool{
+				"browser@openai-bundled":     true,
+				"superpowers@openai-curated": false,
+			},
+		}, nil, "/tmp/work")
+
+		Convey("Then Codex --config 注入 plugins.<id>.enabled 覆盖", func() {
+			So(spec.config, ShouldContain, `plugins."browser@openai-bundled".enabled=true`)
+			So(spec.config, ShouldContain, `plugins."superpowers@openai-curated".enabled=false`)
+		})
+	})
+
+	Convey("Given RunRequest 不带 EnabledPlugins(回归)", t, func() {
+		spec := buildLaunchSpec(agentruntime.RunRequest{
+			Backend: &agent_backend_entity.AgentBackend{
+				Type:    string(agent_backend_entity.TypeCodex),
+				EnvJSON: "{}",
+			},
+		}, nil, "/tmp/work")
+
+		Convey("Then 不下发任何 plugins 覆盖项", func() {
+			for _, cfg := range spec.config {
+				So(cfg, ShouldNotStartWith, "plugins.")
+			}
+		})
+	})
+}

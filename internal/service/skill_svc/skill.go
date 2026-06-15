@@ -14,20 +14,27 @@ type Service struct {
 	backend BackendLookup
 }
 
-// discover 拿该 agent backend 的已安装包(claudecode 才有发现器)。
-func (s *Service) discover(ctx context.Context, a *agent_entity.Agent) ([]agentskill.SkillPack, error) {
+type discoveryResult struct {
+	backendType agent_backend_entity.BackendType
+	packs       []agentskill.SkillPack
+}
+
+// discover 拿该 agent backend 的已安装包(无发现器的 backend 为空)。
+func (s *Service) discover(ctx context.Context, a *agent_entity.Agent) (discoveryResult, error) {
 	be, err := s.backend.Find(ctx, a.AgentBackendID)
 	if err != nil || be == nil {
-		return nil, err
+		return discoveryResult{}, err
 	}
-	d, ok := agentskill.DiscovererFor(agent_backend_entity.BackendType(be.Type))
+	backendType := agent_backend_entity.BackendType(be.Type)
+	d, ok := agentskill.DiscovererFor(backendType)
 	if !ok {
-		return []agentskill.SkillPack{}, nil
+		return discoveryResult{backendType: backendType, packs: []agentskill.SkillPack{}}, nil
 	}
-	return d.Discover(ctx, agentskill.DiscoverQuery{
-		BackendType: agent_backend_entity.BackendType(be.Type),
+	packs, err := d.Discover(ctx, agentskill.DiscoverQuery{
+		BackendType: backendType,
 		CLIPath:     be.CLIPath,
 	})
+	return discoveryResult{backendType: backendType, packs: packs}, err
 }
 
 // mergeResult 合并后的包列表及对应的 enabled 标注。
@@ -90,11 +97,11 @@ func (s *Service) ListAgentSkillPacks(ctx context.Context, agentID int64, _ bool
 	if err != nil || a == nil {
 		return SkillCatalogDTO{}, err
 	}
-	installed, err := s.discover(ctx, a)
+	discovered, err := s.discover(ctx, a)
 	if err != nil {
 		return SkillCatalogDTO{}, err
 	}
-	mr := merge(agentskill.Recommended(), installed, a.GetEnabledPackIDs())
+	mr := merge(agentskill.RecommendedFor(discovered.backendType), discovered.packs, a.GetEnabledPackIDs())
 	dto := make([]SkillPackDTO, 0, len(mr.packs))
 	for i, p := range mr.packs {
 		dto = append(dto, SkillPackDTO{

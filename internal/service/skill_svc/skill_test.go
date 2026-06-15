@@ -68,4 +68,30 @@ func TestListAgentSkillPacks(t *testing.T) {
 			So(hasOpsctl, ShouldBeFalse)
 		})
 	})
+
+	Convey("Codex 目录只合并 Codex 发现项,不混入 Claude Code 推荐包", t, func() {
+		ctrl := gomock.NewController(t)
+		al := mock_skill_svc.NewMockAgentLookup(ctrl)
+		bl := mock_skill_svc.NewMockBackendLookup(ctrl)
+		ag := &agent_entity.Agent{ID: 2, AgentBackendID: 10}
+		al.EXPECT().Find(gomock.Any(), int64(2)).Return(ag, nil).AnyTimes()
+		bl.EXPECT().Find(gomock.Any(), int64(10)).Return(&agent_backend_entity.AgentBackend{Type: string(agent_backend_entity.TypeCodex)}, nil).AnyTimes()
+		restore := agentskill.SwapDiscovererForTest(agent_backend_entity.TypeCodex, fakeDisc{[]agentskill.SkillPack{
+			{ID: "browser@openai-bundled", Name: "browser", Installed: true, Source: agentskill.SourceInstalled, GloballyEnabled: true},
+		}})
+		defer restore()
+		s := newForTest(al, bl)
+
+		cat, err := s.ListAgentSkillPacks(context.Background(), 2, false)
+		So(err, ShouldBeNil)
+		byID := map[string]SkillPackDTO{}
+		for _, p := range cat.Packs {
+			byID[p.ID] = p
+		}
+		So(byID["browser@openai-bundled"].Installed, ShouldBeTrue)
+		_, hasClaudeSuperpowers := byID["superpowers@claude-plugins-official"]
+		So(hasClaudeSuperpowers, ShouldBeFalse)
+		_, hasClaudeCodeReview := byID["code-review@claude-plugins-official"]
+		So(hasClaudeCodeReview, ShouldBeFalse)
+	})
 }

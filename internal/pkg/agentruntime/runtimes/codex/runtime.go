@@ -96,6 +96,7 @@ func (r *Runtime) Capabilities() capability.Capabilities {
 			capability.CapCompact:             true,
 			capability.CapGoal:                true,
 			capability.CapMCPTools:            true,
+			capability.CapSkills:              true,
 		},
 		PermissionModeMeta: capability.PermissionModeMeta{
 			AllowedModes:         []string{"default", "plan"},
@@ -306,7 +307,7 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		zap.String("collaborationMode", req.CollaborationMode))
 
 	key := ""
-	if req.SessionID > 0 && len(req.MCPServers) == 0 {
+	if req.SessionID > 0 && !requiresEphemeralSession(req) {
 		key = sessionKey(req.SessionID)
 	}
 	active := &codexActive{
@@ -363,7 +364,7 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 }
 
 func (r *Runtime) acquireSession(req agentruntime.RunRequest, env map[string]string, cwd string) (cxSessionHandle, error) {
-	if len(req.MCPServers) > 0 {
+	if requiresEphemeralSession(req) {
 		return cxSessionFactory(req, env, cwd)
 	}
 	if req.SessionID > 0 {
@@ -386,10 +387,14 @@ func (r *Runtime) acquireSession(req agentruntime.RunRequest, env map[string]str
 }
 
 func closeEphemeralSession(req agentruntime.RunRequest, sess cxSessionHandle) {
-	if len(req.MCPServers) == 0 || sess == nil {
+	if !requiresEphemeralSession(req) || sess == nil {
 		return
 	}
 	_ = sess.Close(context.Background())
+}
+
+func requiresEphemeralSession(req agentruntime.RunRequest) bool {
+	return len(req.MCPServers) > 0 || len(req.EnabledPlugins) > 0
 }
 
 func (r *Runtime) CloseSession(_ context.Context, sessionID int64) {

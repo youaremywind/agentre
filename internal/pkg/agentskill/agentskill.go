@@ -38,6 +38,17 @@ func Recommended() []SkillPack {
 	}
 }
 
+// RecommendedFor 返回适用于某 backend 的静态精选包。不同 CLI 的 marketplace ID
+// 不兼容,不能把 Claude Code 官方包推荐给 Codex。
+func RecommendedFor(t agent_backend_entity.BackendType) []SkillPack {
+	switch t {
+	case agent_backend_entity.TypeClaudeCode:
+		return Recommended()
+	default:
+		return nil
+	}
+}
+
 // DiscoverQuery 发现入参。
 type DiscoverQuery struct {
 	BackendType agent_backend_entity.BackendType

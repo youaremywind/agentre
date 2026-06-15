@@ -172,6 +172,7 @@ func (h *RuntimeHandlers) Run(ctx context.Context, p wire.RunParams) (wire.RunAc
 		PermissionMode:    p.PermissionMode,
 		CollaborationMode: p.CollaborationMode,
 		MCPServers:        p.MCPServers,
+		EnabledPlugins:    p.EnabledPlugins,
 	}
 
 	events, result, err := rt.Run(ctx, req)

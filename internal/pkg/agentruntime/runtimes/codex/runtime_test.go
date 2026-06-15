@@ -34,6 +34,7 @@ func TestCodexCapabilities(t *testing.T) {
 		So(caps.Has(capability.CapReportContextWindow), ShouldBeTrue)
 		So(caps.Has(capability.CapCompact), ShouldBeTrue)
 		So(caps.Has(capability.CapMCPTools), ShouldBeTrue)
+		So(caps.Has(capability.CapSkills), ShouldBeTrue)
 	})
 
 	Convey("codex PermissionModeMeta", t, func() {
@@ -338,6 +339,65 @@ func TestRun_MCPServersBypassCachedSession(t *testing.T) {
 		So(first.streamCalls, ShouldEqual, 1)
 		So(second.streamCalls, ShouldEqual, 1)
 		So(secondReq.MCPServers, ShouldHaveLength, 1)
+		So(pool.Len(), ShouldEqual, 1)
+		second.waitClosed(t)
+		So(second.closed, ShouldBeTrue)
+	})
+}
+
+func TestRun_EnabledPluginsBypassCachedSession(t *testing.T) {
+	Convey("Given a Codex chat session has an idle app-server without plugin overrides, when a turn injects EnabledPlugins, then runtime starts a fresh app-server with those overrides", t, func() {
+		pool := agentruntime.NewCLISessionPool(8)
+		first := &countingRuntimeSession{
+			sid:     "thread-cached",
+			streams: []cxStream{&emptyRuntimeStream{}, &emptyRuntimeStream{}},
+		}
+		second := &countingRuntimeSession{
+			sid:      "thread-cached",
+			streams:  []cxStream{&emptyRuntimeStream{}},
+			closedCh: make(chan struct{}),
+		}
+		factoryCalls := 0
+		var secondReq agentruntime.RunRequest
+		restore := SetSessionFactoryForTest(func(req agentruntime.RunRequest, _ map[string]string, _ string) (cxSessionHandle, error) {
+			factoryCalls++
+			if factoryCalls == 1 {
+				return first, nil
+			}
+			secondReq = req
+			return second, nil
+		})
+		defer restore()
+
+		r := NewWithPool(pool)
+		req := agentruntime.RunRequest{
+			Backend: &agent_backend_entity.AgentBackend{
+				Type:    string(agent_backend_entity.TypeCodex),
+				EnvJSON: "{}",
+			},
+			SessionID: 77,
+			Cwd:       t.TempDir(),
+		}
+
+		events, _, err := r.Run(context.Background(), req)
+		So(err, ShouldBeNil)
+		for range events {
+		}
+
+		req.EnabledPlugins = map[string]bool{
+			"browser@openai-bundled":           true,
+			"superpowers@openai-curated":       false,
+			"documents@openai-primary-runtime": true,
+		}
+		events, _, err = r.Run(context.Background(), req)
+		So(err, ShouldBeNil)
+		for range events {
+		}
+
+		So(factoryCalls, ShouldEqual, 2)
+		So(first.streamCalls, ShouldEqual, 1)
+		So(second.streamCalls, ShouldEqual, 1)
+		So(secondReq.EnabledPlugins, ShouldHaveLength, 3)
 		So(pool.Len(), ShouldEqual, 1)
 		second.waitClosed(t)
 		So(second.closed, ShouldBeTrue)

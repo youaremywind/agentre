@@ -756,6 +756,38 @@ func TestBuildRunParams_ForwardsMCPServers(t *testing.T) {
 	}
 }
 
+// TestBuildRunParams_ForwardsEnabledPlugins 钉死 buildRunParams 把
+// RunRequest.EnabledPlugins 透传到 wire.RunParams，且 JSON round-trip 保留该字段。
+func TestBuildRunParams_ForwardsEnabledPlugins(t *testing.T) {
+	plugins := map[string]bool{
+		"browser@openai-bundled":     true,
+		"superpowers@openai-curated": false,
+	}
+	params, err := buildRunParams(agentruntime.RunRequest{
+		Backend:        &agent_backend_entity.AgentBackend{},
+		SessionID:      9,
+		EnabledPlugins: plugins,
+	})
+	if err != nil {
+		t.Fatalf("buildRunParams: %v", err)
+	}
+	if len(params.EnabledPlugins) != 2 || !params.EnabledPlugins["browser@openai-bundled"] || params.EnabledPlugins["superpowers@openai-curated"] {
+		t.Fatalf("buildRunParams dropped EnabledPlugins: %+v", params.EnabledPlugins)
+	}
+
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out wire.RunParams
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.EnabledPlugins) != 2 || !out.EnabledPlugins["browser@openai-bundled"] || out.EnabledPlugins["superpowers@openai-curated"] {
+		t.Fatalf("EnabledPlugins not preserved across wire JSON: %+v", out.EnabledPlugins)
+	}
+}
+
 func TestGoal_DispatchesWireRPCsWithBackendMetadata(t *testing.T) {
 	_, cli, _, rt := setupRemote(t)
 	objective := "ship goal rpc"

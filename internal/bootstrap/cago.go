@@ -13,6 +13,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/claudecode"
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/piagent"
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentskill/claudeskill" // 触发 discoverer init 注册
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentskill/codexskill"  // 触发 discoverer init 注册
 	"github.com/agentre-ai/agentre/internal/pkg/httpgateway"
 	"github.com/agentre-ai/agentre/internal/pkg/paths"
 	"github.com/agentre-ai/agentre/internal/pkg/sysnotify"
@@ -171,7 +172,7 @@ func Init(ctx context.Context) (*Runtime, error) {
 	chat_svc.RegisterTurnMCPProvider(group_svc.Default().BuildCreateTurnMCP)
 
 	// 技能包(skill pack)注入:skill_svc 组合 agent 授权 + 发现,chat_svc 按 CapSkills
-	// 在 runTurn 注入 RunRequest.EnabledPlugins(claudecode 经 --settings 下发)。
+	// 在 runTurn 注入 RunRequest.EnabledPlugins(runtime 各自渲染到 CLI 配置)。
 	skill_svc.Register(agent_repo.Agent(), agent_backend_repo.AgentBackend())
 	chat_svc.RegisterEnabledPluginsProvider(func(ctx context.Context, a *agent_entity.Agent) map[string]bool {
 		m, err := skill_svc.Default().EnabledPluginsMap(ctx, a.ID)

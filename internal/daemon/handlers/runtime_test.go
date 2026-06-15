@@ -445,17 +445,19 @@ func TestRuntime_Run_NoProvider_EmitsEventsAndDone(t *testing.T) {
 
 	be := agent_backend_entity.AgentBackend{ID: 1, Type: string(agent_backend_entity.TypeClaudeCode), Name: "x"}
 	ack, err := h.Run(ctx, wire.RunParams{
-		Backend:   backendJSON(t, be),
-		SessionID: 42,
-		AgentID:   7,
-		Cwd:       "/tmp",
-		UserText:  "hello",
-		Compact:   true,
+		Backend:        backendJSON(t, be),
+		SessionID:      42,
+		AgentID:        7,
+		Cwd:            "/tmp",
+		UserText:       "hello",
+		Compact:        true,
+		EnabledPlugins: map[string]bool{"browser@openai-bundled": true},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int64(42), ack.SessionID)
 	require.Len(t, rt.runReqs, 1)
 	assert.True(t, rt.runReqs[0].req.Compact)
+	assert.Equal(t, map[string]bool{"browser@openai-bundled": true}, rt.runReqs[0].req.EnabledPlugins)
 
 	// 2 events + 1 runResultDone = 3 frames expected.
 	frames := notif.waitFrames(t, 3)

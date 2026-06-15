@@ -18,6 +18,10 @@ func TestAgentSkill(t *testing.T) {
 		So(len(r), ShouldBeGreaterThan, 0)
 		So(r[0].Recommended, ShouldBeTrue)
 	})
+	Convey("recommended 按 backend 隔离", t, func() {
+		So(RecommendedFor(agent_backend_entity.TypeClaudeCode), ShouldResemble, Recommended())
+		So(RecommendedFor(agent_backend_entity.TypeCodex), ShouldBeEmpty)
+	})
 	Convey("discoverer 注册/查询", t, func() {
 		restore := SwapDiscovererForTest(agent_backend_entity.TypeClaudeCode, fakeDisc{packs: []SkillPack{{ID: "x@y"}}})
 		defer restore()

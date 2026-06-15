@@ -224,6 +224,8 @@ func TestParams_FieldShape(t *testing.T) {
 			[]string{`"backendType":"claudecode"`}},
 		{"runAck", RunAck{SessionID: 42}, []string{`"sessionId":42`}},
 		{"runParamsCompact", RunParams{SessionID: 42, Compact: true}, []string{`"sessionId":42`, `"compact":true`}},
+		{"runParamsEnabledPlugins", RunParams{SessionID: 42, EnabledPlugins: map[string]bool{"browser@openai-bundled": true}},
+			[]string{`"sessionId":42`, `"enabledPlugins":`, `"browser@openai-bundled":true`}},
 		{"cancelSteerResult", CancelSteerResult{Removed: []string{"a", "b"}},
 			[]string{`"removed":["a","b"]`}},
 	}

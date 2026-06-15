@@ -23,7 +23,7 @@ const (
 	// 实现 AutonomousTurnSource 接口;chat_svc 据此每会话起 watcher 落纯 assistant 轮。
 	CapAutonomousTurn Capability = "autonomous_turn"
 	// CapSkills 标记 runtime 接受 RunRequest.EnabledPlugins,可按 agent 注入技能包
-	// 开关(claudecode 经 --settings 的 enabledPlugins)。仅 claudecode 声明。
+	// 开关(claudecode 经 --settings,codex 经 --config plugins.*.enabled)。
 	CapSkills Capability = "skills"
 )
 
