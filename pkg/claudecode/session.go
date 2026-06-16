@@ -696,6 +696,21 @@ func newControlRequestID() string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
+// Kill 硬杀子进程（SIGKILL），用于 Close 的「关 stdin → 优雅退出」对卡死子进程
+// 无效的场景（CLI 卡在 MCP 初始化、阻塞在 socket 上、不读 stdin）。SIGKILL 不可
+// 被忽略 → 子进程死亡 → reaper 关 stdout pipe → readLoop 拿 EOF → shutdownReader
+// 收尾所有未决轮，等在 Turn channel 上的消费方解阻塞。重入安全。
+func (s *Session) Kill() {
+	s.stdinMu.Lock()
+	if s.closed {
+		s.stdinMu.Unlock()
+		return
+	}
+	s.closed = true
+	s.stdinMu.Unlock()
+	s.proc.kill()
+}
+
 // Close 关 stdin（触发 CLI exit）并 wait 子进程。
 // 重入安全：多次调用只第一次生效。
 func (s *Session) Close(ctx context.Context) error {

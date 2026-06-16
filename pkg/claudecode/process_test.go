@@ -68,6 +68,28 @@ func TestProcess_StreamsStdoutAndWaitsForExit(t *testing.T) {
 	assert.Equal(t, "a\nb\n", out)
 }
 
+// TestProcess_KillTerminatesWedgedSubprocess 钉死硬杀路径:对一个长睡、不读 stdin
+// 的子进程(模拟 CLI 卡在 MCP 初始化、Close 关 stdin 救不回来)调 kill() 必须 SIGKILL
+// 掉它,reaper 的 cmd.Wait 随即返回 → exit channel close,上层 readLoop 拿 EOF 解阻塞。
+func TestProcess_KillTerminatesWedgedSubprocess(t *testing.T) {
+	ctx := context.Background()
+	p, err := startProcess(ctx, processSpec{
+		binary: "/bin/sh",
+		args:   []string{"-c", "sleep 60"},
+	})
+	require.NoError(t, err)
+	require.False(t, p.hasExited(), "子进程应先存活")
+
+	p.kill()
+
+	select {
+	case <-p.exit:
+	case <-time.After(5 * time.Second):
+		t.Fatal("kill() 没能终止长睡子进程")
+	}
+	assert.True(t, p.hasExited(), "kill 后 reaper 应已收尾")
+}
+
 // TestProcess_EnvInheritsOSEnviron 验证传入 spec.env 时不会把整个进程环境清空。
 // claude CLI 依赖 HOME 找 ~/.claude/projects、PATH 找 git/bash 等；如果直接
 // cmd.Env = envList 把 PATH/HOME 也丢掉，子进程会卡在初始化阶段不出任何 frame —

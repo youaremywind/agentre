@@ -3,6 +3,8 @@ package claudecode
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -207,11 +209,23 @@ type fakeCCHandle struct {
 	// respondedResults 非 nil 时记录 RespondToControl 收到的结果(control_request
 	// 自动放行路径在后台 goroutine 里回包,单测经 channel 同步观察)。
 	respondedResults chan claudecode.PermissionResult
+	// killed 非 nil 时, Kill 会 close 它(once) —— blockingCCStream 等在上面模拟
+	// 「子进程被 SIGKILL → stream 解阻塞结束」。killCalls 原子计数 Kill 调用次数。
+	killed    chan struct{}
+	killOnce  sync.Once
+	killCalls int32
 }
 
 func (f *fakeCCHandle) ID() string                      { return f.id }
 func (f *fakeCCHandle) Close(context.Context) error     { return nil }
 func (f *fakeCCHandle) Interrupt(context.Context) error { return nil }
+func (f *fakeCCHandle) Kill(context.Context) error {
+	atomic.AddInt32(&f.killCalls, 1)
+	if f.killed != nil {
+		f.killOnce.Do(func() { close(f.killed) })
+	}
+	return nil
+}
 func (f *fakeCCHandle) SetPermissionMode(_ context.Context, mode string) error {
 	f.setPermissionModeCalls = append(f.setPermissionModeCalls, mode)
 	return f.setPermissionModeErr
@@ -254,6 +268,60 @@ func (s *eventCCStream) Next() bool {
 
 func (s *eventCCStream) Event() claudecode.Event { return s.events[s.idx-1] }
 func (s *eventCCStream) SessionID() string       { return "" }
+
+// blockingCCStream 模拟「子进程起步后卡死、一帧不吐」:Next() 阻塞到 killed 关闭
+// (即 Kill 把子进程 SIGKILL 掉 → stdout EOF)才返 false 结束。无任何事件。
+type blockingCCStream struct{ killed chan struct{} }
+
+func (s *blockingCCStream) Next() bool {
+	<-s.killed
+	return false
+}
+func (s *blockingCCStream) Event() claudecode.Event { return claudecode.Event{} }
+func (s *blockingCCStream) SessionID() string       { return "" }
+
+// TestRun_StartupWatchdogKillsWedgedTurn 钉死 startup 看门狗:turn 起步后
+// startupTimeout 内一帧都没有(子进程卡 MCP 初始化), 必须硬杀子进程让 drainStream
+// 解阻塞, 并把 RunResult.StopErr 收成 errStartupTimeout —— 而不是永久挂起。
+func TestRun_StartupWatchdogKillsWedgedTurn(t *testing.T) {
+	Convey("turn 起步后 startupTimeout 内无帧 → 硬杀子进程并以 errStartupTimeout 收尾", t, func() {
+		killed := make(chan struct{})
+		h := &fakeCCHandle{id: "wedged", killed: killed, stream: &blockingCCStream{killed: killed}}
+		restore := SetSessionFactoryForTest(func(ccLaunchSpec) (ccSessionHandle, error) {
+			return h, nil
+		})
+		defer restore()
+
+		r := New()
+		r.startupTimeout = 50 * time.Millisecond
+		ctx := context.Background()
+
+		events, result, err := r.Run(ctx, agentruntime.RunRequest{
+			Backend:   &agent_backend_entity.AgentBackend{Type: string(agent_backend_entity.TypeClaudeCode)},
+			SessionID: 77,
+			Cwd:       t.TempDir(),
+			UserText:  "hang on mcp init",
+		})
+		So(err, ShouldBeNil)
+
+		done := make(chan struct{})
+		go func() {
+			for range events { //nolint:revive // drain
+			}
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("Run events channel 没关闭 —— 看门狗没能杀掉卡死的 turn")
+		}
+
+		So(atomic.LoadInt32(&h.killCalls), ShouldEqual, 1)
+		So(result.StopErr, ShouldNotBeNil)
+		So(errors.Is(result.StopErr, errStartupTimeout), ShouldBeTrue)
+		r.CloseAllSessions(ctx)
+	})
+}
 
 // TestRun_NoChatRepoRegistered 回归 daemon 路径下的 nil panic:
 // agentred daemon 不 bootstrap cago/chat_repo,Runtime.acquireSession 旧实现

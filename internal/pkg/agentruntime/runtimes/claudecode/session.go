@@ -33,6 +33,10 @@ type ccSessionHandle interface {
 	// CLI 回 control_response 后 Session 收到 result 帧让本轮 Turn 自然返 done,
 	// **子进程保留**。失败时 runner 走 Close + cache.Remove 兜底。
 	Interrupt(ctx context.Context) error
+	// Kill 硬杀子进程(SIGKILL)。用于 startup 看门狗在「turn 起步后迟迟无帧」(典型:
+	// CLI 卡 MCP 初始化连不上 gateway)时强制收尾 —— Interrupt/Close 的优雅路径对卡在
+	// socket 上、不读 stdin 的 CLI 无效, 只有 SIGKILL 能让 drainStream 解阻塞。
+	Kill(ctx context.Context) error
 	// SetPermissionMode 写一帧 control_request{subtype:"set_permission_mode"}
 	// 让 CLI 在两个 Turn 之间切换 permission mode。mode 取
 	// {default, acceptEdits, plan, bypassPermissions}。只能在 Turn 之间调用,
@@ -87,6 +91,17 @@ func (a *ccClientAdapter) Interrupt(ctx context.Context) error {
 		return nil
 	}
 	return a.sess.Interrupt(ctx)
+}
+
+// Kill 硬杀底层子进程(SIGKILL)。runtime 的 startup 看门狗在「turn 起步后迟迟无帧」
+// 时调用 —— 优雅 Interrupt/Close 对卡在 socket 上的 CLI 无效, 只有 SIGKILL 能保证
+// drainStream 解阻塞收尾。
+func (a *ccClientAdapter) Kill(_ context.Context) error {
+	if a.sess == nil {
+		return nil
+	}
+	a.sess.Kill()
+	return nil
 }
 
 // SetPermissionMode 转发到底层 claudecode.Session.SetPermissionMode。抢 turnMu,

@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
@@ -34,6 +36,16 @@ func Default() *Runtime { return defaultRuntime }
 // sessionCacheCap = 8:与顶层 claudecode.go.claudeSessionCacheCap 一致。
 const sessionCacheCap = 8
 
+// defaultStartupFrameTimeout 是 startup 看门狗的默认阈值:一轮 turn 起步后, 健康的
+// CLI 会在数秒内吐首帧(system.init);若这么久还一帧都没有, 判定子进程卡死(典型:
+// 群成员轮 CLI 卡在 MCP 初始化连不上 gateway)→ 硬杀子进程让本轮以错误收尾。取值
+// 宽松到不会误杀冷启动慢的健康 turn, 又有界到能从无界挂起里恢复。
+const defaultStartupFrameTimeout = 120 * time.Second
+
+// errStartupTimeout 是 startup 看门狗杀掉「起步即卡死」子进程后写入 RunResult.StopErr
+// 的哨兵错误, 让 chat_svc 把该 turn 收成 error 而非永久 running。
+var errStartupTimeout = errors.New("agentruntime/runtimes/claudecode: turn produced no frame within startup timeout (subprocess likely wedged, e.g. MCP init)")
+
 // Runtime claudecode runtime 实现。
 type Runtime struct {
 	// spawnLocks 按 session key 分桶串行化 acquireSession 的 get-or-spawn,只防同一
@@ -51,6 +63,8 @@ type Runtime struct {
 	spawnLocks sync.Map // key(string) → *sync.Mutex
 	cache      *agentruntime.CLISessionPool
 	steer      *httpgateway.SteerInbox
+	// startupTimeout 是 startup 看门狗阈值;NewWithPool 设默认值, 单测覆写成毫秒级。
+	startupTimeout time.Duration
 }
 
 // spawnLockFor 返回某 session key 专属的 get-or-spawn 锁(惰性创建)。
@@ -73,7 +87,7 @@ func NewWithPool(pool *agentruntime.CLISessionPool) *Runtime {
 	if pool == nil {
 		pool = agentruntime.NewCLISessionPool(sessionCacheCap)
 	}
-	return &Runtime{cache: pool}
+	return &Runtime{cache: pool, startupTimeout: defaultStartupFrameTimeout}
 }
 
 // SetSteerInbox 由 bootstrap 在 gateway.Start() 后注入。
@@ -313,6 +327,32 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 
 	a.setOut(out)
 
+	// startup 看门狗:turn 起步后 startupTimeout 内一帧都没有 → 判定子进程卡死(典型:
+	// 群成员轮 CLI 卡在 MCP 初始化连不上 gateway),硬杀子进程让 drainStream 的
+	// stream.Next() 拿到 EOF 解阻塞、本轮以 errStartupTimeout 收尾,而不是永久挂起。
+	// 首帧到达即解除看门狗 —— 合法的长 turn(等审批 / 长工具调用都在首帧之后)不受影响;
+	// 起步之后的中途卡死由 CLI 自身 MCP_TOOL_TIMEOUT / approvalTimeout 兜底,不归这里管。
+	firstFrame := make(chan struct{})
+	var firstFrameOnce sync.Once
+	signalFirstFrame := func() { firstFrameOnce.Do(func() { close(firstFrame) }) }
+	var startupKilled atomic.Bool
+	if r.startupTimeout > 0 {
+		timer := time.NewTimer(r.startupTimeout)
+		go func() {
+			defer timer.Stop()
+			select {
+			case <-firstFrame:
+			case <-timer.C:
+				startupKilled.Store(true)
+				logger.Ctx(ctx).Warn("claudecode runtime: no frame within startup timeout, killing wedged subprocess",
+					zap.Int64("sessionID", req.SessionID),
+					zap.String("providerSessionID", a.handle.ID()),
+					zap.Duration("startupTimeout", r.startupTimeout))
+				_ = a.handle.Kill(ctx)
+			}
+		}()
+	}
+
 	go func() {
 		var (
 			steerDrain  <-chan []httpgateway.SteerItem
@@ -336,7 +376,8 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 			close(steerDone)
 		}
 
-		drainStream(stream, out, result, a)
+		drainStream(stream, out, result, a, signalFirstFrame)
+		signalFirstFrame() // 兜底解除看门狗:0 帧自然结束(非卡死)时也要让它退出
 		if cancelDrain != nil {
 			cancelDrain()
 		}
@@ -344,6 +385,16 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 		a.clearOut()
 		if sid := stream.SessionID(); sid != "" {
 			result.ProviderSessionID = sid
+		}
+		// startup 看门狗杀掉了卡死子进程:收成 errStartupTimeout(优先于下面的 0-frame
+		// 兜底消息),并剔除缓存让下一轮重新 spawn 干净子进程。
+		if startupKilled.Load() {
+			if result.StopErr == nil {
+				result.StopErr = errStartupTimeout
+			}
+			if req.SessionID > 0 {
+				r.cache.Remove(sessionKey(req.SessionID))
+			}
 		}
 		// 0-frame 兜底:CLI spawn 起来但立刻退出。语义同顶层 Run。
 		if result.Usage == nil && result.StopErr == nil && ctx.Err() == nil {
@@ -546,8 +597,17 @@ func (r *Runtime) acquireSession(ctx context.Context, req agentruntime.RunReques
 // 完整快照(TodoWrite 已经在 translator 里直接出 EventPlanUpdated),emit 顺序
 // 是"先翻译完原始 event,再吐 PlanUpdated 快照",保证前端看到的 plan 更新
 // 永远在对应 tool_use / tool_result 之后(消费方的 mutation order 不被打破)。
-func drainStream(stream ccStream, out chan<- agentruntime.Event, result *agentruntime.RunResult, active *claudeActive) {
+// onFirstFrame 在收到本轮第一帧时回调一次(解除 startup 看门狗) —— 子进程已吐帧
+// 即证明它没卡在起步期, 后续无论多慢都不再由看门狗管。
+func drainStream(stream ccStream, out chan<- agentruntime.Event, result *agentruntime.RunResult, active *claudeActive, onFirstFrame func()) {
+	first := true
 	for stream.Next() {
+		if first {
+			first = false
+			if onFirstFrame != nil {
+				onFirstFrame()
+			}
+		}
 		ev := stream.Event()
 		if result.StopErr != nil && claudeEventShowsProgressAfterError(ev.Kind) {
 			result.StopErr = nil

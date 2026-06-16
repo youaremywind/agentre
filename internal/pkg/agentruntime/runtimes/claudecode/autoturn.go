@@ -56,7 +56,8 @@ func (r *Runtime) AutonomousTurns(sessionID int64) <-chan agentruntime.Autonomou
 			// inline(非 goroutine)保证多个自主轮之间顺序处理、不重叠。
 			out <- agentruntime.AutonomousTurn{Events: evOut, Result: result, Trigger: at.Trigger, CompletedTask: completed}
 			stream := &ccChanStream{ch: at.Events, sidFn: func() string { return at.SessionID }}
-			drainStream(stream, evOut, result, a)
+			// 自主续轮的子进程早已存活(由首轮 spawn),不存在「起步即卡死」, 不挂看门狗。
+			drainStream(stream, evOut, result, a, nil)
 			if sid := stream.SessionID(); sid != "" {
 				result.ProviderSessionID = sid
 			}
