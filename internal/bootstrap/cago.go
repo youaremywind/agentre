@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/model/entity/app_setting_entity"
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/claudecode"
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/piagent"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/remote"
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentskill/claudeskill" // 触发 discoverer init 注册
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentskill/codexskill"  // 触发 discoverer init 注册
 	"github.com/agentre-ai/agentre/internal/pkg/httpgateway"
@@ -179,6 +181,11 @@ func Init(ctx context.Context) (*Runtime, error) {
 	gw.RegisterMCP("/mcp/subagent/", subagent_svc.Default().MCPHandler())
 	subagent_svc.Default().SetGatewayBaseURL(gw.BaseURL())
 	chat_svc.RegisterTurnMCPProvider(subagent_svc.Default().BuildTurnMCP)
+	// 远端执行(agentred):daemon 上 CLI 子进程访问内置工具 MCP(org/subagent/group/
+	// workflow)会被 daemon 改写成 daemon 本地 URL,再经 WS 反向请求隧道回 desktop。这里
+	// 装配把隧道请求重放到 desktop 本机 gateway 的 dispatcher。无 client 超时:approval 类
+	// 工具可挂几分钟,由 MCP handler 自身上限收口(见 approvalTimeout)。
+	remote.RegisterMCPProxyDispatcher(remote.NewLocalGatewayDispatcher(gw.BaseURL, &http.Client{}))
 
 	// 技能包(skill pack)注入:skill_svc 组合 agent 授权 + 发现,chat_svc 按 CapSkills
 	// 在 runTurn 注入 RunRequest.EnabledPlugins(runtime 各自渲染到 CLI 配置)。

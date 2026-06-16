@@ -171,8 +171,11 @@ func (h *RuntimeHandlers) Run(ctx context.Context, p wire.RunParams) (wire.RunAc
 		ForkAnchor:        p.ForkAnchor,
 		PermissionMode:    p.PermissionMode,
 		CollaborationMode: p.CollaborationMode,
-		MCPServers:        p.MCPServers,
-		EnabledPlugins:    p.EnabledPlugins,
+		// 内置工具 MCP server 的 URL 是 desktop 的 127.0.0.1(在 daemon 主机拨不到),
+		// 改写成 daemon 本机 gateway base → CLI 打到本地 /mcp/ 隧道入口,再反向请求回
+		// desktop 执行。Headers(desktop 签的 token)/ Tools / Name 原样保留。
+		MCPServers:     rewriteMCPServersForDaemon(p.MCPServers, func() string { return daemonGatewayBase(h.deps.Gateway) }),
+		EnabledPlugins: p.EnabledPlugins,
 	}
 
 	events, result, err := rt.Run(ctx, req)

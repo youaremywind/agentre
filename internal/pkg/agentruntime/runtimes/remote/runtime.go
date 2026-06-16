@@ -84,6 +84,9 @@ func New(c agentruntime.DaemonClientPort) *Runtime {
 	c.Handle(wire.NotifyAutonomousTurnStarted, r.handleAutonomousTurnStarted)
 	c.Handle(wire.NotifyAutonomousTurnEvent, r.handleAutonomousTurnEvent)
 	c.Handle(wire.NotifyAutonomousTurnDone, r.handleAutonomousTurnDone)
+	// daemon 上的 CLI 子进程访问内置工具 MCP(org/subagent/group/workflow)时,经此反向
+	// 请求隧道回 desktop 执行(真 /mcp/* handler 在 desktop)。见 mcpproxy.go。
+	c.Handle(wire.MethodMCPProxy, r.handleMCPProxy)
 	if closed := c.Closed(); closed != nil {
 		go r.watchClose(closed)
 	}
