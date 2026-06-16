@@ -31,6 +31,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/remote"
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/remote/wire"
+	"github.com/agentre-ai/agentre/internal/pkg/agentskill"
 	"github.com/agentre-ai/agentre/internal/pkg/ccoauth"
 	remotefswire "github.com/agentre-ai/agentre/internal/pkg/remotefs/wire"
 
@@ -751,6 +752,42 @@ func TestIntegration_MCPReverseTunnel_NoDispatcher(t *testing.T) {
 
 	// 未装配 dispatcher → desktop handleMCPProxy 回 502(而非让反向 RPC 失败打挂连接)。
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode)
+}
+
+// rigSkillDisc 替身发现器,供 skills.list 集成测试在 daemon 侧换上,免依赖真实 claude。
+type rigSkillDisc struct{ packs []agentskill.SkillPack }
+
+func (d rigSkillDisc) Discover(_ context.Context, _ agentskill.DiscoverQuery) ([]agentskill.SkillPack, error) {
+	return d.packs, nil
+}
+
+// TestIntegration_SkillsList 端到端验证 skills.list:真 daemon + 真 WS + paired client。
+// daemon 侧换上替身发现器(daemon 与测试同进程,共享 agentskill 全局注册表),paired
+// client 调 skills.list,断言 daemon 本机已装技能包经 RPC 原样回传 —— 远端 agent 配
+// per-agent 技能时,desktop 据此展 daemon 真实可用集(而非 desktop 本地的)。
+func TestIntegration_SkillsList(t *testing.T) {
+	want := []agentskill.SkillPack{
+		{ID: "superpowers@claude-plugins-official", Name: "superpowers", Installed: true, Source: agentskill.SourceInstalled, GloballyEnabled: true},
+		{ID: "opsctl@opskat", Name: "opsctl", Installed: true, Source: agentskill.SourceInstalled},
+	}
+	restore := agentskill.SwapDiscovererForTest(agent_backend_entity.TypeClaudeCode, rigSkillDisc{packs: want})
+	t.Cleanup(restore)
+	// daemon 本机 CLI 路径解析换成桩,免依赖宿主 PATH(替身发现器不消费它,这里仅求确定性)。
+	handlers.SetResolveCLIPathFunc(func(string) (string, bool, error) { return "/daemon/bin/claude", true, nil })
+	t.Cleanup(handlers.ResetResolveCLIPathFunc)
+
+	rig := bootRemoteRig(t, []agentruntime.Event{agentruntime.Done{}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var resp handlers.SkillsListResult
+	require.NoError(t, rig.cli.Call(ctx, "skills.list",
+		handlers.SkillsListParams{BackendType: "claudecode"}, &resp))
+
+	require.Len(t, resp.Packs, 2)
+	require.Equal(t, "superpowers@claude-plugins-official", resp.Packs[0].ID)
+	require.True(t, resp.Packs[0].GloballyEnabled)
+	require.Equal(t, "opsctl@opskat", resp.Packs[1].ID)
 }
 
 func TestIntegration_HealthPing(t *testing.T) {

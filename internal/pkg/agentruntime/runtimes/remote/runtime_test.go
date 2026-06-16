@@ -614,6 +614,9 @@ func TestCapabilities_DefaultBeforePrefetch(t *testing.T) {
 	assert.True(t, caps.Has(capability.CapSteer))
 	assert.True(t, caps.Has(capability.CapAbort))
 	assert.True(t, caps.Has(capability.CapAnswerUserAsk))
+	// claudecode/codex(daemon 最常见 backend)都声明 CapSkills;占位矩阵对齐它们,
+	// 这样 Prefetch 失败兜底时也不会误判远端不支持技能(enabledPluginsForTurn 不被吞)。
+	assert.True(t, caps.Has(capability.CapSkills))
 }
 
 func TestPrefetch_CachesAndCapabilitiesReturnsIt(t *testing.T) {

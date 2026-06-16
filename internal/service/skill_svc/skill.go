@@ -12,6 +12,7 @@ import (
 type Service struct {
 	agent   AgentLookup
 	backend BackendLookup
+	remote  RemoteDiscoverer // 远端 backend 走 daemon 发现;本地 backend 不用
 }
 
 type discoveryResult struct {
@@ -26,6 +27,22 @@ func (s *Service) discover(ctx context.Context, a *agent_entity.Agent) (discover
 		return discoveryResult{}, err
 	}
 	backendType := agent_backend_entity.BackendType(be.Type)
+	// 远端 backend:技能包装在 daemon 那台机器上,desktop 本地的 claude plugin list
+	// 看不到。经 RemoteDiscoverer 走 daemon skills.list 发现(借 device 连接池)。
+	if be.IsRemote() {
+		deviceID, ok := be.DeviceIDInt()
+		if !ok || s.remote == nil {
+			return discoveryResult{backendType: backendType, packs: []agentskill.SkillPack{}}, nil
+		}
+		packs, err := s.remote.ListSkills(ctx, deviceID, be.Type)
+		if err != nil {
+			return discoveryResult{}, err
+		}
+		if packs == nil {
+			packs = []agentskill.SkillPack{}
+		}
+		return discoveryResult{backendType: backendType, packs: packs}, nil
+	}
 	d, ok := agentskill.DiscovererFor(backendType)
 	if !ok {
 		return discoveryResult{backendType: backendType, packs: []agentskill.SkillPack{}}, nil

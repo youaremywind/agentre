@@ -20,6 +20,61 @@ func (f fakeDisc) Discover(_ context.Context, _ agentskill.DiscoverQuery) ([]age
 
 func newForTest(a AgentLookup, b BackendLookup) *Service { return &Service{agent: a, backend: b} }
 
+func newForTestRemote(a AgentLookup, b BackendLookup, r RemoteDiscoverer) *Service {
+	return &Service{agent: a, backend: b, remote: r}
+}
+
+// fakeRemoteDisc 替身远端发现器:记录入参,回预置 daemon 包。
+type fakeRemoteDisc struct {
+	gotDeviceID int64
+	gotBackend  string
+	packs       []agentskill.SkillPack
+}
+
+func (f *fakeRemoteDisc) ListSkills(_ context.Context, deviceID int64, backendType string) ([]agentskill.SkillPack, error) {
+	f.gotDeviceID = deviceID
+	f.gotBackend = backendType
+	return f.packs, nil
+}
+
+func TestListAgentSkillPacks_RemoteBackendUsesDaemonDiscovery(t *testing.T) {
+	Convey("远端 backend(DeviceID 非空)走 daemon 发现,不混入 desktop 本地发现", t, func() {
+		ctrl := gomock.NewController(t)
+		al := mock_skill_svc.NewMockAgentLookup(ctrl)
+		bl := mock_skill_svc.NewMockBackendLookup(ctrl)
+		ag := &agent_entity.Agent{ID: 1, AgentBackendID: 9}
+		al.EXPECT().Find(gomock.Any(), int64(1)).Return(ag, nil).AnyTimes()
+		// 远端 backend:Type=claudecode + DeviceID=7。
+		bl.EXPECT().Find(gomock.Any(), int64(9)).Return(&agent_backend_entity.AgentBackend{
+			Type: string(agent_backend_entity.TypeClaudeCode), DeviceID: "7",
+		}, nil).AnyTimes()
+		// 本地发现器回一个独有包:若路由错跑了本地,它会冒出来。
+		restore := agentskill.SwapDiscovererForTest(agent_backend_entity.TypeClaudeCode, fakeDisc{[]agentskill.SkillPack{
+			{ID: "local-only@desktop", Name: "local-only", Installed: true, Source: agentskill.SourceInstalled},
+		}})
+		defer restore()
+		remote := &fakeRemoteDisc{packs: []agentskill.SkillPack{
+			{ID: "superpowers@claude-plugins-official", Name: "superpowers", Installed: true, Source: agentskill.SourceInstalled, GloballyEnabled: true},
+		}}
+		s := newForTestRemote(al, bl, remote)
+
+		cat, err := s.ListAgentSkillPacks(context.Background(), 1, false)
+		So(err, ShouldBeNil)
+		// 用解析出的 deviceID + backend type 调远端发现。
+		So(remote.gotDeviceID, ShouldEqual, int64(7))
+		So(remote.gotBackend, ShouldEqual, "claudecode")
+		byID := map[string]SkillPackDTO{}
+		for _, p := range cat.Packs {
+			byID[p.ID] = p
+		}
+		// daemon 包进目录;desktop 本地发现不应混入。
+		So(byID["superpowers@claude-plugins-official"].Installed, ShouldBeTrue)
+		So(byID["superpowers@claude-plugins-official"].GloballyEnabled, ShouldBeTrue)
+		_, hasLocal := byID["local-only@desktop"]
+		So(hasLocal, ShouldBeFalse)
+	})
+}
+
 func TestListAgentSkillPacks(t *testing.T) {
 	Convey("合并推荐 + 发现 + 授权标注", t, func() {
 		ctrl := gomock.NewController(t)

@@ -203,6 +203,11 @@ func (d *Daemon) registerMethods() {
 	ccUsageH := handlers.NewCCUsageHandlers(ccFetcher)
 	d.registry.Register("claudecode.usage", wrapGuardedNoParams(ccUsageH.Get))
 
+	// skills.list:在 daemon 本机枚举已装技能包(= `claude plugin list --json`),供
+	// desktop 给远端 agent 配 per-agent 技能时展 daemon 真实可用集(而非 desktop 的)。
+	skillsH := handlers.NewSkillsHandlers()
+	d.registry.Register("skills.list", wrapGuarded(skillsH.List))
+
 	// runtime.* RPC 族 1:1 镜像 agentruntime.Runtime + 7 个可选子接口,
 	// 把远端 agentre 当成「本地」backend 跑。Handler 在 bindConn
 	// 里按连接挂载（要 NotifierPort）。MVP 单客户端假设下 registry 是全局,

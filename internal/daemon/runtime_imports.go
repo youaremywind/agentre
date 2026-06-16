@@ -13,4 +13,9 @@ import (
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/claudecode"
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/codex"
 	_ "github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/piagent"
+
+	// 技能包发现器:skills.list RPC 在 daemon 本机枚举已装 plugin 时,经
+	// agentskill.DiscovererFor 反查,需这些 init() 自注册到发现器注册表。
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentskill/claudeskill"
+	_ "github.com/agentre-ai/agentre/internal/pkg/agentskill/codexskill"
 )

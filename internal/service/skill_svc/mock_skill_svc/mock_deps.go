@@ -15,6 +15,7 @@ import (
 
 	agent_backend_entity "github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
 	agent_entity "github.com/agentre-ai/agentre/internal/model/entity/agent_entity"
+	agentskill "github.com/agentre-ai/agentre/internal/pkg/agentskill"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -94,4 +95,43 @@ func (m *MockBackendLookup) Find(ctx context.Context, id int64) (*agent_backend_
 func (mr *MockBackendLookupMockRecorder) Find(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Find", reflect.TypeOf((*MockBackendLookup)(nil).Find), ctx, id)
+}
+
+// MockRemoteDiscoverer is a mock of RemoteDiscoverer interface.
+type MockRemoteDiscoverer struct {
+	ctrl     *gomock.Controller
+	recorder *MockRemoteDiscovererMockRecorder
+	isgomock struct{}
+}
+
+// MockRemoteDiscovererMockRecorder is the mock recorder for MockRemoteDiscoverer.
+type MockRemoteDiscovererMockRecorder struct {
+	mock *MockRemoteDiscoverer
+}
+
+// NewMockRemoteDiscoverer creates a new mock instance.
+func NewMockRemoteDiscoverer(ctrl *gomock.Controller) *MockRemoteDiscoverer {
+	mock := &MockRemoteDiscoverer{ctrl: ctrl}
+	mock.recorder = &MockRemoteDiscovererMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockRemoteDiscoverer) EXPECT() *MockRemoteDiscovererMockRecorder {
+	return m.recorder
+}
+
+// ListSkills mocks base method.
+func (m *MockRemoteDiscoverer) ListSkills(ctx context.Context, deviceID int64, backendType string) ([]agentskill.SkillPack, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListSkills", ctx, deviceID, backendType)
+	ret0, _ := ret[0].([]agentskill.SkillPack)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListSkills indicates an expected call of ListSkills.
+func (mr *MockRemoteDiscovererMockRecorder) ListSkills(ctx, deviceID, backendType any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListSkills", reflect.TypeOf((*MockRemoteDiscoverer)(nil).ListSkills), ctx, deviceID, backendType)
 }

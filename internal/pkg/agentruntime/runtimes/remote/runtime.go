@@ -198,6 +198,7 @@ var defaultCapsBeforePrefetch = capability.Capabilities{
 		capability.CapAbort:          true,
 		capability.CapAnswerUserAsk:  true,
 		capability.CapToolPermission: true,
+		capability.CapSkills:         true,
 	},
 	PermissionModeMeta: capability.PermissionModeMeta{
 		AllowedModes:         []string{"default", "acceptEdits", "plan", "bypassPermissions"},
