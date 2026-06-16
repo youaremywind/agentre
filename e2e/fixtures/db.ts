@@ -305,6 +305,38 @@ export function groupMessageCountByTitleAndContent(title: string, contentLike: s
   }
 }
 
+// Count chat_sessions created as one-shot subagent delegations (purpose='subagent_call').
+// Read-only — proves agent_call actually spun up an isolated sub-agent session at the source of
+// truth, independent of the UI (these sessions are hidden from the sidebar by nonSubagentScope).
+export function subagentSessionCount(): number {
+  const db = new DatabaseSync(dbPath(), { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    const row = db
+      .prepare("SELECT COUNT(*) AS n FROM chat_sessions WHERE purpose = 'subagent_call'")
+      .get() as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
+// Count departments with the given name (org_create_department oracle). Specs use a timestamped
+// unique name, so baseline+1 pins the department THIS test created via the approved org write tool,
+// independent of seeded departments and the rendered UI.
+export function departmentCountByName(name: string): number {
+  const db = new DatabaseSync(dbPath(), { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    const row = db
+      .prepare("SELECT COUNT(*) AS n FROM departments WHERE name = ?")
+      .get(name) as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
 // Count persisted assistant chat_messages whose text echoes the fake reply prefix. Read-only,
 // independent of the UI — proves an agent turn's reply actually hit disk (used to corroborate
 // rehydration after a reload). The fake's text lands in blocks_json, so match the raw column.

@@ -64,6 +64,16 @@ const GroupCreateDirectivePrefix = "e2e-group-create:"
 // e2e-workflow-create:<name>。需 agent 开启 workflow 工具(注入 /mcp/workflow/)。
 const WorkflowCreateDirectivePrefix = "e2e-workflow-create:"
 
+// SubagentCallDirectivePrefix 触发调用子 agent 的用户指令:
+// e2e-subagent-call:<子agent名>:<交给它的prompt>。需 agent 开启 subagent 工具
+// (注入 /mcp/subagent/);agent_call 无审批,同步阻塞到子 agent 跑完返回其文本。
+const SubagentCallDirectivePrefix = "e2e-subagent-call:"
+
+// OrgCreateDeptDirectivePrefix 触发组织架构工具建部门的用户指令:
+// e2e-org-create-dept:<部门名>。需 agent 开启 org 工具(注入 /mcp/org/);
+// org 写工具需用户审批,调用挂起直至 e2e spec 点批准。
+const OrgCreateDeptDirectivePrefix = "e2e-org-create-dept:"
+
 // taskAssignedRe 匹配派活消息抬头「任务 #N：」(HandleTaskCreate 的 content 格式;
 // 完成回执是「任务 #N 已完成」、取消是「任务 #N 已取消」,编号后无全角冒号,不会误匹配)。
 var taskAssignedRe = regexp.MustCompile(`任务 #(\d+)：`)
@@ -208,6 +218,29 @@ func (r *Runtime) Run(ctx context.Context, req agentruntime.RunRequest) (<-chan 
 					"content": "e2e-workflow-content: " + name,
 				}); err != nil {
 					fmt.Fprintf(os.Stderr, "fake: workflow_create failed: %v\n", err)
+				}
+			}
+		}
+		// subagent 接缝:agent 开启 subagent 工具时注入 /mcp/subagent/;按指令调 agent_call
+		// (无审批,同步阻塞到子 agent 在隔离会话跑完返回其文本)。失败只写 stderr。
+		if spec, ok := findGroupToolServer(req.MCPServers, "agent_call"); ok {
+			if name, prompt, found := parseTwoPartDirective(req.UserText, SubagentCallDirectivePrefix); found {
+				if err := postToolCall(ctx, spec, "agent_call", map[string]any{
+					"agent_name": name,
+					"prompt":     prompt,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "fake: agent_call failed: %v\n", err)
+				}
+			}
+		}
+		// org 接缝:agent 开启 org 工具时注入 /mcp/org/;按指令调 org_create_department
+		// (写工具需审批,挂起等 UI 批准,e2e spec 负责点批准)。失败只写 stderr。
+		if spec, ok := findGroupToolServer(req.MCPServers, "org_create_department"); ok {
+			if name, found := parseOnePartDirective(req.UserText, OrgCreateDeptDirectivePrefix); found {
+				if err := postToolCall(ctx, spec, "org_create_department", map[string]any{
+					"name": name,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "fake: org_create_department failed: %v\n", err)
 				}
 			}
 		}

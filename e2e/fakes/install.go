@@ -91,13 +91,17 @@ func Install(ctx context.Context) {
 		ID:             ceo.ID,
 		Name:           ceo.Name,
 		AgentBackendID: backendID,
-		// 开启流程管理工具:让 CEO 单聊轮注入 /mcp/workflow/,e2e 可验 workflow_create
-		// 审批 + 拉群带流程(workflow-tool.spec)。group_create per-agent 门控后默认关,
-		// 且本 Update 会整体覆写工具数组(丢掉 migration 默认),故显式补开 group_create,
-		// 让 CEO 单聊轮注入 /mcp/group/(group-create.spec / workflow-tool.spec 拉群步骤依赖)。
+		// 开启工具:本 Update 会整体覆写工具数组(丢掉 migration 默认),故所有 e2e 用到
+		// 的工具都要在这里显式开。让 CEO 单聊轮注入对应 MCP server:
+		//   - workflow → /mcp/workflow/(workflow-tool.spec:建流程审批 + 拉群带流程)
+		//   - group_create → /mcp/group/(group-create.spec / workflow-tool.spec 拉群步骤)
+		//   - subagent → /mcp/subagent/(subagent-tool.spec:agent_call 委派,无审批)
+		//   - org → /mcp/org/(org-tool.spec:org_create_department 写工具审批)
 		Tools: []department_svc.AgentToolDTO{
 			{Key: agenttool.KeyWorkflow, Enabled: true},
 			{Key: agenttool.KeyGroupCreate, Enabled: true},
+			{Key: agenttool.KeySubagent, Enabled: true},
+			{Key: agenttool.KeyOrg, Enabled: true},
 		},
 	}); err != nil {
 		logger.Ctx(ctx).Error("e2efakes.Install: attach backend to agent failed", zap.Error(err))
