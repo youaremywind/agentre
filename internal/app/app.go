@@ -29,6 +29,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/service/remote_device_svc"
 	watcher "github.com/agentre-ai/agentre/internal/service/remote_device_watcher_svc"
 	"github.com/agentre-ai/agentre/internal/service/server_svc"
+	"github.com/agentre-ai/agentre/internal/service/subagent_svc"
 	"github.com/agentre-ai/agentre/internal/service/terminal_svc"
 	"github.com/agentre-ai/agentre/internal/service/workflow_svc"
 	"github.com/agentre-ai/agentre/internal/service/workflowtool_svc"
@@ -224,6 +225,10 @@ func (a *App) registerChatService() {
 		workflow_svc.Workflow(), workflow_svc.Workflow(),
 		agent_repo.Agent(), chat_svc.Chat(),
 	)
+
+	// subagent_svc 同样需 chat_svc.Chat() 非 nil(起子 agent 轮),故也在 RegisterChat 之后接线。
+	// agent_repo.Agent() 直接满足 AgentGateway(Find/FindByName/List)。
+	subagent_svc.Default().RegisterDeps(agent_repo.Agent(), subagent_svc.ChatSvcGateway())
 }
 
 // Greet returns a greeting for the given name.

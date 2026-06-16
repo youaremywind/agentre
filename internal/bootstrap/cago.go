@@ -38,6 +38,7 @@ import (
 	"github.com/agentre-ai/agentre/internal/service/orgtool_svc"
 	"github.com/agentre-ai/agentre/internal/service/project_svc"
 	"github.com/agentre-ai/agentre/internal/service/skill_svc"
+	"github.com/agentre-ai/agentre/internal/service/subagent_svc"
 	"github.com/agentre-ai/agentre/internal/service/workflowtool_svc"
 	"github.com/agentre-ai/agentre/migrations"
 
@@ -170,6 +171,11 @@ func Init(ctx context.Context) (*Runtime, error) {
 	chat_svc.RegisterTurnMCPProvider(workflowtool_svc.Default().BuildTurnMCP)
 	// group_create:单聊轮注入(群成员轮在 provider 内按 groupID 跳过)。
 	chat_svc.RegisterTurnMCPProvider(group_svc.Default().BuildCreateTurnMCP)
+	// 挂「调用子 agent」工具 MCP handler(/mcp/subagent/) + 注册 TurnMCPProvider:
+	// agent 开了 subagent 工具的会话 turn 注入该 MCP server(无审批门, 见 subagent_svc)。
+	gw.RegisterMCP("/mcp/subagent/", subagent_svc.Default().MCPHandler())
+	subagent_svc.Default().SetGatewayBaseURL(gw.BaseURL())
+	chat_svc.RegisterTurnMCPProvider(subagent_svc.Default().BuildTurnMCP)
 
 	// 技能包(skill pack)注入:skill_svc 组合 agent 授权 + 发现,chat_svc 按 CapSkills
 	// 在 runTurn 注入 RunRequest.EnabledPlugins(runtime 各自渲染到 CLI 配置)。

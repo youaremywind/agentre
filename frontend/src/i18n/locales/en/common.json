@@ -1835,8 +1835,8 @@
         "add": "Add Tool",
         "empty": "No tools available",
         "approval": "Approval",
-        "names": { "org": "Org Structure", "workflow": "Workflow Library", "group_create": "Create Group" },
-        "descriptions": { "org": "Allow this agent to read and manage departments and members (writes require your approval)", "workflow": "Allow this agent to read and manage collaboration workflows (writes require your approval)", "group_create": "Allow this agent to start a multi-agent collaboration group (requires your approval)" }
+        "names": { "org": "Org Structure", "workflow": "Workflow Library", "group_create": "Create Group", "subagent": "Call Sub-agent" },
+        "descriptions": { "org": "Allow this agent to read and manage departments and members (writes require your approval)", "workflow": "Allow this agent to read and manage collaboration workflows (writes require your approval)", "group_create": "Allow this agent to start a multi-agent collaboration group (requires your approval)", "subagent": "Delegate a subtask to another configured agent and get its result back synchronously. The sub-agent runs in an isolated one-shot session; agents used as sub-agents should use an auto-approving permission mode." }
       },
       "toolPicker": {
         "title": "Add Tools",

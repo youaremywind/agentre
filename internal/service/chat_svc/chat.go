@@ -115,6 +115,10 @@ type ChatSvc interface {
 	// FinishToolApproval 把审批置为终态(approved/denied/expired)并推 resolved 事件;
 	// requestID 不存在(已被 finalize 取走)→ error。
 	FinishToolApproval(ctx context.Context, sessionID int64, requestID, status, result string) error
+	// FinalAssistantText 读取某 assistant message 的纯文本(拼接所有 TextBlock)。
+	FinalAssistantText(ctx context.Context, messageID int64) (string, error)
+	// SessionProjectID 返回某会话所属的 project id(0=未挂项目);子 agent 工具用它继承调用方项目/cwd。
+	SessionProjectID(ctx context.Context, sessionID int64) (int64, error)
 }
 
 var defaultChat ChatSvc
@@ -3562,6 +3566,8 @@ func (s *chatSvc) EnsureSession(ctx context.Context, req *EnsureSessionRequest) 
 	switch req.Purpose {
 	case SessionPurposeGroupMember:
 		return s.ensureGroupMemberSession(ctx, req.AgentID, req.ProjectID, req.GroupID, req.Title)
+	case SessionPurposeSubagentCall:
+		return s.createSubagentSession(ctx, req.AgentID, req.ProjectID, req.Title)
 	default:
 		return nil, i18n.NewError(ctx, code.InvalidParameter)
 	}
@@ -3631,6 +3637,30 @@ func (s *chatSvc) ensureGroupMemberSession(ctx context.Context, agentID, project
 			zap.Int64("agentId", agentID),
 			zap.Int64("groupId", groupID),
 			zap.Error(err))
+		return nil, i18n.NewError(ctx, code.OperationFailed)
+	}
+	return &EnsureSessionResponse{SessionID: sess.ID, Created: true}, nil
+}
+
+// createSubagentSession 为子 agent 调用建一个全新的一次性隔离会话(group_id=0,每次新建)。
+// 与 group backing session 不同:不做幂等复用 —— 每次 agent_call 都要干净的隔离上下文。
+func (s *chatSvc) createSubagentSession(ctx context.Context, agentID, projectID int64, title string) (*EnsureSessionResponse, error) {
+	if agentID <= 0 {
+		return nil, i18n.NewError(ctx, code.InvalidParameter)
+	}
+	permissionMode := s.launchPermissionModeForAgent(ctx, agentID)
+	sess := &chat_entity.Session{
+		AgentID:                agentID,
+		ProjectID:              projectID,
+		PermissionMode:         permissionMode,
+		PermissionModeAtLaunch: permissionMode,
+		Title:                  strings.TrimSpace(title),
+		AgentStatus:            "idle",
+		Status:                 consts.ACTIVE,
+	}
+	if err := chat_repo.Session().Create(ctx, sess); err != nil {
+		logger.Ctx(ctx).Error("chat_svc.createSubagentSession: create failed",
+			zap.Int64("agentId", agentID), zap.Error(err))
 		return nil, i18n.NewError(ctx, code.OperationFailed)
 	}
 	return &EnsureSessionResponse{SessionID: sess.ID, Created: true}, nil

@@ -9,7 +9,7 @@ import (
 
 func TestRegistry(t *testing.T) {
 	defs := Registry()
-	require.Len(t, defs, 3)
+	require.Len(t, defs, 4)
 	require.Equal(t, "org", defs[0].Key)
 	require.Equal(t, "/mcp/org/", defs[0].MCPPath)
 	require.Contains(t, defs[0].ToolNames, "org_get")
@@ -21,7 +21,7 @@ func TestRegistry(t *testing.T) {
 	_, ok = Lookup("nope")
 	require.False(t, ok)
 
-	require.Equal(t, []string{"org", "workflow", "group_create"}, Keys())
+	require.Equal(t, []string{"org", "workflow", "group_create", "subagent"}, Keys())
 }
 
 func TestRegistry_HasGroupCreate(t *testing.T) {
@@ -47,5 +47,22 @@ func TestRegistry_HasWorkflow(t *testing.T) {
 	keys := Keys()
 	if !slices.Contains(keys, "workflow") || !slices.Contains(keys, "org") {
 		t.Fatalf("keys=%v", keys)
+	}
+}
+
+func TestSubagentRegistered(t *testing.T) {
+	def, ok := Lookup(KeySubagent)
+	if !ok {
+		t.Fatal("subagent tool not registered")
+	}
+	if def.MCPPath != "/mcp/subagent/" {
+		t.Fatalf("MCPPath = %q", def.MCPPath)
+	}
+	want := []string{"agent_list", "agent_call"}
+	if !slices.Equal(def.ToolNames, want) {
+		t.Fatalf("ToolNames = %v, want %v", def.ToolNames, want)
+	}
+	if !slices.Contains(Keys(), KeySubagent) {
+		t.Fatal("KeySubagent missing from Keys()")
 	}
 }

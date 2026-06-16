@@ -517,6 +517,8 @@ type SessionPurpose string
 
 const (
 	SessionPurposeGroupMember SessionPurpose = "group_member"
+	// SessionPurposeSubagentCall 子 agent 调用的一次性隔离会话(每次新建, 不复用, group_id=0)。
+	SessionPurposeSubagentCall SessionPurpose = "subagent_call"
 )
 
 type EnsureSessionRequest struct {
