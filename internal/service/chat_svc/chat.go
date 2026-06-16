@@ -2142,6 +2142,11 @@ func (s *chatSvc) startTurn(
 	forkAnchor string,
 	extras turnExtras,
 ) (*SendResponse, error) {
+	// 群成员 backing session(GroupID>0)若 extras 未带群上下文(用户直接 Send/Edit/
+	// Regenerate,非经 group_svc.launchDelivery),经 provider 补齐 group_send MCP + 群
+	// system-prompt 后缀,使各发起路径群上下文一致(设计问题⑥)。调度路径已填满则跳过。
+	extras = fillGroupTurnExtras(ctx, a, sess.ID, sess.GroupID, extras)
+
 	lock := s.lockFor(sess.ID)
 	if !lock.TryLock() {
 		return nil, i18n.NewError(ctx, code.ChatSendInFlight)

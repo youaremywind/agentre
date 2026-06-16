@@ -171,6 +171,9 @@ func Init(ctx context.Context) (*Runtime, error) {
 	chat_svc.RegisterTurnMCPProvider(workflowtool_svc.Default().BuildTurnMCP)
 	// group_create:单聊轮注入(群成员轮在 provider 内按 groupID 跳过)。
 	chat_svc.RegisterTurnMCPProvider(group_svc.Default().BuildCreateTurnMCP)
+	// 群成员 backing session 的群上下文(group_send MCP + 群 system-prompt 后缀):
+	// 用户直接 Send/Edit/Regenerate(不经 scheduler)时补齐,修设计问题⑥。
+	chat_svc.RegisterTurnExtrasProvider(group_svc.Default().BuildSendTurnExtras)
 	// 挂「调用子 agent」工具 MCP handler(/mcp/subagent/) + 注册 TurnMCPProvider:
 	// agent 开了 subagent 工具的会话 turn 注入该 MCP server(无审批门, 见 subagent_svc)。
 	gw.RegisterMCP("/mcp/subagent/", subagent_svc.Default().MCPHandler())

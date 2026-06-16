@@ -65,6 +65,9 @@ type GroupSvc interface {
 	HandleGroupCreate(ctx context.Context, agentID, sessionID int64, title string, memberNames []string, brief string, workflowID int64, memberNicknames map[string]string) (string, error)
 	// BuildCreateTurnMCP 实现 chat_svc.TurnMCPProvider:给普通单聊轮注入 group_create(群成员轮跳过)。
 	BuildCreateTurnMCP(ctx context.Context, a *agent_entity.Agent, sessionID, groupID int64) []agentruntime.MCPServerSpec
+	// BuildSendTurnExtras 实现 chat_svc.TurnExtrasProvider:给群成员 backing session 直接发起的
+	// 轮补齐群上下文(group_send MCP + 群 system-prompt 后缀),修设计问题⑥。
+	BuildSendTurnExtras(ctx context.Context, a *agent_entity.Agent, sessionID, groupID int64) ([]agentruntime.MCPServerSpec, string, bool)
 	StopGroup(ctx context.Context, id int64) error
 	PauseGroup(ctx context.Context, id int64) error
 	ResumeGroup(ctx context.Context, id int64) error
@@ -594,6 +597,38 @@ func (s *groupSvc) buildGroupMCP(g *group_entity.Group, m *group_entity.GroupMem
 		Headers: map[string]string{"Authorization": "Bearer " + tok},
 		Tools:   tools,
 	}}
+}
+
+// BuildSendTurnExtras 实现 chat_svc.TurnExtrasProvider:为群成员 backing session
+// (groupID>0)补齐群上下文 —— group_send 等群工具 MCP + 群 system-prompt 后缀。解决
+// 设计问题⑥:用户直接对成员 backing session 发起 Send/Edit/Regenerate(不经
+// scheduler.launchDelivery)时 extras 为零值、群上下文丢失。与 launchDelivery 调用同一对
+// buildGroupMCP/buildGroupSystemPrompt,构造逻辑单一。ok=false 表示不适用(非群会话 /
+// 网关未就绪 / 该 agent 不是本群成员)。group_send 是群成员固有能力,不走 per-agent
+// ToolEnabled 门控(镜像 launchDelivery 对成员一律注入)。
+func (s *groupSvc) BuildSendTurnExtras(ctx context.Context, a *agent_entity.Agent, _ int64, groupID int64) ([]agentruntime.MCPServerSpec, string, bool) {
+	if a == nil || groupID <= 0 || s.gatewayBaseURL == "" {
+		return nil, "", false
+	}
+	g, err := group_repo.Group().Find(ctx, groupID)
+	if err != nil || g == nil {
+		return nil, "", false
+	}
+	members, err := group_repo.Member().ListByGroup(ctx, groupID)
+	if err != nil {
+		return nil, "", false
+	}
+	var me *group_entity.GroupMember
+	for _, m := range members {
+		if m.AgentID == a.ID {
+			me = m
+			break
+		}
+	}
+	if me == nil {
+		return nil, "", false
+	}
+	return s.buildGroupMCP(g, me), s.buildGroupSystemPrompt(g, members, me), true
 }
 
 // buildGroupSystemPrompt 拼接注入到成员 turn 的群聊 system prompt 后缀
