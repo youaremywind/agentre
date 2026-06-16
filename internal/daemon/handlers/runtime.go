@@ -26,11 +26,11 @@ import (
 
 	"github.com/cago-frame/agents/agent/blocks"
 
-	"agentre/internal/daemon/rpc"
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/model/entity/llm_provider_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/runtimes/remote/wire"
+	"github.com/agentre-ai/agentre/internal/daemon/rpc"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/llm_provider_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/runtimes/remote/wire"
 )
 
 // RuntimeDeps are the explicit constructor inputs for RuntimeHandlers. All
@@ -171,6 +171,8 @@ func (h *RuntimeHandlers) Run(ctx context.Context, p wire.RunParams) (wire.RunAc
 		ForkAnchor:        p.ForkAnchor,
 		PermissionMode:    p.PermissionMode,
 		CollaborationMode: p.CollaborationMode,
+		MCPServers:        p.MCPServers,
+		EnabledPlugins:    p.EnabledPlugins,
 	}
 
 	events, result, err := rt.Run(ctx, req)
@@ -320,17 +322,26 @@ func runResultToFrame(sid int64, r *agentruntime.RunResult) wire.RunResultDoneFr
 	return f
 }
 
+func resolveSessionCapability[T any](h *RuntimeHandlers, sessionID int64) (T, error) {
+	var zero T
+	rt, err := h.resolveSession(sessionID)
+	if err != nil {
+		return zero, err
+	}
+	capability, ok := any(rt).(T)
+	if !ok {
+		return zero, agentruntime.ErrUnsupported
+	}
+	return capability, nil
+}
+
 // ── Control RPCs (Steer / CancelSteer / DrainPending / Abort / SetPM /
 //                  SubmitAnswer / SubmitToolPermission) ─────────────────────
 
 func (h *RuntimeHandlers) Steer(ctx context.Context, p wire.SteerParams) (wire.OK, error) {
-	rt, err := h.resolveSession(p.SessionID)
+	s, err := resolveSessionCapability[agentruntime.Steerer](h, p.SessionID)
 	if err != nil {
 		return wire.OK{}, err
-	}
-	s, ok := rt.(agentruntime.Steerer)
-	if !ok {
-		return wire.OK{}, agentruntime.ErrUnsupported
 	}
 	if err := s.Steer(ctx, p.SessionID, p.QueuedID, p.Text); err != nil {
 		return wire.OK{}, err
@@ -339,13 +350,9 @@ func (h *RuntimeHandlers) Steer(ctx context.Context, p wire.SteerParams) (wire.O
 }
 
 func (h *RuntimeHandlers) CancelSteer(ctx context.Context, p wire.CancelSteerParams) (wire.CancelSteerResult, error) {
-	rt, err := h.resolveSession(p.SessionID)
+	c, err := resolveSessionCapability[agentruntime.SteerCanceler](h, p.SessionID)
 	if err != nil {
 		return wire.CancelSteerResult{}, err
-	}
-	c, ok := rt.(agentruntime.SteerCanceler)
-	if !ok {
-		return wire.CancelSteerResult{}, agentruntime.ErrUnsupported
 	}
 	removed, err := c.CancelSteer(ctx, p.SessionID, p.QueuedID)
 	if err != nil {
@@ -355,26 +362,18 @@ func (h *RuntimeHandlers) CancelSteer(ctx context.Context, p wire.CancelSteerPar
 }
 
 func (h *RuntimeHandlers) DrainPending(ctx context.Context, p wire.DrainParams) (wire.DrainResult, error) {
-	rt, err := h.resolveSession(p.SessionID)
+	d, err := resolveSessionCapability[agentruntime.SteerDrainer](h, p.SessionID)
 	if err != nil {
 		return wire.DrainResult{}, err
-	}
-	d, ok := rt.(agentruntime.SteerDrainer)
-	if !ok {
-		return wire.DrainResult{}, agentruntime.ErrUnsupported
 	}
 	steers := d.DrainPending(ctx, p.SessionID)
 	return wire.DrainResult{Steers: steers}, nil
 }
 
 func (h *RuntimeHandlers) Abort(ctx context.Context, p wire.AbortParams) (wire.OK, error) {
-	rt, err := h.resolveSession(p.SessionID)
+	a, err := resolveSessionCapability[agentruntime.Aborter](h, p.SessionID)
 	if err != nil {
 		return wire.OK{}, err
-	}
-	a, ok := rt.(agentruntime.Aborter)
-	if !ok {
-		return wire.OK{}, agentruntime.ErrUnsupported
 	}
 	if err := a.Abort(ctx, p.SessionID); err != nil {
 		return wire.OK{}, err
@@ -383,13 +382,9 @@ func (h *RuntimeHandlers) Abort(ctx context.Context, p wire.AbortParams) (wire.O
 }
 
 func (h *RuntimeHandlers) SetPermissionMode(ctx context.Context, p wire.SetPermissionModeParams) (wire.OK, error) {
-	rt, err := h.resolveSession(p.SessionID)
+	m, err := resolveSessionCapability[agentruntime.PermissionModeSetter](h, p.SessionID)
 	if err != nil {
 		return wire.OK{}, err
-	}
-	m, ok := rt.(agentruntime.PermissionModeSetter)
-	if !ok {
-		return wire.OK{}, agentruntime.ErrUnsupported
 	}
 	if err := m.SetPermissionMode(ctx, p.SessionID, p.Mode); err != nil {
 		return wire.OK{}, err
@@ -398,13 +393,9 @@ func (h *RuntimeHandlers) SetPermissionMode(ctx context.Context, p wire.SetPermi
 }
 
 func (h *RuntimeHandlers) SubmitAnswer(ctx context.Context, p wire.SubmitAnswerParams) (wire.OK, error) {
-	rt, err := h.resolveSession(p.SessionID)
+	s, err := resolveSessionCapability[agentruntime.AskAnswerSink](h, p.SessionID)
 	if err != nil {
 		return wire.OK{}, err
-	}
-	s, ok := rt.(agentruntime.AskAnswerSink)
-	if !ok {
-		return wire.OK{}, agentruntime.ErrUnsupported
 	}
 	if err := s.SubmitAnswer(ctx, p.SessionID, p.RequestID, p.Questions, p.Answers, p.Skipped); err != nil {
 		return wire.OK{}, err
@@ -413,13 +404,9 @@ func (h *RuntimeHandlers) SubmitAnswer(ctx context.Context, p wire.SubmitAnswerP
 }
 
 func (h *RuntimeHandlers) SubmitToolPermission(ctx context.Context, p wire.SubmitToolPermissionParams) (wire.OK, error) {
-	rt, err := h.resolveSession(p.SessionID)
+	s, err := resolveSessionCapability[agentruntime.ToolPermissionSink](h, p.SessionID)
 	if err != nil {
 		return wire.OK{}, err
-	}
-	s, ok := rt.(agentruntime.ToolPermissionSink)
-	if !ok {
-		return wire.OK{}, agentruntime.ErrUnsupported
 	}
 	if err := s.SubmitToolPermission(ctx, p.SessionID, p.RequestID, p.Allow, p.AlwaysAllowSession, p.DenyReason); err != nil {
 		return wire.OK{}, err
@@ -428,15 +415,11 @@ func (h *RuntimeHandlers) SubmitToolPermission(ctx context.Context, p wire.Submi
 }
 
 func (h *RuntimeHandlers) GetGoal(ctx context.Context, p wire.GoalParams) (wire.GoalResult, error) {
-	rt, req, release, err := h.resolveGoalController(ctx, p)
+	g, req, release, err := h.resolveGoalController(ctx, p)
 	if err != nil {
 		return wire.GoalResult{}, err
 	}
 	defer release()
-	g, ok := rt.(agentruntime.GoalController)
-	if !ok {
-		return wire.GoalResult{}, agentruntime.ErrUnsupported
-	}
 	goal, err := g.GetGoal(ctx, req)
 	if err != nil {
 		return wire.GoalResult{}, err
@@ -445,15 +428,11 @@ func (h *RuntimeHandlers) GetGoal(ctx context.Context, p wire.GoalParams) (wire.
 }
 
 func (h *RuntimeHandlers) SetGoal(ctx context.Context, p wire.GoalParams) (wire.GoalResult, error) {
-	rt, req, release, err := h.resolveGoalController(ctx, p)
+	g, req, release, err := h.resolveGoalController(ctx, p)
 	if err != nil {
 		return wire.GoalResult{}, err
 	}
 	defer release()
-	g, ok := rt.(agentruntime.GoalController)
-	if !ok {
-		return wire.GoalResult{}, agentruntime.ErrUnsupported
-	}
 	goal, err := g.SetGoal(ctx, req)
 	if err != nil {
 		return wire.GoalResult{}, err
@@ -462,15 +441,11 @@ func (h *RuntimeHandlers) SetGoal(ctx context.Context, p wire.GoalParams) (wire.
 }
 
 func (h *RuntimeHandlers) ClearGoal(ctx context.Context, p wire.GoalParams) (wire.GoalClearResult, error) {
-	rt, req, release, err := h.resolveGoalController(ctx, p)
+	g, req, release, err := h.resolveGoalController(ctx, p)
 	if err != nil {
 		return wire.GoalClearResult{}, err
 	}
 	defer release()
-	g, ok := rt.(agentruntime.GoalController)
-	if !ok {
-		return wire.GoalClearResult{}, agentruntime.ErrUnsupported
-	}
 	cleared, err := g.ClearGoal(ctx, req)
 	if err != nil {
 		return wire.GoalClearResult{}, err
@@ -478,7 +453,7 @@ func (h *RuntimeHandlers) ClearGoal(ctx context.Context, p wire.GoalParams) (wir
 	return wire.GoalClearResult{Cleared: cleared}, nil
 }
 
-func (h *RuntimeHandlers) resolveGoalController(ctx context.Context, p wire.GoalParams) (agentruntime.Runtime, agentruntime.GoalRequest, func(), error) {
+func (h *RuntimeHandlers) resolveGoalController(ctx context.Context, p wire.GoalParams) (agentruntime.GoalController, agentruntime.GoalRequest, func(), error) {
 	req, err := goalRequestFromWire(p)
 	if err != nil {
 		return nil, agentruntime.GoalRequest{}, func() {}, err
@@ -493,13 +468,18 @@ func (h *RuntimeHandlers) resolveGoalController(ctx context.Context, p wire.Goal
 			release()
 			return nil, agentruntime.GoalRequest{}, func() {}, agentruntime.ErrNoActiveTurn
 		}
-		return rt, req, release, nil
+		g, ok := rt.(agentruntime.GoalController)
+		if !ok {
+			release()
+			return nil, agentruntime.GoalRequest{}, func() {}, agentruntime.ErrUnsupported
+		}
+		return g, req, release, nil
 	}
-	rt, err := h.resolveSession(p.SessionID)
+	g, err := resolveSessionCapability[agentruntime.GoalController](h, p.SessionID)
 	if err != nil {
 		return nil, agentruntime.GoalRequest{}, func() {}, err
 	}
-	return rt, req, func() {}, nil
+	return g, req, func() {}, nil
 }
 
 func (h *RuntimeHandlers) hydrateGoalProvider(ctx context.Context, req *agentruntime.GoalRequest) (func(), error) {

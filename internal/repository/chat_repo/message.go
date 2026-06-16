@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	"agentre/internal/model/entity/chat_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
 )
 
 //go:generate mockgen -source message.go -destination mock_chat_repo/mock_message.go

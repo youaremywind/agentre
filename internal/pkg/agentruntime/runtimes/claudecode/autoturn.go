@@ -1,7 +1,7 @@
 package claudecode
 
 import (
-	"agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
 )
 
 // AutonomousTurns 实现 agentruntime.AutonomousTurnSource:把底层 claudecode.Session

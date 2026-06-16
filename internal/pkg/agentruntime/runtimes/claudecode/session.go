@@ -2,11 +2,13 @@ package claudecode
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/pkg/claudecode"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
 )
 
 // ccStream 是 pkg/claudecode.Stream 的窄接口,便于测试注入 fake。
@@ -186,25 +188,45 @@ func resolveLaunchMode(perTurn, backendDefault string) string {
 // 会下发 --model」这条不变量(spec §B token contract;Bug 1 防回归)。
 // binary 由 caller 决定:真路径走 ccSessionFactory 解析,测试可以传 stub 串。
 func ccBuildClientOpts(spec ccLaunchSpec, binary string) []claudecode.Option {
+	env := spec.Env
+	// 注入 MCP server 时拉长 CLI 的 MCP 工具调用超时:orgtool 写操作会同步挂起
+	// 等用户审批(approvalTimeout=4min),默认 60s 撑不住。值为毫秒。spike 实测见
+	// docs/superpowers/plans/2026-06-11-agent-org-tool.md Task 0。
+	if len(spec.Req.MCPServers) > 0 {
+		merged := make(map[string]string, len(env)+2)
+		maps.Copy(merged, env)
+		if _, ok := merged["MCP_TIMEOUT"]; !ok {
+			merged["MCP_TIMEOUT"] = "600000"
+		}
+		if _, ok := merged["MCP_TOOL_TIMEOUT"]; !ok {
+			merged["MCP_TOOL_TIMEOUT"] = "600000"
+		}
+		env = merged
+	}
 	opts := []claudecode.Option{
 		claudecode.WithBinary(binary),
 		claudecode.WithCwd(spec.Cwd),
-		claudecode.WithEnv(spec.Env),
+		claudecode.WithEnv(env),
 		claudecode.WithSystemPrompt(spec.Req.SystemPrompt),
 		// 启用 stdio control protocol:把 AskUserQuestion 这种交互式工具的
 		// permission gate 从 CLI 的 TUI 拉到 agentre UI;headless 下不开
 		// 这个 flag,AskUserQuestion 会被 CLI 自动 deny,turn 直接挂掉。
 		claudecode.WithPermissionPromptTool("stdio"),
 	}
-	// 绑了 LLM provider 的 claudecode 后端(GLM / openrouter 等非 Anthropic
-	// 直连场景):必须把 provider.Model 下发成 --model,CLI 才能在 system.init
-	// 帧里报真实模型 id,result.Model → assistantMsg.Model 链才能写对。不传时
-	// CLI 落到本地登录态默认 model(如 claude-opus-4-7),经 gateway 透明改写
-	// 仍能调通 LLM 但 UI 显示错。
+	// --model 取值优先级:provider.Model(绑了 LLM provider,如 GLM / openrouter 等
+	// 非 Anthropic 直连场景,必须下发才能让 CLI 在 system.init 帧报真实模型 id) →
+	// backend.DefaultModel(走 CLI 登录态、未绑 provider 时的自定义模型,如
+	// claude-fable-5) → 不下发(CLI 落到本地登录态默认 model)。绑 provider 的行为
+	// 不变;只在 provider.Model 为空时用后端字段兜底,顺带让 CLI 登录态下
+	// result.Model → assistantMsg.Model 链也能写对。
+	model := strings.TrimSpace(spec.Req.Backend.DefaultModel)
 	if spec.Req.Provider != nil {
-		if model := strings.TrimSpace(spec.Req.Provider.Model); model != "" {
-			opts = append(opts, claudecode.WithModel(model))
+		if pm := strings.TrimSpace(spec.Req.Provider.Model); pm != "" {
+			model = pm
 		}
+	}
+	if model != "" {
+		opts = append(opts, claudecode.WithModel(model))
 	}
 	if spec.SessionUUID != "" {
 		opts = append(opts, claudecode.WithSessionID(spec.SessionUUID))
@@ -218,7 +240,37 @@ func ccBuildClientOpts(spec ccLaunchSpec, binary string) []claudecode.Option {
 	if eff := spec.Req.Backend.ReasoningEffort; eff != "" {
 		opts = append(opts, claudecode.WithEffort(eff))
 	}
+	// 群聊 / 其它编排注入的 MCP tool server:翻成 --mcp-config + 把对应 tool 放进
+	// --allowedTools。仅 claudecode runtime(声明 CapMCPTools)消费,其它 runtime 忽略
+	// RunRequest.MCPServers。
+	if len(spec.Req.MCPServers) > 0 {
+		cfg, allow := buildMcpConfigJSON(spec.Req.MCPServers)
+		opts = append(opts, claudecode.WithMcpConfig(cfg))
+		opts = append(opts, claudecode.WithAllowedTools(allow...))
+	}
 	return opts
+}
+
+// buildMcpConfigJSON 把 MCPServerSpec 列表转成 claude CLI 的 --mcp-config JSON,
+// 并返回需要加进 --allowedTools 的 tool 名(约定 mcp__<Name>__group_send)。
+// JSON 形态对齐 transport spike:
+// {"mcpServers":{"<name>":{"type":"http","url":"...","headers":{...}}}}
+func buildMcpConfigJSON(specs []agentruntime.MCPServerSpec) (string, []string) {
+	type mcpServer struct {
+		Type    string            `json:"type"`
+		URL     string            `json:"url"`
+		Headers map[string]string `json:"headers,omitempty"`
+	}
+	servers := map[string]mcpServer{}
+	allow := make([]string, 0, len(specs))
+	for _, s := range specs {
+		servers[s.Name] = mcpServer{Type: "http", URL: s.URL, Headers: s.Headers}
+		for _, tool := range s.Tools {
+			allow = append(allow, "mcp__"+s.Name+"__"+tool)
+		}
+	}
+	b, _ := json.Marshal(map[string]any{"mcpServers": servers})
+	return string(b), allow
 }
 
 var ccSessionFactory = func(spec ccLaunchSpec) (ccSessionHandle, error) {

@@ -53,6 +53,12 @@ export function ChatStreamsHost(): React.ReactElement | null {
   const markToolPermissionResolved = useChatStreamsStore(
     (s) => s.markToolPermissionResolved,
   );
+  const appendLiveToolApproval = useChatStreamsStore(
+    (s) => s.appendLiveToolApproval,
+  );
+  const markToolApprovalResolved = useChatStreamsStore(
+    (s) => s.markToolApprovalResolved,
+  );
   const patchLiveUsage = useChatStreamsStore((s) => s.patchLiveUsage);
   const patchLiveContextWindow = useChatStreamsStore(
     (s) => s.patchLiveContextWindow,
@@ -169,6 +175,26 @@ export function ChatStreamsHost(): React.ReactElement | null {
             );
           }
           return;
+        case "tool_approval": {
+          // 内置写工具审批。pending=新卡,其余=同 requestId 决议更新。
+          if (!ev.requestId) return;
+          clearLiveRetry(sessionId);
+          const payload = {
+            toolKey: ev.toolKey ?? "",
+            requestId: ev.requestId,
+            toolName: ev.toolName ?? "",
+            toolInput: ev.toolInput,
+            status: ev.status ?? "",
+            result: ev.result,
+          };
+          if (ev.status === "pending") {
+            bumpSessionTabToAfterPinned(sessionId);
+            appendLiveToolApproval(sessionId, payload);
+          } else {
+            markToolApprovalResolved(sessionId, payload);
+          }
+          return;
+        }
         case "session_status": {
           if (!ev.sessionStatus) return;
           // session_status patch 一般只带 agentStatus + needsAttention,
@@ -282,9 +308,12 @@ export function ChatStreamsHost(): React.ReactElement | null {
       markAskUserQuestionAnswered,
       appendLiveToolPermissionRequest,
       markToolPermissionResolved,
+      appendLiveToolApproval,
+      markToolApprovalResolved,
       patchLiveUsage,
       patchLiveContextWindow,
       appendLiveCompactBoundary,
+      setLiveCompacting,
     ],
   );
 

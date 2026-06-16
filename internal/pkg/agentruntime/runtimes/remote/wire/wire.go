@@ -15,9 +15,9 @@ import (
 
 	"github.com/cago-frame/agents/agent/blocks"
 
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/pkg/jsonrpc"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/pkg/jsonrpc"
 )
 
 // ── RPC method names ────────────────────────────────────────────────────────
@@ -189,6 +189,12 @@ type RunParams struct {
 	ForkAnchor        string               `json:"forkAnchor,omitempty"`
 	PermissionMode    string               `json:"permissionMode,omitempty"`
 	CollaborationMode string               `json:"collaborationMode,omitempty"`
+	// MCPServers 注入给 runtime 的 MCP tool server（群聊/org 工具等）。漏传会让
+	// 远程后端的 launch-time MCP 注入失效，故必须随 wire 过线。
+	MCPServers []agentruntime.MCPServerSpec `json:"mcpServers,omitempty"`
+	// EnabledPlugins 注入给 runtime 的 per-agent plugin/skill-pack 覆盖。漏传会让
+	// 远程 CapSkills 后端展示可配置但实际继承全局配置。
+	EnabledPlugins map[string]bool `json:"enabledPlugins,omitempty"`
 	// LLMProviderKey 是 desktop 端关联的 provider stable key（UUID）。
 	// daemon 用它做 ProviderLookup（FindByKey），不需要 desktop 越线传 APIKey。
 	LLMProviderKey string `json:"llmProviderKey,omitempty"`

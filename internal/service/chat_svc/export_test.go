@@ -3,9 +3,15 @@ package chat_svc
 import (
 	"context"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
 )
+
+// MessageTextExport 暴露 messageText 给外部测试包验证纯文本拼接逻辑。
+func MessageTextExport(m *chat_entity.Message) (string, error) {
+	return messageText(m)
+}
 
 // DriveAutonomousTurnForTest 暴露 driveAutonomousTurn 给外部测试包,直接驱动一轮
 // 自主续轮(不经 watcher goroutine,便于同步断言落库 + stream)。

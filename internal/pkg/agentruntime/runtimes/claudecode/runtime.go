@@ -13,11 +13,11 @@ import (
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
 
-	"agentre/internal/model/entity/agent_backend_entity"
-	"agentre/internal/pkg/agentruntime"
-	"agentre/internal/pkg/agentruntime/capability"
-	"agentre/internal/pkg/httpgateway"
-	"agentre/pkg/claudecode"
+	"github.com/agentre-ai/agentre/internal/model/entity/agent_backend_entity"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
+	"github.com/agentre-ai/agentre/internal/pkg/agentruntime/capability"
+	"github.com/agentre-ai/agentre/internal/pkg/httpgateway"
+	"github.com/agentre-ai/agentre/pkg/claudecode"
 )
 
 // defaultRuntime 是包级单例,init() 时登记到 agentruntime.RuntimeFor 注册表。
@@ -36,10 +36,27 @@ const sessionCacheCap = 8
 
 // Runtime claudecode runtime 实现。
 type Runtime struct {
-	// mu 仅用于 acquireSession 的 get-or-spawn 串行化兜底。
-	mu    sync.Mutex
-	cache *agentruntime.CLISessionPool
-	steer *httpgateway.SteerInbox
+	// spawnLocks 按 session key 分桶串行化 acquireSession 的 get-or-spawn,只防同一
+	// session 并发首轮 double-spawn。
+	//
+	// **绝不能退回单把全局锁**:acquireSession 在锁内做阻塞子进程操作(spawn + 同步
+	// SetPermissionMode);某个 session 的 CLI 启动期挂起(实测:群聊成员轮带
+	// --mcp-config 卡在 MCP 初始化)会一直占着全局锁 → 其它**所有** session 的 turn 全
+	// 堵在 acquireSession 的锁上,整个 claudecode runtime 宕掉(单聊不输出/停不掉/再发
+	// 报 in-flight)。回归见 TestRun_BlockedSpawnDoesNotWedgeOtherSessions。
+	//
+	// 锁条目按 key 惰性创建后不回收:每个 session key 一把 *sync.Mutex(指针大小),
+	// 数量随会话量有界增长,内存可忽略;删除会与并发 LoadOrStore 产生「同一 key 两把锁」
+	// 的 double-spawn 竞态,故不做。
+	spawnLocks sync.Map // key(string) → *sync.Mutex
+	cache      *agentruntime.CLISessionPool
+	steer      *httpgateway.SteerInbox
+}
+
+// spawnLockFor 返回某 session key 专属的 get-or-spawn 锁(惰性创建)。
+func (r *Runtime) spawnLockFor(key string) *sync.Mutex {
+	v, _ := r.spawnLocks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 // New 默认 8 上限 LRU。
@@ -83,8 +100,13 @@ func (r *Runtime) Capabilities() capability.Capabilities {
 			// user frame 携带 base64 image content block(CLI stream-json 原生支持);
 			// extractImages 从 RunRequest.UserBlocks 抽 inline 图片经 handle.Stream 透传。
 			capability.CapImageInput: true,
+			// RunRequest.MCPServers 注入支持:claudecode CLI 接受 --mcp-config 传入
+			// 额外 MCP tool 服务器;群聊编排是首个消费者,入群资格门控于此 cap。
+			capability.CapMCPTools: true,
 			// CLI 在 run_in_background Bash 任务完成后自主跑续轮;实现 AutonomousTurnSource。
 			capability.CapAutonomousTurn: true,
+			// 接受 RunRequest.EnabledPlugins,spawn 时渲进 --settings 的 enabledPlugins。
+			capability.CapSkills: true,
 		},
 		PermissionModeMeta: capability.PermissionModeMeta{
 			AllowedModes:         []string{"default", "acceptEdits", "plan", "bypassPermissions"},
@@ -210,6 +232,11 @@ func (r *Runtime) Abort(ctx context.Context, sessionID int64) error {
 }
 
 // SetPermissionMode 实现 PermissionModeSetter。语义同顶层 SetPermissionMode。
+//
+// CLI 切换成功后必须同步 active.permissionMode 快照:CLI 的空闲 status 回显帧被
+// demux reader 丢弃(pkg/claudecode session.go isNonTurnFrame),复用进程的下一轮
+// 也不重发 mode —— 不写这里,快照会停留在 spawn 时的值,handleControlRequest 的
+// bypassPermissions 短路就会吞掉本应弹审批的 control_request。
 func (r *Runtime) SetPermissionMode(ctx context.Context, sessionID int64, mode string) error {
 	if sessionID <= 0 {
 		return fmt.Errorf("agentruntime/runtimes/claudecode: invalid sessionID %d", sessionID)
@@ -222,7 +249,11 @@ func (r *Runtime) SetPermissionMode(ctx context.Context, sessionID int64, mode s
 	if a.handle == nil {
 		return agentruntime.ErrNoActiveTurn
 	}
-	return a.handle.SetPermissionMode(ctx, mode)
+	if err := a.handle.SetPermissionMode(ctx, mode); err != nil {
+		return err
+	}
+	a.setPermissionModeSnapshot(mode)
+	return nil
 }
 
 // CloseSession 显式释放某个 chat session 的常驻进程。
@@ -391,10 +422,14 @@ func consumedSteersFromInbox(items []httpgateway.SteerItem) []agentruntime.Consu
 // 历史:旧实现直接调 chat_repo.Session().UpdatePermissionModeAtLaunch 写库,
 // 在 agentred daemon 进程(不 bootstrap cago/chat_repo)里会 nil panic。
 func (r *Runtime) acquireSession(ctx context.Context, req agentruntime.RunRequest) (*claudeActive, string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	// 按 session key 加锁(非全局):同一 session 的并发首轮串行化避免 double-spawn,
+	// 不同 session 互不阻塞 —— 一个 session 卡在 spawn / SetPermissionMode 不会拖垮
+	// 其它 session。CLISessionPool 自身按 key 线程安全,无需额外全局互斥。
 	key := sessionKey(req.SessionID)
+	lk := r.spawnLockFor(key)
+	lk.Lock()
+	defer lk.Unlock()
+
 	var cur *claudeActive
 	if req.SessionID > 0 {
 		if v, ok := r.cache.Get(key); ok {
@@ -417,7 +452,7 @@ func (r *Runtime) acquireSession(ctx context.Context, req agentruntime.RunReques
 		// 下发。回吐当前缓存的 mode 让 chat_svc 写库幂等(值不变即 noop)。
 		cur.inTurn.Store(true)
 		r.cache.MarkActive(key)
-		return cur, cur.permissionMode, nil
+		return cur, cur.permissionModeSnapshot(), nil
 	}
 
 	isolationUUID := newUUIDv4()
@@ -429,6 +464,7 @@ func (r *Runtime) acquireSession(ctx context.Context, req agentruntime.RunReques
 	if err != nil {
 		return nil, "", fmt.Errorf("agentruntime/runtimes/claudecode: build hook settings: %w", err)
 	}
+	settingsJSON = buildSkillsSettings(req.EnabledPlugins, settingsJSON)
 
 	pureResume := req.ProviderSessionID != "" && req.ForkAnchor == ""
 	var cliSessionUUID, inboxKey string
@@ -470,8 +506,9 @@ func (r *Runtime) acquireSession(ctx context.Context, req agentruntime.RunReques
 	// 让前端 pill 看到的 mode 和 CLI 实际行为一致。失败仅记 warn 不阻 spawn ——
 	// launch mode (bypass) 已是最宽松, 用户可以在 pill 上手动重试切换。
 	//
-	// 必须在 cache.Put + drainStream goroutine 启动前调用同步 SetPermissionMode,
-	// 否则与 EventPermissionModeChanged 写 active.permissionMode 的路径有 race。
+	// 必须在 cache.Put + drainStream goroutine 启动前调用同步 SetPermissionMode:
+	// 校准结果直赋 claudeActive.permissionMode 初值(发布前,无需 modeMu),发布后
+	// 的更新一律走 setPermissionModeSnapshot。
 	runtimeMode := resolvedLaunchMode
 	if req.PermissionMode != "" && req.PermissionMode != resolvedLaunchMode {
 		if err := handle.SetPermissionMode(ctx, req.PermissionMode); err != nil {
@@ -519,10 +556,10 @@ func drainStream(stream ccStream, out chan<- agentruntime.Event, result *agentru
 			handleControlRequest(ev.ControlRequest, active, out)
 			continue
 		}
-		// 同步 in-process mode 快照 —— ExitPlanMode 之后 CLI 会切到 default,
+		// 同步 in-process mode 快照 —— ExitPlanMode 批准后 CLI 会自切 mode,
 		// handleControlRequest 里的 bypassPermissions 短路判断要看新值。
 		if ev.Kind == claudecode.EventPermissionModeChanged && ev.PermissionMode != "" && active != nil {
-			active.permissionMode = ev.PermissionMode
+			active.setPermissionModeSnapshot(ev.PermissionMode)
 		}
 		translated, usage, stopErr := translate(ev)
 		for _, t := range translated {

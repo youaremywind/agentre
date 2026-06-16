@@ -9,7 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
-	"agentre/internal/daemon/rpc"
+	"github.com/agentre-ai/agentre/internal/daemon/rpc"
 )
 
 // dialPair 起一个 httptest server,把 server / client 两端 *rpc.Conn 都返回。
