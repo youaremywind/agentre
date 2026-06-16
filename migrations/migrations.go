@@ -34,10 +34,6 @@ func migrationList() []*gormigrate.Migration {
 		migration202605220011(), // issues + labels + issue_labels + label seed
 		migration202606030001(), // group chat baseline
 		migration202606100001(), // agent_backends.default_model
-		migration202606110001(), // agents.tools_json + CEO 默认开启 org
-		migration202606110002(), // group_tasks + workflows + task message columns
-		migration202606120001(), // agents.skills_json 重置为 plugin-id 语义
-		migration202606150001(), // group_members.nickname(群昵称 / 群内备注名)
-		migration202606150002(), // CEO 默认开启 group_create(拉群带流程)
+		migration202606160001(), // 群协作:agent 工具(org/group_create)+ 群任务/流程 + 群成员昵称
 	}
 }
