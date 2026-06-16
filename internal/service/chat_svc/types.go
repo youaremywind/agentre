@@ -2,6 +2,7 @@
 package chat_svc
 
 import (
+	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
 	"github.com/agentre-ai/agentre/internal/pkg/agentruntime"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc/blocks"
 	"github.com/agentre-ai/agentre/internal/service/chat_svc/view"
@@ -518,7 +519,8 @@ type SessionPurpose string
 const (
 	SessionPurposeGroupMember SessionPurpose = "group_member"
 	// SessionPurposeSubagentCall 子 agent 调用的一次性隔离会话(每次新建, 不复用, group_id=0)。
-	SessionPurposeSubagentCall SessionPurpose = "subagent_call"
+	// 值与落库的 chat_entity.SessionPurposeSubagent 同源, 防两处字面量漂移。
+	SessionPurposeSubagentCall SessionPurpose = SessionPurpose(chat_entity.SessionPurposeSubagent)
 )
 
 type EnsureSessionRequest struct {

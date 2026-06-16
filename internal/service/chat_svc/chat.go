@@ -3655,6 +3655,7 @@ func (s *chatSvc) createSubagentSession(ctx context.Context, agentID, projectID 
 	sess := &chat_entity.Session{
 		AgentID:                agentID,
 		ProjectID:              projectID,
+		Purpose:                chat_entity.SessionPurposeSubagent,
 		PermissionMode:         permissionMode,
 		PermissionModeAtLaunch: permissionMode,
 		Title:                  strings.TrimSpace(title),

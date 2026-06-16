@@ -35,5 +35,6 @@ func migrationList() []*gormigrate.Migration {
 		migration202606030001(), // group chat baseline
 		migration202606100001(), // agent_backends.default_model
 		migration202606160001(), // 群协作:agent 工具(org/group_create)+ 群任务/流程 + 群成员昵称
+		migration202606160002(), // chat_sessions.purpose(隐藏 subagent 委派会话)
 	}
 }

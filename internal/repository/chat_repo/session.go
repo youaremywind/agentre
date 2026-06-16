@@ -69,6 +69,15 @@ func defaultSessionScope(db *gorm.DB) *gorm.DB {
 	return db.Where("group_id = ?", 0)
 }
 
+// nonSubagentScope 排除子 agent 委派会话(purpose='subagent_call')。这类会话由 agent_call
+// 同步委派出来、一次性隔离, 不是用户顶层会话, 不应出现在任何 agent/项目的会话列表或计数里。
+// 与按 group_id 条件过滤的 defaultSessionScope 不同: 子 agent 会话走 group_id=0, 含群的
+// *IncludingGroups 变体不挂 defaultSessionScope, 所以本 scope 必须无条件挂在每个列表/计数查询上,
+// 否则它会从侧栏(走 IncludingGroups)漏出来。
+func nonSubagentScope(db *gorm.DB) *gorm.DB {
+	return db.Where("purpose <> ?", chat_entity.SessionPurposeSubagent)
+}
+
 type sessionRepo struct{}
 
 func (r *sessionRepo) Find(ctx context.Context, id int64) (*chat_entity.Session, error) {
@@ -110,7 +119,8 @@ func (r *sessionRepo) listByAgent(ctx context.Context, agentID int64, limit int,
 	}
 	var rows []*chat_entity.Session
 	q := db.Ctx(ctx).
-		Where("agent_id = ? AND status = ?", agentID, consts.ACTIVE)
+		Where("agent_id = ? AND status = ?", agentID, consts.ACTIVE).
+		Scopes(nonSubagentScope)
 	if ordinaryOnly {
 		q = q.Scopes(defaultSessionScope)
 	}
@@ -135,7 +145,8 @@ func (r *sessionRepo) ListByAgentPagedIncludingGroups(ctx context.Context, agent
 func (r *sessionRepo) listByAgentPaged(ctx context.Context, agentID int64, offset, limit int, ordinaryOnly bool) ([]*chat_entity.Session, error) {
 	var rows []*chat_entity.Session
 	q := db.Ctx(ctx).
-		Where("agent_id = ? AND status = ?", agentID, consts.ACTIVE)
+		Where("agent_id = ? AND status = ?", agentID, consts.ACTIVE).
+		Scopes(nonSubagentScope)
 	if ordinaryOnly {
 		q = q.Scopes(defaultSessionScope)
 	}
@@ -168,7 +179,8 @@ func (r *sessionRepo) listIDsByAgents(ctx context.Context, agentIDs []int64, ord
 	q := db.Ctx(ctx).
 		Table("chat_sessions").
 		Select("agent_id, id").
-		Where("agent_id IN ? AND status = ?", agentIDs, consts.ACTIVE)
+		Where("agent_id IN ? AND status = ?", agentIDs, consts.ACTIVE).
+		Scopes(nonSubagentScope)
 	if ordinaryOnly {
 		q = q.Scopes(defaultSessionScope)
 	}
@@ -199,7 +211,8 @@ func (r *sessionRepo) listAttentionByAgent(ctx context.Context, agentID int64, l
 	var rows []*chat_entity.Session
 	q := db.Ctx(ctx).
 		Where("agent_id = ? AND status = ? AND agent_status IN ?",
-			agentID, consts.ACTIVE, []string{"running", "waiting", "error"})
+			agentID, consts.ACTIVE, []string{"running", "waiting", "error"}).
+		Scopes(nonSubagentScope)
 	if ordinaryOnly {
 		q = q.Scopes(defaultSessionScope)
 	}
@@ -234,7 +247,8 @@ func (r *sessionRepo) countByAgents(ctx context.Context, agentIDs []int64, ordin
 	q := db.Ctx(ctx).
 		Table("chat_sessions").
 		Select("agent_id, COUNT(*) AS n").
-		Where("agent_id IN ? AND status = ?", agentIDs, consts.ACTIVE)
+		Where("agent_id IN ? AND status = ?", agentIDs, consts.ACTIVE).
+		Scopes(nonSubagentScope)
 	if ordinaryOnly {
 		q = q.Scopes(defaultSessionScope)
 	}
@@ -263,7 +277,8 @@ func (r *sessionRepo) countByAgent(ctx context.Context, agentID int64, ordinaryO
 	var n int64
 	q := db.Ctx(ctx).
 		Model(&chat_entity.Session{}).
-		Where("agent_id = ? AND status = ?", agentID, consts.ACTIVE)
+		Where("agent_id = ? AND status = ?", agentID, consts.ACTIVE).
+		Scopes(nonSubagentScope)
 	if ordinaryOnly {
 		q = q.Scopes(defaultSessionScope)
 	}
@@ -279,6 +294,8 @@ func (r *sessionRepo) countByAgent(ctx context.Context, agentID int64, ordinaryO
 // 不挂 defaultSessionScope: 群成员 backing session(group_id>0)的运行轮同样让 agent 忙,
 // 必须计入呼吸灯,且要与含群的 attention bubble(ListAttentionByAgentIncludingGroups)一致 ——
 // 否则 agent 仅在跑群轮时呼吸灯不亮。
+// 但挂 nonSubagentScope: 子 agent 委派会话从侧栏隐藏、点不进去,让它点亮呼吸灯会留下
+// 「亮灯却无会话可看」的死角,故运行中的子 agent 轮不计入呼吸灯。
 func (r *sessionRepo) CountRunningByAgents(ctx context.Context, agentIDs []int64) (map[int64]int, error) {
 	out := make(map[int64]int, len(agentIDs))
 	if len(agentIDs) == 0 {
@@ -292,6 +309,7 @@ func (r *sessionRepo) CountRunningByAgents(ctx context.Context, agentIDs []int64
 		Table("chat_sessions").
 		Select("agent_id, COUNT(*) AS n").
 		Where("agent_id IN ? AND agent_status = ? AND status = ?", agentIDs, "running", consts.ACTIVE).
+		Scopes(nonSubagentScope).
 		Group("agent_id").
 		Scan(&rows).Error
 	if err != nil {
@@ -309,7 +327,7 @@ func (r *sessionRepo) ListByProject(ctx context.Context, projectID int64) ([]*ch
 	var rows []*chat_entity.Session
 	err := db.Ctx(ctx).
 		Where("project_id = ? AND status = ?", projectID, consts.ACTIVE).
-		Scopes(defaultSessionScope).
+		Scopes(nonSubagentScope, defaultSessionScope).
 		Order("last_message_at DESC, id DESC").
 		Find(&rows).Error
 	applySessionDerivedFields(rows)
@@ -325,7 +343,7 @@ func (r *sessionRepo) CountActiveByProject(ctx context.Context, projectID int64,
 	if len(agentStatuses) > 0 {
 		q = q.Where("agent_status IN ?", agentStatuses)
 	}
-	q = q.Scopes(defaultSessionScope)
+	q = q.Scopes(nonSubagentScope, defaultSessionScope)
 	var n int64
 	err := q.Count(&n).Error
 	return n, err
@@ -338,6 +356,7 @@ func (r *sessionRepo) CountActive(ctx context.Context, agentStatuses []string) (
 	err := db.Ctx(ctx).
 		Model(&chat_entity.Session{}).
 		Where("status = ? AND agent_status IN ?", consts.ACTIVE, agentStatuses).
+		Scopes(nonSubagentScope).
 		Count(&n).Error
 	return n, err
 }

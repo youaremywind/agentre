@@ -46,8 +46,8 @@ func TestSessionRepo_Find(t *testing.T) {
 func TestSessionRepo_ListByAgent(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
-		WithArgs(int64(7), consts.ACTIVE, int64(0), 5).
+	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0), 5).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "title", "agent_status", "last_message_at", "status"}).
 			AddRow(2, 7, "later", "idle", 1700000020000, consts.ACTIVE).
 			AddRow(1, 7, "earlier", "idle", 1700000010000, consts.ACTIVE))
@@ -64,9 +64,10 @@ func TestSessionRepo_CountRunningByAgents(t *testing.T) {
 
 	// 只计入 agent_status='running' 且未软删除的会话 —— 历史 idle 会话不应让前端亮"运行中"呼吸灯。
 	// 群成员 backing session(group_id>0)的运行轮也计入(SQL 不过滤 group_id),与含群的
-	// attention bubble 一致 —— 否则 agent 仅在跑群轮时呼吸灯不亮。
-	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE agent_id IN \\(\\?,\\?\\) AND agent_status = \\? AND status = \\? GROUP BY `agent_id`").
-		WithArgs(int64(1), int64(2), "running", consts.ACTIVE).
+	// attention bubble 一致 —— 否则 agent 仅在跑群轮时呼吸灯不亮。子 agent 委派会话则被
+	// purpose 过滤排除(亮灯却点不进去会留死角)。
+	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE .agent_id IN \\(\\?,\\?\\) AND agent_status = \\? AND status = \\?. AND purpose <> \\? GROUP BY `agent_id`").
+		WithArgs(int64(1), int64(2), "running", consts.ACTIVE, chat_entity.SessionPurposeSubagent).
 		WillReturnRows(sqlmock.NewRows([]string{"agent_id", "n"}).
 			AddRow(1, 2))
 
@@ -81,8 +82,8 @@ func TestSessionRepo_ListAttentionByAgent(t *testing.T) {
 	t.Run("running / waiting / error 三种各 1 行", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\? AND agent_status IN \\(\\?,\\?,\\?\\). AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
-			WithArgs(int64(7), consts.ACTIVE, "running", "waiting", "error", int64(0), 20).
+		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\? AND agent_status IN \\(\\?,\\?,\\?\\). AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+			WithArgs(int64(7), consts.ACTIVE, "running", "waiting", "error", chat_entity.SessionPurposeSubagent, int64(0), 20).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "title", "agent_status", "last_message_at", "status"}).
 				AddRow(3, 7, "approve me", "waiting", 1700000030000, consts.ACTIVE).
 				AddRow(2, 7, "boom", "error", 1700000020000, consts.ACTIVE).
@@ -101,8 +102,8 @@ func TestSessionRepo_ListAttentionByAgent(t *testing.T) {
 	t.Run("全部 idle → 返回空", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\? AND agent_status IN \\(\\?,\\?,\\?\\). AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
-			WithArgs(int64(7), consts.ACTIVE, "running", "waiting", "error", int64(0), 20).
+		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\? AND agent_status IN \\(\\?,\\?,\\?\\). AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+			WithArgs(int64(7), consts.ACTIVE, "running", "waiting", "error", chat_entity.SessionPurposeSubagent, int64(0), 20).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 		got, err := chat_repo.NewSession().ListAttentionByAgent(ctx, 7, 20)
@@ -116,8 +117,8 @@ func TestSessionRepo_ListByAgentPaged(t *testing.T) {
 	t.Run("正常分页 offset>0", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\? OFFSET \\?").
-			WithArgs(int64(7), consts.ACTIVE, int64(0), 20, 20).
+		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\? OFFSET \\?").
+			WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0), 20, 20).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "title", "agent_status", "last_message_at", "status"}).
 				AddRow(22, 7, "session-22", "idle", 1700000220000, consts.ACTIVE).
 				AddRow(21, 7, "session-21", "idle", 1700000210000, consts.ACTIVE))
@@ -132,8 +133,8 @@ func TestSessionRepo_ListByAgentPaged(t *testing.T) {
 	t.Run("首页 offset=0 不带 OFFSET 子句", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?$").
-			WithArgs(int64(7), consts.ACTIVE, int64(0), 20).
+		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?$").
+			WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0), 20).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "title", "agent_status", "last_message_at", "status"}).
 				AddRow(1, 7, "only", "idle", 1700000010000, consts.ACTIVE))
 
@@ -146,8 +147,8 @@ func TestSessionRepo_ListByAgentPaged(t *testing.T) {
 	t.Run("agent 无任何会话返回空切片", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
-			WithArgs(int64(99), consts.ACTIVE, int64(0), 20).
+		mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+			WithArgs(int64(99), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0), 20).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 		got, err := chat_repo.NewSession().ListByAgentPaged(ctx, 99, 0, 20)
@@ -161,8 +162,8 @@ func TestSessionRepo_ListIDsByAgents(t *testing.T) {
 	t.Run("Given multiple agents and active sessions, When listing ids, Then groups active ids by agent in sidebar order", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectQuery("SELECT agent_id, id FROM `chat_sessions` WHERE .agent_id IN \\(\\?,\\?\\) AND status = \\?. AND group_id = \\? ORDER BY agent_id ASC, last_message_at DESC, id DESC").
-			WithArgs(int64(7), int64(8), consts.ACTIVE, int64(0)).
+		mock.ExpectQuery("SELECT agent_id, id FROM `chat_sessions` WHERE .agent_id IN \\(\\?,\\?\\) AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY agent_id ASC, last_message_at DESC, id DESC").
+			WithArgs(int64(7), int64(8), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0)).
 			WillReturnRows(sqlmock.NewRows([]string{"agent_id", "id"}).
 				AddRow(7, 12).
 				AddRow(7, 11).
@@ -188,8 +189,8 @@ func TestSessionRepo_ListIDsByAgentsIncludingGroups(t *testing.T) {
 	t.Run("Given group backing sessions exist, When listing ids for sidebar, Then SQL does not filter group_id=0", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectQuery("SELECT agent_id, id FROM `chat_sessions` WHERE agent_id IN \\(\\?,\\?\\) AND status = \\? ORDER BY agent_id ASC, last_message_at DESC, id DESC").
-			WithArgs(int64(7), int64(8), consts.ACTIVE).
+		mock.ExpectQuery("SELECT agent_id, id FROM `chat_sessions` WHERE .agent_id IN \\(\\?,\\?\\) AND status = \\?. AND purpose <> \\? ORDER BY agent_id ASC, last_message_at DESC, id DESC").
+			WithArgs(int64(7), int64(8), consts.ACTIVE, chat_entity.SessionPurposeSubagent).
 			WillReturnRows(sqlmock.NewRows([]string{"agent_id", "id"}).
 				AddRow(7, 12).
 				AddRow(7, 11).
@@ -207,8 +208,8 @@ func TestSessionRepo_CountByAgents(t *testing.T) {
 	t.Run("批量返回每个 agent 的会话数；缺席 agent 在 map 里读出 0", func(t *testing.T) {
 		ctx, _, mock := testutils.Database(t)
 
-		mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE .agent_id IN \\(\\?,\\?,\\?\\) AND status = \\?. AND group_id = \\? GROUP BY `agent_id`").
-			WithArgs(int64(1), int64(2), int64(3), consts.ACTIVE, int64(0)).
+		mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE .agent_id IN \\(\\?,\\?,\\?\\) AND status = \\?. AND purpose <> \\? AND group_id = \\? GROUP BY `agent_id`").
+			WithArgs(int64(1), int64(2), int64(3), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0)).
 			WillReturnRows(sqlmock.NewRows([]string{"agent_id", "n"}).
 				AddRow(1, 12).
 				AddRow(2, 3))
@@ -232,8 +233,8 @@ func TestSessionRepo_CountByAgents(t *testing.T) {
 func TestSessionRepo_CountByAgentsIncludingGroups(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE agent_id IN \\(\\?,\\?\\) AND status = \\? GROUP BY `agent_id`").
-		WithArgs(int64(1), int64(2), consts.ACTIVE).
+	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE .agent_id IN \\(\\?,\\?\\) AND status = \\?. AND purpose <> \\? GROUP BY `agent_id`").
+		WithArgs(int64(1), int64(2), consts.ACTIVE, chat_entity.SessionPurposeSubagent).
 		WillReturnRows(sqlmock.NewRows([]string{"agent_id", "n"}).
 			AddRow(1, 2).
 			AddRow(2, 1))
@@ -248,8 +249,8 @@ func TestSessionRepo_CountByAgentsIncludingGroups(t *testing.T) {
 func TestSessionRepo_CountByAgent(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND group_id = \\?").
-		WithArgs(int64(7), consts.ACTIVE, int64(0)).
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\?").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(42))
 
 	got, err := chat_repo.NewSession().CountByAgent(ctx, 7)
@@ -261,8 +262,8 @@ func TestSessionRepo_CountByAgent(t *testing.T) {
 func TestSessionRepo_CountByAgentIncludingGroups(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions` WHERE agent_id = \\? AND status = \\?").
-		WithArgs(int64(7), consts.ACTIVE).
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\?").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(43))
 
 	got, err := chat_repo.NewSession().CountByAgentIncludingGroups(ctx, 7)
@@ -279,6 +280,7 @@ func TestSessionRepo_Create(t *testing.T) {
 		WithArgs(
 			int64(7), "draft", "idle", int64(0), int64(0), "", // agent_id, title, agent_status, last_message_at, last_read_at, provider_session_id
 			int64(0), int64(0), // project_id, group_id
+			"",        // purpose
 			0, "", "", // context_window, permission_mode, permission_mode_at_launch
 			consts.ACTIVE, sqlmock.AnyArg(), sqlmock.AnyArg(), // status, createtime, updatetime
 		).
@@ -294,8 +296,8 @@ func TestSessionRepo_Create(t *testing.T) {
 
 func TestSessionRepo_ListByProject(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
-	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .project_id = \\? AND status = \\?. AND group_id = \\? ORDER BY last_message_at DESC, id DESC").
-		WithArgs(int64(7), consts.ACTIVE, int64(0)).
+	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .project_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "project_id"}).
 			AddRow(int64(101), int64(42), int64(7)).
 			AddRow(int64(102), int64(43), int64(7)))
@@ -309,7 +311,7 @@ func TestSessionRepo_ListByProject(t *testing.T) {
 func TestSessionRepo_CountActiveByProject(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions`").
-		WithArgs(int64(7), consts.ACTIVE, "running", "waiting", int64(0)).
+		WithArgs(int64(7), consts.ACTIVE, "running", "waiting", chat_entity.SessionPurposeSubagent, int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
 
 	n, err := chat_repo.NewSession().CountActiveByProject(ctx, 7, []string{"running", "waiting"})
@@ -321,7 +323,7 @@ func TestSessionRepo_CountActiveByProject(t *testing.T) {
 func TestSessionRepo_CountActive(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions`").
-		WithArgs(consts.ACTIVE, "running", "waiting").
+		WithArgs(consts.ACTIVE, "running", "waiting", chat_entity.SessionPurposeSubagent).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
 
 	n, err := chat_repo.NewSession().CountActive(ctx, []string{"running", "waiting"})
@@ -393,14 +395,15 @@ func TestSessionRepo_ResetActiveSessions(t *testing.T) {
 
 // ── group_id=0 过滤回归测试 ──────────────────────────────────────────────────
 // 下面 9 个测试钉死"默认会话列表/计数 SQL 里必须带 group_id = 0"，防止群聊成员
-// backing session 渗进普通单 agent 会话列表。
+// backing session 渗进普通单 agent 会话列表。SQL 里同时带 purpose <> ?(子 agent
+// 委派会话无条件隐藏),见 nonSubagentScope。
 
 func TestSessionRepo_ListByAgent_FiltersGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
 	// gorm wraps the original Where() in parens when Scopes appends a second condition.
-	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
-		WithArgs(int64(7), consts.ACTIVE, int64(0), 5).
+	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0), 5).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 
 	_, err := chat_repo.NewSession().ListByAgent(ctx, 7, 5)
@@ -411,8 +414,8 @@ func TestSessionRepo_ListByAgent_FiltersGroupSessions(t *testing.T) {
 func TestSessionRepo_ListByAgentIncludingGroups(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE agent_id = \\? AND status = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
-		WithArgs(int64(7), consts.ACTIVE, 5).
+	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, 5).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "group_id", "title"}).
 			AddRow(12, 7, 5, "支付小队 / 后端"))
 
@@ -424,11 +427,26 @@ func TestSessionRepo_ListByAgentIncludingGroups(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+// 子 agent 委派会话(purpose='subagent_call')必须从含群的侧栏查询里也被排除 ——
+// 它走 group_id=0, 不会被 defaultSessionScope 拦住, 只有无条件的 purpose 过滤能挡。
+func TestSessionRepo_ListByAgentIncludingGroups_FiltersSubagentSessions(t *testing.T) {
+	ctx, _, mock := testutils.Database(t)
+
+	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, 5).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "group_id"}).AddRow(12, 7, 5))
+
+	got, err := chat_repo.NewSession().ListByAgentIncludingGroups(ctx, 7, 5)
+	assert.NoError(t, err)
+	assert.Len(t, got, 1)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestSessionRepo_ListByAgentPaged_FiltersGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
-		WithArgs(int64(7), consts.ACTIVE, int64(0), 20).
+	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0), 20).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 
 	_, err := chat_repo.NewSession().ListByAgentPaged(ctx, 7, 0, 20)
@@ -439,8 +457,8 @@ func TestSessionRepo_ListByAgentPaged_FiltersGroupSessions(t *testing.T) {
 func TestSessionRepo_ListIDsByAgents_FiltersGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT agent_id, id FROM `chat_sessions` WHERE .agent_id IN .\\?,\\?. AND status = \\?. AND group_id = \\? ORDER BY agent_id ASC, last_message_at DESC, id DESC").
-		WithArgs(int64(7), int64(8), consts.ACTIVE, int64(0)).
+	mock.ExpectQuery("SELECT agent_id, id FROM `chat_sessions` WHERE .agent_id IN .\\?,\\?. AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY agent_id ASC, last_message_at DESC, id DESC").
+		WithArgs(int64(7), int64(8), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"agent_id", "id"}).AddRow(7, 1))
 
 	_, err := chat_repo.NewSession().ListIDsByAgents(ctx, []int64{7, 8})
@@ -451,8 +469,8 @@ func TestSessionRepo_ListIDsByAgents_FiltersGroupSessions(t *testing.T) {
 func TestSessionRepo_ListAttentionByAgent_FiltersGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\? AND agent_status IN .\\?,\\?,\\?.. AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
-		WithArgs(int64(7), consts.ACTIVE, "running", "waiting", "error", int64(0), 20).
+	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\? AND agent_status IN .\\?,\\?,\\?.. AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC LIMIT \\?").
+		WithArgs(int64(7), consts.ACTIVE, "running", "waiting", "error", chat_entity.SessionPurposeSubagent, int64(0), 20).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 
 	_, err := chat_repo.NewSession().ListAttentionByAgent(ctx, 7, 20)
@@ -463,8 +481,8 @@ func TestSessionRepo_ListAttentionByAgent_FiltersGroupSessions(t *testing.T) {
 func TestSessionRepo_ListByProject_FiltersGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .project_id = \\? AND status = \\?. AND group_id = \\? ORDER BY last_message_at DESC, id DESC").
-		WithArgs(int64(7), consts.ACTIVE, int64(0)).
+	mock.ExpectQuery("SELECT \\* FROM `chat_sessions` WHERE .project_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\? ORDER BY last_message_at DESC, id DESC").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 
 	_, err := chat_repo.NewSession().ListByProject(ctx, 7)
@@ -475,8 +493,8 @@ func TestSessionRepo_ListByProject_FiltersGroupSessions(t *testing.T) {
 func TestSessionRepo_CountByAgent_FiltersGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND group_id = \\?").
-		WithArgs(int64(7), consts.ACTIVE, int64(0)).
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions` WHERE .agent_id = \\? AND status = \\?. AND purpose <> \\? AND group_id = \\?").
+		WithArgs(int64(7), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
 
 	_, err := chat_repo.NewSession().CountByAgent(ctx, 7)
@@ -487,8 +505,8 @@ func TestSessionRepo_CountByAgent_FiltersGroupSessions(t *testing.T) {
 func TestSessionRepo_CountByAgents_FiltersGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE .agent_id IN .\\?,\\?. AND status = \\?. AND group_id = \\? GROUP BY `agent_id`").
-		WithArgs(int64(1), int64(2), consts.ACTIVE, int64(0)).
+	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE .agent_id IN .\\?,\\?. AND status = \\?. AND purpose <> \\? AND group_id = \\? GROUP BY `agent_id`").
+		WithArgs(int64(1), int64(2), consts.ACTIVE, chat_entity.SessionPurposeSubagent, int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"agent_id", "n"}).AddRow(1, 3))
 
 	_, err := chat_repo.NewSession().CountByAgents(ctx, []int64{1, 2})
@@ -498,11 +516,12 @@ func TestSessionRepo_CountByAgents_FiltersGroupSessions(t *testing.T) {
 
 // 群成员 backing session 的运行轮要计入呼吸灯: SQL 不得出现 group_id 过滤,
 // 这样某 agent 仅在跑群轮(group_id>0)时呼吸灯也能亮,与含群 attention bubble 一致。
+// 但子 agent 委派会话仍被 purpose <> ? 排除。
 func TestSessionRepo_CountRunningByAgents_IncludesGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE agent_id IN .\\?,\\?. AND agent_status = \\? AND status = \\? GROUP BY `agent_id`").
-		WithArgs(int64(1), int64(2), "running", consts.ACTIVE).
+	mock.ExpectQuery("SELECT agent_id, COUNT\\(\\*\\) AS n FROM `chat_sessions` WHERE .agent_id IN .\\?,\\?. AND agent_status = \\? AND status = \\?. AND purpose <> \\? GROUP BY `agent_id`").
+		WithArgs(int64(1), int64(2), "running", consts.ACTIVE, chat_entity.SessionPurposeSubagent).
 		WillReturnRows(sqlmock.NewRows([]string{"agent_id", "n"}).AddRow(1, 2))
 
 	got, err := chat_repo.NewSession().CountRunningByAgents(ctx, []int64{1, 2})
@@ -514,8 +533,8 @@ func TestSessionRepo_CountRunningByAgents_IncludesGroupSessions(t *testing.T) {
 func TestSessionRepo_CountActiveByProject_FiltersGroupSessions(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions` WHERE .project_id = \\? AND status = \\?. AND agent_status IN .\\?,\\?. AND group_id = \\?").
-		WithArgs(int64(7), consts.ACTIVE, "running", "waiting", int64(0)).
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `chat_sessions` WHERE .project_id = \\? AND status = \\?. AND agent_status IN .\\?,\\?. AND purpose <> \\? AND group_id = \\?").
+		WithArgs(int64(7), consts.ACTIVE, "running", "waiting", chat_entity.SessionPurposeSubagent, int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
 	_, err := chat_repo.NewSession().CountActiveByProject(ctx, 7, []string{"running", "waiting"})

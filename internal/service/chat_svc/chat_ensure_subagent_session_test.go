@@ -35,6 +35,8 @@ func TestEnsureSession_SubagentCall(t *testing.T) {
 				So(s.AgentStatus, ShouldEqual, "idle")
 				So(s.PermissionMode, ShouldEqual, "acceptEdits")
 				So(s.PermissionModeAtLaunch, ShouldEqual, "acceptEdits")
+				// 子 agent 会话必须落 purpose 标记, repo 层据此从所有会话列表/计数隐藏它。
+				So(s.Purpose, ShouldEqual, chat_entity.SessionPurposeSubagent)
 				s.ID = 101
 				return nil
 			})
