@@ -11,9 +11,9 @@ package mock_chat_repo
 
 import (
 	context "context"
-	chat_entity "github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
 	reflect "reflect"
 
+	chat_entity "github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -39,6 +39,20 @@ func NewMockMessageRepo(ctrl *gomock.Controller) *MockMessageRepo {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockMessageRepo) EXPECT() *MockMessageRepoMockRecorder {
 	return m.recorder
+}
+
+// AppendSubagentChildren mocks base method.
+func (m *MockMessageRepo) AppendSubagentChildren(ctx context.Context, sessionID int64, parentToolUseID, childBlocksJSON string, childIDs []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AppendSubagentChildren", ctx, sessionID, parentToolUseID, childBlocksJSON, childIDs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AppendSubagentChildren indicates an expected call of AppendSubagentChildren.
+func (mr *MockMessageRepoMockRecorder) AppendSubagentChildren(ctx, sessionID, parentToolUseID, childBlocksJSON, childIDs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendSubagentChildren", reflect.TypeOf((*MockMessageRepo)(nil).AppendSubagentChildren), ctx, sessionID, parentToolUseID, childBlocksJSON, childIDs)
 }
 
 // Create mocks base method.
