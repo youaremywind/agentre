@@ -363,6 +363,48 @@ func TestMessageRepo_AppendSubagentChildren_NoMatchSilentNil(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestMessageRepo_FindAssistantBySubagentToolUseID_ReturnsMatch(t *testing.T) {
+	ctx, _, mock := testutils.Database(t)
+
+	matchBlocks := `[{"type":"subagent_state","data":{"parent_tool_call_id":"toolu_agent","kind":"local_agent","description":"do work","status":"running"}}]`
+	otherBlocks := `[{"type":"text","data":{"text":"hi"}}]`
+
+	// 倒序拉近 N 条 assistant 消息;返回第一条 blocks 含命中 subagent_state 的。
+	mock.ExpectQuery("SELECT \\* FROM `chat_messages` WHERE session_id = \\? AND role = \\? ORDER BY seq DESC LIMIT \\?").
+		WithArgs(int64(3), "assistant", 50).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "session_id", "role", "blocks_json", "seq"}).
+			AddRow(43, 3, "assistant", otherBlocks, 5).
+			AddRow(42, 3, "assistant", matchBlocks, 4))
+
+	got, err := chat_repo.NewMessage().FindAssistantBySubagentToolUseID(ctx, 3, "toolu_agent")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, int64(42), got.ID)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMessageRepo_FindAssistantBySubagentToolUseID_NoMatchNil(t *testing.T) {
+	ctx, _, mock := testutils.Database(t)
+
+	mock.ExpectQuery("SELECT \\* FROM `chat_messages` WHERE session_id = \\? AND role = \\? ORDER BY seq DESC LIMIT \\?").
+		WithArgs(int64(3), "assistant", 50).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "session_id", "role", "blocks_json", "seq"}).
+			AddRow(42, 3, "assistant", `[{"type":"text","data":{"text":"hi"}}]`, 4))
+
+	got, err := chat_repo.NewMessage().FindAssistantBySubagentToolUseID(ctx, 3, "toolu_missing")
+	require.NoError(t, err)
+	assert.Nil(t, got, "无命中 subagent_state 应返回 (nil, nil)")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMessageRepo_FindAssistantBySubagentToolUseID_EmptyToolUseID(t *testing.T) {
+	ctx, _, _ := testutils.Database(t)
+
+	got, err := chat_repo.NewMessage().FindAssistantBySubagentToolUseID(ctx, 3, "")
+	require.NoError(t, err)
+	assert.Nil(t, got, "空 toolUseID 短路返回 (nil, nil),不查库")
+}
+
 func TestMessageRepo_Update(t *testing.T) {
 	ctx, _, mock := testutils.Database(t)
 

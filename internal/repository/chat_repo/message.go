@@ -36,6 +36,11 @@ type MessageRepo interface {
 	// 追加到该消息 blocks_json 的末尾。childIDs 自动去重(跳过已在数组中的 id)。
 	// 找不到命中块则静默返回 nil。
 	AppendSubagentChildren(ctx context.Context, sessionID int64, parentToolUseID, childBlocksJSON string, childIDs []string) error
+	// FindAssistantBySubagentToolUseID 倒序扫描最近 N 条 assistant 消息,返回第一条 blocks
+	// 含 type=="subagent_state" 且 data.parent_tool_call_id==toolUseID 的消息(后台 subagent
+	// 的发起卡所在消息)。toolUseID 空 / 无命中 / 该会话没有这类消息时返回 (nil, nil)。
+	// 仅读取定位,不改写。
+	FindAssistantBySubagentToolUseID(ctx context.Context, sessionID int64, toolUseID string) (*chat_entity.Message, error)
 }
 
 // flipSubagentScanLimit 是 FlipSubagentStatus 倒序扫描的最近 assistant 消息条数上限。
@@ -280,6 +285,60 @@ func AppendSubagentChildrenInBlocksJSON(blocksJSON, parentToolUseID, childBlocks
 		return blocksJSON, false, err
 	}
 	return string(out), true, nil
+}
+
+func (r *messageRepo) FindAssistantBySubagentToolUseID(ctx context.Context, sessionID int64, toolUseID string) (*chat_entity.Message, error) {
+	if toolUseID == "" {
+		return nil, nil
+	}
+	var rows []*chat_entity.Message
+	if err := db.Ctx(ctx).
+		Where("session_id = ? AND role = ?", sessionID, "assistant").
+		Order("seq DESC").Limit(flipSubagentScanLimit).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, msg := range rows {
+		matched, err := blocksHaveSubagentState(msg.BlocksJSON, toolUseID)
+		if err != nil {
+			// 单条消息 blocks 损坏不应阻断其它消息;跳过继续找。
+			logger.Ctx(ctx).Warn("chat_repo.FindAssistantBySubagentToolUseID: decode blocks failed; skipping",
+				zap.Int64("messageId", msg.ID), zap.Error(err))
+			continue
+		}
+		if matched {
+			return msg, nil
+		}
+	}
+	return nil, nil
+}
+
+// blocksHaveSubagentState 只读判定:blocks_json(StoredBlock 数组)里是否存在
+// type=="subagent_state" 且 data.parent_tool_call_id==parentToolUseID 的块。
+// 与 Flip/AppendSubagentChildrenInBlocksJSON 共用同一 StoredBlock 信封 + parent_tool_call_id
+// 匹配口径,但不改写任何字段。空 JSON 返回 (false, nil)。
+func blocksHaveSubagentState(blocksJSON, parentToolUseID string) (bool, error) {
+	if blocksJSON == "" {
+		return false, nil
+	}
+	var stored []cagoblocks.StoredBlock
+	if err := json.Unmarshal([]byte(blocksJSON), &stored); err != nil {
+		return false, err
+	}
+	for i := range stored {
+		if stored[i].Type != "subagent_state" {
+			continue
+		}
+		dec := json.NewDecoder(bytes.NewReader(stored[i].Data))
+		dec.UseNumber()
+		var data map[string]any
+		if err := dec.Decode(&data); err != nil {
+			return false, err
+		}
+		if parent, _ := data["parent_tool_call_id"].(string); parent == parentToolUseID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *messageRepo) DeleteFromSeq(ctx context.Context, sessionID int64, fromSeq int) (int64, error) {

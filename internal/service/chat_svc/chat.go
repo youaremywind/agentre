@@ -198,7 +198,11 @@ type chatSvc struct {
 	// session 重复起 watcher goroutine(每会话一个,惰性启动);watcher 在底层
 	// AutonomousTurns channel close(子进程 evict / CloseSession)时退出并清这条。
 	autoWatchers sync.Map
-	gateway      httpgateway.TokenIssuer
+	// subagentActivityWatchers：sessionID(int64) → struct{}。startSubagentActivityWatcher
+	// 用它防同一 session 重复起后台 subagent 活动 watcher(每会话一个,惰性启动);watcher
+	// 在底层 SubagentActivity channel close(子进程 evict / CloseSession)时退出并清这条。
+	subagentActivityWatchers sync.Map
+	gateway                  httpgateway.TokenIssuer
 	// chatTokens 缓存每个 chat session 的常驻 gateway token(sessionID int64 → token string)。
 	// 该 token 在 spawn 时烤进 claude 子进程 env 给 PostToolUse hook 用,子进程跨轮复用
 	// 时 env 不重建 —— 所以 token 必须签成永久(ttl=0)并跨轮稳定复用,否则长会话(>15min)
@@ -2519,6 +2523,12 @@ func (s *chatSvc) runTurn(
 	// 重复调用幂等。watcher 在子进程 evict / CloseSession(channel close)时自行退出。
 	if src, ok := runner.(agentruntime.AutonomousTurnSource); ok {
 		s.startAutonomousWatcher(sess.ID, be, src)
+	}
+	// runtime 若支持「后台 subagent 内部活动流」(claudecode / remote claudecode 在
+	// run_in_background subagent 空闲态产出内部工具调用),惰性起每会话 watcher 把每轮活动
+	// 嵌套渲染回发起卡并跨消息落库。每会话去重,channel close 时自行退出。
+	if src, ok := runner.(agentruntime.SubagentActivitySource); ok {
+		s.startSubagentActivityWatcher(sess.ID, be, src)
 	}
 	// runtime spawn 新 CLI 子进程时把实际下发的 --permission-mode 同步回吐到
 	// result.LaunchPermissionMode(claudecode 专用,其它 runtime 留空);这里把

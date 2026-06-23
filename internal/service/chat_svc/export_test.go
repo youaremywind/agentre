@@ -32,6 +32,24 @@ func IsAutonomousWatcherActiveForTest(svc ChatSvc, sessionID int64) bool {
 	return ok
 }
 
+// DriveSubagentActivityForTest 暴露 driveSubagentActivity 给外部测试包,直接驱动一轮
+// 后台 subagent 内部活动流(不经 watcher goroutine,便于同步断言落库 + stream)。
+func DriveSubagentActivityForTest(ctx context.Context, svc ChatSvc, sessionID int64, be *agent_backend_entity.AgentBackend, act agentruntime.SubagentActivity) {
+	svc.(*chatSvc).driveSubagentActivity(ctx, sessionID, be, act)
+}
+
+// StartSubagentActivityWatcherForTest 暴露 startSubagentActivityWatcher 给外部测试包。
+func StartSubagentActivityWatcherForTest(svc ChatSvc, sessionID int64, be *agent_backend_entity.AgentBackend, src agentruntime.SubagentActivitySource) {
+	svc.(*chatSvc).startSubagentActivityWatcher(sessionID, be, src)
+}
+
+// IsSubagentActivityWatcherActiveForTest 报告某 session 是否还有活跃 subagent-activity
+// watcher(去重位是否占着)。channel close 后退出并清位 → 返 false。
+func IsSubagentActivityWatcherActiveForTest(svc ChatSvc, sessionID int64) bool {
+	_, ok := svc.(*chatSvc).subagentActivityWatchers.Load(sessionID)
+	return ok
+}
+
 // ConvertOldEventToNewForTest 暴露 convertOldEventToNew 给 chat_svc_test 包的
 // fake runner。生产路径 (runTurn drain) 直接吃 NEW Event channel,本函数仅给
 // 老 fixture 当桥接(用 RuntimeEvent{Kind: ...} 字面量驱动,内部转 NEW Event

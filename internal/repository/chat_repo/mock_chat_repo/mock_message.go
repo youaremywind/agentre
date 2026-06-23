@@ -99,6 +99,21 @@ func (mr *MockMessageRepoMockRecorder) Find(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Find", reflect.TypeOf((*MockMessageRepo)(nil).Find), ctx, id)
 }
 
+// FindAssistantBySubagentToolUseID mocks base method.
+func (m *MockMessageRepo) FindAssistantBySubagentToolUseID(ctx context.Context, sessionID int64, toolUseID string) (*chat_entity.Message, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FindAssistantBySubagentToolUseID", ctx, sessionID, toolUseID)
+	ret0, _ := ret[0].(*chat_entity.Message)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FindAssistantBySubagentToolUseID indicates an expected call of FindAssistantBySubagentToolUseID.
+func (mr *MockMessageRepoMockRecorder) FindAssistantBySubagentToolUseID(ctx, sessionID, toolUseID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindAssistantBySubagentToolUseID", reflect.TypeOf((*MockMessageRepo)(nil).FindAssistantBySubagentToolUseID), ctx, sessionID, toolUseID)
+}
+
 // FlipSubagentStatus mocks base method.
 func (m *MockMessageRepo) FlipSubagentStatus(ctx context.Context, sessionID int64, toolUseID, status, summary string) error {
 	m.ctrl.T.Helper()
