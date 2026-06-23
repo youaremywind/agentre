@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	cagoblocks "github.com/cago-frame/agents/agent/blocks"
@@ -15,6 +16,21 @@ import (
 
 	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
 )
+
+// sessionMutexes は per-session の read-modify-write ロック。
+// FlipSubagentStatus と AppendSubagentChildren が同一セッションで同一の
+// launch メッセージ行を並行して「Find → rewrite → Update」するときに
+// 互いの書き込みを上書きしないよう、セッション単位で直列化する。
+// キー: sessionID(int64)、値: *sync.Mutex。
+var sessionMutexes sync.Map
+
+// lockForSession はセッション ID に対応する *sync.Mutex を返す。
+// ロックはセッションの存続中永続して保持され(GC 対象にならない)、
+// セッション数は実用上無限でないため問題ない。
+func lockForSession(sessionID int64) *sync.Mutex {
+	v, _ := sessionMutexes.LoadOrStore(sessionID, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
 
 //go:generate mockgen -source message.go -destination mock_chat_repo/mock_message.go
 
@@ -106,6 +122,11 @@ func (r *messageRepo) FlipSubagentStatus(ctx context.Context, sessionID int64, t
 	if toolUseID == "" || status == "" {
 		return nil
 	}
+	// serialize read-modify-write per session to avoid lost-update races with AppendSubagentChildren.
+	mu := lockForSession(sessionID)
+	mu.Lock()
+	defer mu.Unlock()
+
 	logger.Ctx(ctx).Info("chat_repo.FlipSubagentStatus: flipping subagent_state status",
 		zap.Int64("sessionId", sessionID), zap.String("toolUseId", toolUseID), zap.String("status", status))
 
@@ -193,6 +214,11 @@ func (r *messageRepo) AppendSubagentChildren(ctx context.Context, sessionID int6
 	if parentToolUseID == "" || childBlocksJSON == "" {
 		return nil
 	}
+	// serialize read-modify-write per session to avoid lost-update races with FlipSubagentStatus.
+	mu := lockForSession(sessionID)
+	mu.Lock()
+	defer mu.Unlock()
+
 	var rows []*chat_entity.Message
 	if err := db.Ctx(ctx).
 		Where("session_id = ? AND role = ?", sessionID, "assistant").
