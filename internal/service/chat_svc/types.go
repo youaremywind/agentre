@@ -77,6 +77,10 @@ const (
 	// (该自主轮的 per-turn 事件名,前端 openStream 后续 chunk/done 走它实时渲染)。
 	// Trigger="background_task"。前端渲染 AutoTriggerBanner +「自动」badge。
 	StreamAutonomousStarted ChatStreamEventKind = "autonomous_started"
+	// StreamSubagentActivityStarted:后台 subagent 在空闲态开始产出内部活动。前端据此对
+	// 发起消息(LaunchMessageID)重开 per-turn 流(Stream),把活动块嵌套渲染回 AgentSpawnCard。
+	// 与 StreamAutonomousStarted 不同:不插入新 assistant 行(发起消息已存在)。
+	StreamSubagentActivityStarted ChatStreamEventKind = "subagent_activity_started"
 )
 
 // ChatStreamEvent 是 EventsEmit 出去的统一 payload。
@@ -150,6 +154,11 @@ type ChatStreamEvent struct {
 	// AssistantMessage 复用上面的字段携带要插入的新 assistant 行。
 	Stream  string `json:"stream,omitempty"`
 	Trigger string `json:"trigger,omitempty"`
+
+	// StreamSubagentActivityStarted 事件填充：LaunchMessageID 是后台 subagent 所属的
+	// 发起消息 ID,前端据此定位 AgentSpawnCard 并重开 per-turn 流(Stream 字段)。
+	// ToolUseID 复用上方字段,标识具体的 subagent tool_use block。
+	LaunchMessageID int64 `json:"launchMessageId,omitempty"`
 
 	// StreamAutonomousStarted 时,若该自主轮由后台命令完成触发,带上完成任务身份,
 	// 前端据此把对应 subagent_state(上一条消息里)即时翻成 completed/failed。
