@@ -1045,6 +1045,63 @@ func fakeBackgroundSubagent(stdin io.Reader, stdout io.Writer) {
 	}
 }
 
+// TestSession_BackgroundSubagentActivityTurn 锁定 Phase 2:后台 subagent 的空闲内部活动
+// 经 SubagentActivity() 作为一轮独立事件流吐出(keyed by Agent tool_use_id),其后台完成
+// 仍触发既有自主续轮(AutonomousTurns)。
+func TestSession_BackgroundSubagentActivityTurn(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := New(WithBinary("fake"), pipeSpawner(t, fakeBackgroundSubagent))
+	sess, err := c.OpenSession(ctx)
+	require.NoError(t, err)
+	defer func() { _ = sess.Close(context.Background()) }()
+
+	ch1, err := sess.Turn(ctx, "alpha")
+	require.NoError(t, err)
+	assert.Equal(t, "started:alpha", drainText(t, ch1))
+
+	// (a) subagent 活动轮:keyed by Agent tool_use_id,事件流含子 agent 内部文本/工具。
+	var act *SubagentActivity
+	select {
+	case act = <-sess.SubagentActivity():
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a subagent activity turn within 2s")
+	}
+	require.NotNil(t, act)
+	assert.Equal(t, fakeBgSubAgentTU, act.ToolUseID)
+	var sawNestedText, sawNestedTool bool
+	for ev := range act.Events {
+		if ev.ParentToolUseID != fakeBgSubAgentTU {
+			continue
+		}
+		if ev.Kind == EventTextDelta && ev.Text == "subagent thinking" {
+			sawNestedText = true
+		}
+		if ev.Kind == EventPreToolUse {
+			sawNestedTool = true
+		}
+	}
+	assert.True(t, sawNestedText, "活动轮应含子 agent 内部文本帧")
+	assert.True(t, sawNestedTool, "活动轮应含子 agent 内部工具调用帧")
+
+	// (b) 后台完成仍触发既有自主续轮(总结)。
+	var at *AutoTurn
+	select {
+	case at = <-sess.AutonomousTurns():
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected autonomous summary turn within 2s")
+	}
+	require.NotNil(t, at)
+	assert.Equal(t, "autonomous:subagent-summary", drainText(t, at.Events))
+	require.NotNil(t, at.CompletedTask)
+	assert.Equal(t, fakeBgSubAgentTU, at.CompletedTask.ToolUseID)
+
+	// (c) turn2 无错位。
+	ch2, err := sess.Turn(ctx, "beta")
+	require.NoError(t, err)
+	assert.Equal(t, "echo:beta", drainText(t, ch2))
+}
+
 // TestSession_IdleBackgroundSubagentKeepsReaderAlive 锁定 Phase 1 缺陷:后台 subagent
 // 的内部活动在空闲态(result#1 之后、无 user turn 在飞)实时流出时,读循环不得卡死。
 //

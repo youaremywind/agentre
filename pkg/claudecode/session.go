@@ -77,6 +77,7 @@ type Session struct {
 	active       *activeTurn      // 当前正在投递帧的轮;nil = 轮间空闲
 	pendingTurns chan *activeTurn // 已写 stdin、等待其帧到达的 user Turn(FIFO)
 	autoCh       chan *AutoTurn   // AutonomousTurns() 返回的 channel;子进程退出时 close
+	subagentCh   chan *SubagentActivity // 后台 subagent 活动轮的出口(无消费方时缓冲兜底)
 }
 
 // controlResponse 是 control_response 帧 response 字段的最小子集。
@@ -149,6 +150,7 @@ func (c *Client) OpenSession(ctx context.Context, opts ...RunOption) (*Session, 
 		sessionID:    spec.sessionID,
 		pendingTurns: make(chan *activeTurn, 4),
 		autoCh:       make(chan *AutoTurn, 8),
+		subagentCh:   make(chan *SubagentActivity, 8),
 	}
 	go s.readLoop()
 	return s, nil
@@ -218,6 +220,10 @@ func (s *Session) Turn(ctx context.Context, prompt string, images ...Image) (<-c
 // 事件流。无消费方时缓冲(8)兜底,满后 readLoop 在投递下一轮时阻塞(back-pressure)。
 func (s *Session) AutonomousTurns() <-chan *AutoTurn { return s.autoCh }
 
+// SubagentActivity 返回「后台 subagent 活动轮」的 channel。子进程退出时 close。消费方 range
+// 它,每个 *SubagentActivity 是一轮独立事件流(见类型注释)。无消费方时缓冲(8)兜底。
+func (s *Session) SubagentActivity() <-chan *SubagentActivity { return s.subagentCh }
+
 // readLoop 占住 scanner 整个子进程生命周期,把每帧 demux 到当前活跃轮。
 // 归属:某轮以「后台型 task_notification」开头 → 自主轮(经 AutonomousTurns 吐出);
 // 否则按 FIFO 取一个 pendingTurns 里等待的 user Turn。每轮以 result 收尾。
@@ -255,18 +261,42 @@ func (s *Session) route(f rawFrame, events []Event, done bool) {
 	}
 }
 
+// subagentOwnerID 取一帧空闲后台 subagent 活动帧所属的 Agent 工具 tool_use_id:assistant/user
+// 帧用 parent_tool_use_id;子 agent 的 task 帧(task_progress/task_updated/非后台 task_notification)
+// 用 tool_use_id(真 CLI 该字段即发起 Agent 的 tool_use_id)。取不到返回 ""。
+func subagentOwnerID(f rawFrame) string {
+	if (f.Type == "assistant" || f.Type == "user") && f.ParentToolUseID != "" {
+		return f.ParentToolUseID
+	}
+	if f.Type == "system" && f.ToolUseID != "" {
+		return f.ToolUseID
+	}
+	return ""
+}
+
 // currentTurn 返回当前活跃轮;轮间(active==nil)时按归属规则建立新轮:
+//   - 活动轮收到「后台型完成通知」→ 收尾活动轮,落到下方起自主续轮。
 //   - 后台型 task_notification → 自主轮,经 autoCh 吐出,返回 nil(调用方丢弃起始标记)。
 //   - 非 turn 帧(control_response / 空闲 status)→ 返回 nil,不认领排队的 user Turn;
 //     否则读循环会被这些会话级帧卡死在 <-pendingTurns 上,后续 Turn / 自主轮再也读不
 //     到 stdout(见 isNonTurnFrame)。
+//   - 空闲后台 subagent 帧(有 owner) → 开活动轮,经 subagentCh 吐出,首帧也喂进去。
+//   - 空闲后台 subagent 帧(无 owner) → 丢弃(兜底,不卡读循环)。
 //   - 否则 → 取 FIFO 队首 user Turn(stdin 已写 → push 紧随,阻塞极短)。
 func (s *Session) currentTurn(f rawFrame) *activeTurn {
 	s.sinkMu.Lock()
 	if s.active != nil {
-		at := s.active
-		s.sinkMu.Unlock()
-		return at
+		// 后台 subagent 活动轮收到「后台型完成通知」→ 收尾活动轮,落到下方起自主续轮。
+		if s.active.subagentToolUseID != "" && isBackgroundTaskNotification(f) {
+			done := s.active
+			s.sinkMu.Unlock()
+			s.finishActiveTurn(done) // 清 active 槽 + close 活动轮 ch/done
+			s.sinkMu.Lock()
+		} else {
+			at := s.active
+			s.sinkMu.Unlock()
+			return at
+		}
 	}
 	if isBackgroundTaskNotification(f) {
 		at := newActiveTurn(true)
@@ -289,12 +319,17 @@ func (s *Session) currentTurn(f rawFrame) *activeTurn {
 		s.sinkMu.Unlock()
 		return nil // 会话级帧,空闲到达无归属轮:不认领 user Turn slot
 	}
+	if owner := subagentOwnerID(f); owner != "" && isIdleBackgroundSubagentFrame(f) {
+		at := newActiveTurn(true)
+		at.subagentToolUseID = owner
+		s.active = at
+		s.sinkMu.Unlock()
+		s.subagentCh <- &SubagentActivity{ToolUseID: owner, Events: at.ch, SessionID: s.sessionID}
+		return at // 与 AutoTurn 不同:首帧(子 agent 内部活动)要喂进活动轮
+	}
 	if isIdleBackgroundSubagentFrame(f) {
 		s.sinkMu.Unlock()
-		// 后台 subagent(run_in_background Agent/Task)在空闲态产生的内部活动:同样不该
-		// 认领排队的 user Turn,否则读循环卡死在 <-pendingTurns(后台 subagent 完成续轮读
-		// 不到)。Phase 1 仅止血(丢弃不渲染);Phase 2 会把这些帧路由进续轮嵌套渲染到发起卡。
-		return nil
+		return nil // owner 取不到的兜底:仍按 Phase 1 丢弃,不卡读循环
 	}
 	s.sinkMu.Unlock()
 	at := <-s.pendingTurns // user 轮起始:取队首(对应的 Turn 已 push)
@@ -349,8 +384,9 @@ func isNonTurnFrame(f rawFrame) bool {
 //     型(output_file 非空、无 subagent_type)已被 isBackgroundTaskNotification 先认领,
 //     故走到这里的 task_notification 一律非后台型。
 //
-// 注意:这是 Phase 1 的止血 —— 命中即丢弃(不渲染子 agent 内部活动)。Phase 2 会改成把
-// 这些帧路由进一条续轮,按 parent_tool_use_id 嵌套渲染回发起 subagent 的那张卡。
+// 注意:Phase 1 止血仅丢弃这类帧;Phase 2(当前)改为经 subagentCh 路由进独立活动轮,
+// 按 parent_tool_use_id 嵌套渲染回发起 subagent 的那张卡
+// (见 docs/superpowers/plans/2026-06-23-bg-subagent-live-nesting.md)。
 func isIdleBackgroundSubagentFrame(f rawFrame) bool {
 	if (f.Type == "assistant" || f.Type == "user") && f.ParentToolUseID != "" {
 		return true
@@ -408,6 +444,7 @@ func (s *Session) shutdownReader() {
 			close(p.done)
 		default:
 			close(s.autoCh)
+			close(s.subagentCh)
 			return
 		}
 	}
