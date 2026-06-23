@@ -17,16 +17,14 @@ import (
 	"github.com/agentre-ai/agentre/internal/model/entity/chat_entity"
 )
 
-// sessionMutexes は per-session の read-modify-write ロック。
-// FlipSubagentStatus と AppendSubagentChildren が同一セッションで同一の
-// launch メッセージ行を並行して「Find → rewrite → Update」するときに
-// 互いの書き込みを上書きしないよう、セッション単位で直列化する。
-// キー: sessionID(int64)、値: *sync.Mutex。
+// sessionMutexes 是 per-session 的 read-modify-write 锁。FlipSubagentStatus 与
+// AppendSubagentChildren 在同一会话里并发对同一条 launch 消息行做「Find → 改写 →
+// Update」时,按会话粒度串行化,避免互相覆盖对方的写入。
+// key: sessionID(int64),value: *sync.Mutex。
 var sessionMutexes sync.Map
 
-// lockForSession はセッション ID に対応する *sync.Mutex を返す。
-// ロックはセッションの存続中永続して保持され(GC 対象にならない)、
-// セッション数は実用上無限でないため問題ない。
+// lockForSession 返回会话 ID 对应的 *sync.Mutex。锁在会话存续期间常驻(不被 GC);
+// 会话数实践上有限,不构成问题。
 func lockForSession(sessionID int64) *sync.Mutex {
 	v, _ := sessionMutexes.LoadOrStore(sessionID, &sync.Mutex{})
 	return v.(*sync.Mutex)

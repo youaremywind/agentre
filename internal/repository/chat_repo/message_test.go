@@ -16,9 +16,8 @@ import (
 	"github.com/agentre-ai/agentre/internal/repository/chat_repo"
 )
 
-// blocksJSONContainsMatcher は sqlmock カスタム引数マッチャー。
-// UPDATE 時に blocks_json カラムに渡される値が特定のサブ文字列をすべて含むことを確認する。
-// AnyArg() では検出できない「書き換えなし(元の JSON をそのまま渡す)」バグを捕捉する。
+// blocksJSONContainsMatcher 是 sqlmock 自定义参数匹配器:校验 UPDATE 时传给 blocks_json
+// 列的值包含全部指定子串,捕捉 AnyArg() 查不出的「未改写(原样回传 JSON)」缺陷。
 type blocksJSONContainsMatcher struct {
 	substrings []string
 }
