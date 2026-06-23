@@ -50,6 +50,9 @@ type ccSessionHandle interface {
 	// AutonomousTurns 返回底层 Session 的自主续轮 channel(后台任务完成 CLI 自主
 	// 跑的一轮)。子进程退出时 close。Runtime.AutonomousTurns 桥接它成 agentruntime 流。
 	AutonomousTurns() <-chan *claudecode.AutoTurn
+	// SubagentActivity 返回底层 Session 的后台 subagent 活动流 channel(后台 subagent 在
+	// 空闲态产生的内部活动)。子进程退出时 close。Runtime.SubagentActivity 桥接它成 agentruntime 流。
+	SubagentActivity() <-chan *claudecode.SubagentActivity
 }
 
 // ccLaunchSpec 是 ccSessionFactory 的全部入参;具名结构体避免每次新增可选
@@ -128,6 +131,14 @@ func (a *ccClientAdapter) AutonomousTurns() <-chan *claudecode.AutoTurn {
 		return nil
 	}
 	return a.sess.AutonomousTurns()
+}
+
+// SubagentActivity 透传 claudecode.Session.SubagentActivity(后台 subagent 内部活动流)。
+func (a *ccClientAdapter) SubagentActivity() <-chan *claudecode.SubagentActivity {
+	if a.sess == nil {
+		return nil
+	}
+	return a.sess.SubagentActivity()
 }
 
 // RespondToControl 转发到底层 claudecode.Session。stdinMu 由 Session 内部保护,

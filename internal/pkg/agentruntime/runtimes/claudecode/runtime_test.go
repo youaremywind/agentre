@@ -206,6 +206,8 @@ type fakeCCHandle struct {
 	gotImages []claudecode.Image
 	// autoTurns 注入自主续轮(AutonomousTurns 桥接测试用);nil 时方法返回 nil。
 	autoTurns <-chan *claudecode.AutoTurn
+	// subagentActivity 注入后台 subagent 活动流(SubagentActivity 桥接测试用);nil 时方法返回 nil。
+	subagentActivity <-chan *claudecode.SubagentActivity
 	// respondedResults 非 nil 时记录 RespondToControl 收到的结果(control_request
 	// 自动放行路径在后台 goroutine 里回包,单测经 channel 同步观察)。
 	respondedResults chan claudecode.PermissionResult
@@ -238,6 +240,9 @@ func (f *fakeCCHandle) RespondToControl(_ context.Context, _ string, res claudec
 }
 func (f *fakeCCHandle) ExitErr() error                               { return nil }
 func (f *fakeCCHandle) AutonomousTurns() <-chan *claudecode.AutoTurn { return f.autoTurns }
+func (f *fakeCCHandle) SubagentActivity() <-chan *claudecode.SubagentActivity {
+	return f.subagentActivity
+}
 func (f *fakeCCHandle) Stream(_ context.Context, prompt string, images []claudecode.Image) (ccStream, error) {
 	f.gotPrompt = prompt
 	f.gotImages = images
@@ -676,5 +681,86 @@ func TestRun_SpawnAfterSetPermissionMode(t *testing.T) {
 		So(launchMode, ShouldEqual, "bypassPermissions")
 		So(captured.setPermissionModeCalls, ShouldResemble, []string{"plan"})
 		r.CloseAllSessions(ctx)
+	})
+}
+
+// TestSubagentActivity_BridgesSessionActivity 验证 Runtime.SubagentActivity 把底层
+// claudecode.Session 的后台 subagent 活动流桥接成 agentruntime.SubagentActivity,
+// 事件经 drainStream 翻译(ParentToolUseID → ParentToolCallID)。
+func TestSubagentActivity_BridgesSessionActivity(t *testing.T) {
+	Convey("Runtime.SubagentActivity 桥接底层 Session 后台 subagent 活动流", t, func() {
+		actSrc := make(chan *claudecode.SubagentActivity, 1)
+		restore := SetSessionFactoryForTest(func(ccLaunchSpec) (ccSessionHandle, error) {
+			return &fakeCCHandle{
+				id:               "fake-sid",
+				subagentActivity: actSrc,
+				// usage 非空避免 Run 的 0-frame 兜底把 session evict 掉。
+				stream: &eventCCStream{events: []claudecode.Event{
+					{Kind: claudecode.EventUsage, Usage: provider.Usage{PromptTokens: 1}},
+					{Kind: claudecode.EventDone},
+				}},
+			}, nil
+		})
+		defer restore()
+
+		r := New()
+		ctx := context.Background()
+		// 先跑一轮把 session spawn + 缓存。
+		events, _, err := r.Run(ctx, agentruntime.RunRequest{
+			Backend:   &agent_backend_entity.AgentBackend{Type: string(agent_backend_entity.TypeClaudeCode)},
+			SessionID: 88,
+			Cwd:       t.TempDir(),
+			UserText:  "go",
+		})
+		So(err, ShouldBeNil)
+		for range events { //nolint:revive // drain
+		}
+
+		activities := r.SubagentActivity(88)
+
+		// 注入一轮后台 subagent 活动(PreToolUse + done),ParentToolUseID 需被翻译成 ParentToolCallID。
+		saEvents := make(chan claudecode.Event, 4)
+		saEvents <- claudecode.Event{
+			Kind: claudecode.EventPreToolUse,
+			Tool: &claudecode.ToolEvent{
+				ID:    "inner-tu-1",
+				Name:  "bash",
+				Input: []byte(`{"command":"ls"}`),
+			},
+			ParentToolUseID: "<agent tool id>",
+		}
+		saEvents <- claudecode.Event{Kind: claudecode.EventDone}
+		close(saEvents)
+		actSrc <- &claudecode.SubagentActivity{ToolUseID: "<agent tool id>", Events: saEvents, SessionID: "fake-sid"}
+		close(actSrc)
+
+		var got agentruntime.SubagentActivity
+		select {
+		case got = <-activities:
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected a bridged SubagentActivity within 2s")
+		}
+		So(got.ToolUseID, ShouldEqual, "<agent tool id>")
+
+		var gotParentToolCallID string
+		for ev := range got.Events {
+			if tu, ok := ev.(agentruntime.ToolCall); ok {
+				gotParentToolCallID = tu.ParentToolCallID
+			}
+		}
+		So(gotParentToolCallID, ShouldEqual, "<agent tool id>")
+
+		r.CloseAllSessions(ctx)
+	})
+
+	Convey("Runtime.SubagentActivity sessionID 未知时返回立即 close 的 channel", t, func() {
+		r := New()
+		ch := r.SubagentActivity(999)
+		select {
+		case _, ok := <-ch:
+			So(ok, ShouldBeFalse)
+		case <-time.After(time.Second):
+			t.Fatal("channel 未立即 close")
+		}
 	})
 }

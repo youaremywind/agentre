@@ -495,4 +495,16 @@ type CompletedBackgroundTask struct {
 	Summary   string // CLI task_notification.summary 透传；空 = CLI 没下发或 remote 路径暂不携带
 }
 
+// SubagentActivitySource 由能在轮间(空闲)产生「后台 subagent 内部活动流」的 runtime 实现
+// —— 当前仅 claudecode。事件流与 Run 同形,ToolUseID 是发起该 subagent 的 Agent 工具 tool_use_id。
+type SubagentActivitySource interface {
+	SubagentActivity(sessionID int64) <-chan SubagentActivity
+}
+
+// SubagentActivity 镜像 claudecode.SubagentActivity:一轮后台 subagent 内部活动的事件流。
+type SubagentActivity struct {
+	ToolUseID string
+	Events    <-chan Event
+}
+
 // Errors live in errors.go; registry / RuntimeFor / RegisterRuntime / SwapRuntimeForTest live in registry.go.
