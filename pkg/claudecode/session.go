@@ -289,6 +289,13 @@ func (s *Session) currentTurn(f rawFrame) *activeTurn {
 		s.sinkMu.Unlock()
 		return nil // 会话级帧,空闲到达无归属轮:不认领 user Turn slot
 	}
+	if isIdleBackgroundSubagentFrame(f) {
+		s.sinkMu.Unlock()
+		// 后台 subagent(run_in_background Agent/Task)在空闲态产生的内部活动:同样不该
+		// 认领排队的 user Turn,否则读循环卡死在 <-pendingTurns(后台 subagent 完成续轮读
+		// 不到)。Phase 1 仅止血(丢弃不渲染);Phase 2 会把这些帧路由进续轮嵌套渲染到发起卡。
+		return nil
+	}
 	s.sinkMu.Unlock()
 	at := <-s.pendingTurns // user 轮起始:取队首(对应的 Turn 已 push)
 	s.sinkMu.Lock()
@@ -325,6 +332,30 @@ func isNonTurnFrame(f rawFrame) bool {
 		return true
 	}
 	return false
+}
+
+// isIdleBackgroundSubagentFrame 判定一帧是否为「后台 subagent(run_in_background 的
+// Agent/Task 工具)在空闲态(轮间)产生的内部活动」。这类帧既非后台型 task_notification
+// (isBackgroundTaskNotification 已在 currentTurn 中先行认领、起自主续轮),也不在
+// isNonTurnFrame 的会话级白名单里,但同样不该认领一个排队的 user Turn —— 否则 readLoop
+// 卡死在 <-pendingTurns 上,后台 subagent 完成的续轮永远读不到(与 sess-429 同类)。
+//
+// 真 CLI 2.1.185 抓帧实测:后台 subagent 起一轮后主 agent 即 result 收尾、会话转空闲,
+// 子 agent 的内部子对话随后在空闲态实时流出。两类需要在此拦下:
+//   - assistant / user 帧带 parent_tool_use_id:子 agent 内部 API 轮的文本 / 工具调用 /
+//     工具结果。前台 subagent 的同类帧由 active 轮承接(currentTurn 在 active!=nil 时已
+//     先返回),所以空闲到达者必属后台 subagent。
+//   - 非后台型 task_notification:子 agent 内层 bash 完成通知(output_file 为空)等。后台
+//     型(output_file 非空、无 subagent_type)已被 isBackgroundTaskNotification 先认领,
+//     故走到这里的 task_notification 一律非后台型。
+//
+// 注意:这是 Phase 1 的止血 —— 命中即丢弃(不渲染子 agent 内部活动)。Phase 2 会改成把
+// 这些帧路由进一条续轮,按 parent_tool_use_id 嵌套渲染回发起 subagent 的那张卡。
+func isIdleBackgroundSubagentFrame(f rawFrame) bool {
+	if (f.Type == "assistant" || f.Type == "user") && f.ParentToolUseID != "" {
+		return true
+	}
+	return f.Type == "system" && f.Subtype == "task_notification"
 }
 
 // feed 把事件投给 at.ch;at 已被消费方放弃(abandon)时丢弃余帧,避免 reader 阻塞。
